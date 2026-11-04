@@ -83,7 +83,7 @@
 
   function title(kind: Kind, landmarkId: number): string {
     const name = kindName(kind);
-    return `${name[0].toUpperCase()}${name.slice(1)} #${landmarkId}`;
+    return `${name[0].toUpperCase()}${name.slice(1)} #${landmarkId + 1}`;
   }
 
   function chance(map: MapId, landmarkId: number): string {
