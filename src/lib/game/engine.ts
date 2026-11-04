@@ -1,9 +1,9 @@
 // The game rules, with no UI, wallet or storage. A NEAR contract will implement the same steps.
 import { rollNextClue } from './clues';
-import { getMap, H, isLand, W } from './map';
+import { getMap, isLand } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
-import type { Dig, Game, MapId, NewGameInput, Point, PotSplit, RankedDig, RefundReason, Result, Rng } from './types';
+import type { Dig, Game, NewGameInput, Point, PotSplit, RankedDig, RefundReason, Result, Rng } from './types';
 
 export function createGame(id: string, input: NewGameInput): Game {
   const { name, fee, hostCutBps, minPlayers, maxPlayers, durationSec, countdownSec } = input;
@@ -200,31 +200,6 @@ export function standing(game: Game, account: string): { wins: number[]; of: num
   const { landmarks } = getMap(game.mapId);
   const wins = game.candidateIds.filter((id) => rankDigs(game.digs.map((d) => scoreDig(d, landmarks[id])))[0].account === account);
   return { wins, of: game.candidateIds.length };
-}
-
-const areas = new Map<string, Uint8Array>();
-
-/** The cells the treasure could still land on, in rows of W: land near a still-possible landmark. */
-export function possibleArea(mapId: MapId, candidateIds: number[]): Uint8Array {
-  const key = `${mapId}:${candidateIds.join(',')}`;
-  const known = areas.get(key);
-  if (known) return known;
-
-  const map = getMap(mapId);
-  const area = new Uint8Array(W * H);
-  const reach = RULES.treasureScatter;
-  for (const id of candidateIds) {
-    const { x: cx, y: cy } = map.landmarks[id];
-    for (let y = Math.max(0, cy - reach); y <= Math.min(H - 1, cy + reach); y++) {
-      for (let x = Math.max(0, cx - reach); x <= Math.min(W - 1, cx + reach); x++) {
-        const i = y * W + x;
-        if (map.land[i] && (x - cx) ** 2 + (y - cy) ** 2 <= reach ** 2) area[i] = 1;
-      }
-    }
-  }
-  if (areas.size > 40) areas.clear();
-  areas.set(key, area);
-  return area;
 }
 
 function rollTreasure(game: Game, rng: Rng): NonNullable<Result['treasure']> {

@@ -8,7 +8,7 @@
   import { backend } from '../lib/backend';
   import { bonus, near, percent } from '../lib/format';
   import { clueText } from '../lib/game/copy';
-  import { currentBonus, isCrowded, isOpen, possibleArea, potOf, secondsLeft, splitPot } from '../lib/game/engine';
+  import { currentBonus, isCrowded, isOpen, potOf, secondsLeft, splitPot } from '../lib/game/engine';
   import { isLand, W } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Game, Point } from '../lib/game/types';
@@ -62,7 +62,6 @@
       alive = false;
       world.onPick = null;
       world.setTension(0);
-      world.setPossible(null, false);
       ui.heldBalance = null;
       ui.focus = null;
     };
@@ -71,7 +70,7 @@
   function enterRoom() {
     const g = game;
     if (!g) return;
-    world.enterGame(g.mapId, $state.snapshot(g.digs), g.stage === 'waiting' || g.stage === 'refunded' ? null : [...g.candidateIds]);
+    world.enterGame(g.mapId, $state.snapshot(g.digs));
     audio.setMapMusic(g.mapId);
     if (g.stage === 'waiting') {
       audio.playMusic('lobby');
@@ -145,10 +144,9 @@
     audio.roundStart();
     audio.stopMusic(0.15);
     audio.playMusic('hunt', g.clues.length - 1);
-    world.setPossible([...g.candidateIds]);
   }
 
-  // New clue: banner, jingle, the music steps up and impossible areas go dark.
+  // New clue: banner, jingle, and the music steps up.
   let seenClues = untrack(() => game?.clues.length ?? 0);
   $effect(() => {
     const g = game;
@@ -163,7 +161,6 @@
       buzz(20);
       audio.newClue();
       audio.playMusic('hunt', count - 1);
-      world.setPossible([...g.candidateIds]);
       world.flash();
     });
   });
@@ -176,7 +173,7 @@
     const whole = Math.ceil(left);
     if (whole !== lastSecond && whole <= TENSE_SEC && whole > 0) audio.tick(whole <= PEAK_SEC);
     lastSecond = whole;
-    if (left <= TENSE_SEC) world.setTension(Math.min(1, (TENSE_SEC - left) / (TENSE_SEC - PEAK_SEC)));
+    if (left <= TENSE_SEC) world.setTension(Math.min(1, (TENSE_SEC - left) / (TENSE_SEC - PEAK_SEC)), [...game.candidateIds]);
   });
 
   function clearRound() {
@@ -189,7 +186,6 @@
 
   function refunded() {
     clearRound();
-    world.setPossible(null);
     audio.stopMusic(0.4);
     audio.refund();
     phase = 'done';
@@ -207,8 +203,6 @@
     dramatic = true;
     phase = 'rolling';
     world.setDusk(1);
-    // A round ended early never showed its last clues, and the treasure must land somewhere lit.
-    world.setPossible([...g.candidateIds]);
     audio.drumroll(2.7);
     await world.rollCandidates([...g.candidateIds], result.treasure.landmarkId);
     if (!alive) return;
@@ -265,7 +259,6 @@
   }
 
   const crowded = $derived(!!game && !!spot && isCrowded(game.digs, spot));
-  const outside = $derived(!!game && !!spot && !possibleArea(game.mapId, game.candidateIds)[spot.y * W + spot.x]);
   const warning = $derived(game?.stage === 'live' && joined && !myDig && !tooLate && secondsLeft(game) <= RULES.noDigWarningSec);
   const payout = $derived(splitPot(Math.round(pot.current), game?.hostCutBps ?? 0));
 </script>
@@ -297,8 +290,7 @@
             <div class="notes">
               {#if warning}<p class="note warn" role="alert">Dig now, or your fee stays in the pot!</p>{/if}
               {#if spot && crowded}<p class="note crowded">Crowded: {bonus(RULES.crowdBps)}</p>{/if}
-              {#if spot && outside}<p class="note">The treasure can't land here, but your distance still scores.</p>{/if}
-              {#if spot && ui.coarse && !crowded && !outside}<p class="note">Drag the X to fine-tune it.</p>{/if}
+              {#if spot && ui.coarse && !crowded}<p class="note">Drag the X to fine-tune it.</p>{/if}
             </div>
             {#if spot}
               <button class="btn" onclick={dig} disabled={busy || tooLate}>

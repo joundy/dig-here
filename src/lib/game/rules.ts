@@ -42,7 +42,7 @@ export const RULES = {
   expiredBondPenaltyBps: 1000,
   maxOpenRoomsPerHost: 3,
 
-  deedFirstPrice: 1000,
+  deedFirstPrice: 3000,
   /** Share of the jackpot a winner takes. The rest starts the next one. */
   jackpotPayBps: 8000,
   /** A jackpot win pays at most this many times the round's pot. */

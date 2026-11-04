@@ -4,13 +4,13 @@ A multiplayer treasure-map game for the NEAR Hackathon, Games track. **Wallets, 
 
 ## The problem
 
-Treasure and guessing games usually need someone to hide the answer, and that person can cheat. In Dig Here, no answer exists until the timer ends, so nobody can know it early: not the host, not us, and not a script.
+Treasure and guessing games usually need someone to hide the answer, and that person can cheat. In Dig Here, no answer exists until the timer ends, so nobody can know it early: not the host, and not us.
 
 ## The game
 
 A host opens a room and sets the entry fee, timer, map, their share of the pot (20% at most), and the minimum and maximum players. Players deposit coins, then join. The fee locks when you join, and you get it back if you leave before the start. The round starts when the minimum is reached, by the host or a countdown, and nobody can join after that.
 
-**Four clues**, each worth a lower bonus. Each dims the map areas that are no longer possible, for everyone, so a script gains nothing from working them out.
+**Four clues**, each worth a lower bonus. The screen always shows how many spots are still possible.
 
 | Clue | Says | Bonus |
 |---|---|---|
@@ -21,17 +21,17 @@ A host opens a room and sets the entry fee, timer, map, their share of the pot (
 
 **You get one dig. Score = closeness × bonus × crowding.** Digging within 6 pixels of an earlier dig multiplies your score by 0.85. When the timer ends, the game picks the spot, and the best score wins the pot. Ties go to whoever dug first. With fewer than 2 digs, everyone is refunded.
 
-**The pot:** host cut (0–20%), jackpot 3%, deed owner 2%, season pool 1%, and the winner gets the rest.
+**The pot:** host cut (0–20%), jackpot 3%, NFT owner 2%, season pool 1%, and the winner gets the rest.
 
 **The economy around the rounds:**
 - **Jackpot:** dig on the treasure's exact pixel to win it. A win pays at most 100× that round's pot.
-- **Deeds:** own a landmark and earn 2% of the pot when the treasure lands there. Buy from the game once, then trade with other players at their price.
+- **NFTs:** one for each kind of landmark on each map, about 36 in all. The owner earns 2% of the pot when the treasure lands by that kind. Owners can list theirs for sale at any price in a mini marketplace. NFTs are fake for now, like the money.
 - **Season:** weekly points, scaled by the pot, with prizes for the top 3.
 - **Hosts:** each room locks a small bond, and hosts have a public record, so spam rooms sink down the board.
 
 All the balance numbers are in `src/lib/game/rules.ts`. Run `npm run sim` to see how each dig timing does.
 
-**Known weakness:** one person with many wallets can play themselves to farm season points, and a player can use several wallets to cover more of the map. Each extra dig costs a fee and the rounds cost part of the pot, but rules alone can't prevent this.
+**Known weaknesses:** clues and landmarks are public, so a script can work out the exact spots that still fit. One person with many wallets can play themselves to farm season points, and a player can use several wallets to cover more of the map. Each extra dig costs a fee and the rounds cost part of the pot, but rules alone can't prevent this.
 
 ## Try it
 
@@ -45,10 +45,10 @@ npm run dev
 3. Press **Quick Play** again. See a waiting room with the player bar filling up.
 4. Open **Playtest controls** and press **Start now**. See the round start on clue 1, YOLO, at ×2.5.
 5. Tap the map, then press **Dig here**. See your balance stay the same, since the fee was paid on joining, and "You'd win on N of N spots right now".
-6. In Playtest controls, press **Skip to next clue**. See a banner, the map go darker, a lower bonus, and your spots change.
+6. In Playtest controls, press **Skip to next clue**. See a banner, a sharper clue, a lower bonus, and your spots change.
 7. Press **End game**. See the possible spots flash, the chest drop, and the scores with the pot split.
 8. Press **Force jackpot** in another round to see a jackpot win.
-9. Go to **Deeds**. Tap a landmark, buy it, and list it for sale. See its flag on the map.
+9. Go to **NFTs**. Buy one from the For sale tab. Then, under My NFTs, list it at your own price.
 10. Go to **Season**. See the prize pool and your rank.
 11. Tap the balance button. Withdraw your coins, or switch account to play as someone else in the same room.
 

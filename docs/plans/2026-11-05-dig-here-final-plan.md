@@ -4,6 +4,8 @@ Date: 2026-11-05. Submissions close 2026-11-14, 23:59 UTC.
 
 This plan turns our discussion into one list of work. Nothing in it is built yet.
 
+**Changed after the first playtest (see each section):** the dimmed map is gone, the first clue's music is back to the original, maps have 40 landmarks in designed places instead of 60 scattered ones, and deeds are a mini NFT marketplace with one NFT per kind of landmark.
+
 Each decision is marked:
 - **[You]** you decided it.
 - **[My call]** I chose it, and you can change it.
@@ -24,7 +26,6 @@ After playing, your main concerns were:
 - New players need a short explanation.
 - One map isn't enough.
 - A round should gather its players first, in a waiting room.
-- A script could work out which map areas are impossible, so only people with scripts would have that edge.
 
 ### Goals
 1. It's more fun over a whole session, not only during one round.
@@ -58,7 +59,7 @@ Waiting Room: 2/3 players... study the map, poke the animals
 Minimum reached → countdown, or host presses Start, or room is full
     ↓
 Round: clue 1 (YOLO, no information, highest bonus)
-    ↓    clue 2 → clue 3 → clue 4: impossible areas go dark each time
+    ↓    clue 2 → clue 3 → clue 4
     ↓    place X → dig → watch your chances change → final seconds
 Reveal: spots flash → chest drops → scores → jackpot? deed payout?
     ↓
@@ -95,26 +96,20 @@ Winnings land in your balance → next room, deed market or season table
 - The game warns them clearly in the last 20 seconds.
 - If fewer than 2 players dug by the end, everyone who joined gets refunded.
 
-### 3.2 Four clues and the dimmed map [You]
+### 3.2 Four clues [You]
 
-A round now has **four clues instead of three**.
+A round has **four clues instead of three**.
 
-| Clue | What it says | Bonus | Starts at | Land still lit (average) |
-|---|---|---|---|---|
-| **1. YOLO** | Nothing. Dig anywhere and gamble. | **×2.5** [Tune] | 0% of the round | 73% |
-| **2. Category** | "Near an animal" | ×1.5 [Tune] | 30% [Tune] | 21% |
-| **3. Kind** | "Near a horse" | ×1.25 [Tune] | 60% [Tune] | 6% |
-| **4. Detail** | "Near a horse, close to water" | ×1 | 85% [Tune] | 4% |
+| Clue | What it says | Bonus | Starts at |
+|---|---|---|---|
+| **1. YOLO** | Nothing. Dig anywhere and gamble. | **×2.5** [Tune] | 0% of the round |
+| **2. Category** | "Near an animal" | ×1.5 [Tune] | 30% [Tune] |
+| **3. Kind** | "Near a horse" | ×1.25 [Tune] | 60% [Tune] |
+| **4. Detail** | "Near a horse, close to water" | ×1 | 85% [Tune] |
 
-**Why the map dims** [You]: clues and landmark positions are public, so a script could work out which areas are impossible. If only script users know that, it's unfair. So the game dims those areas for everyone, and a script gains nothing from it.
+**No dimmed map.** [You] We built it and removed it after playing, because it looked bad. The screen still shows "4 spots possible, about 25% each".
 
-**What lights up:** land within 13 pixels of a landmark that's still possible, because the treasure always lands that close to its landmark. Everything else goes dark, and the landmarks stay visible in the dark. The treasure always lands in a lit area, and a test will check this.
-
-**The YOLO clue also dims a little.** [My call] 27% of the land is too far from any landmark to ever hold the treasure, and a script could work that out on day one. So those areas are dim from the start, for the same fairness reason. This tells players nothing about this round's treasure.
-
-**You can still dig in a dark area.** [My call] Closeness still counts there, and a spot between two lit areas can be a clever choice. The X shows a short note saying the treasure can't land there, but your distance still scores.
-
-**What dimming can't stop:** a script could still calculate the best spot between lit areas, or time its dig perfectly. All the data is public, so we can't prevent that, but the advantage is much smaller. Live standing (section 4.5) gives everyone some of the same insight.
+**Known trade-off:** clues and landmark positions are public, so a script can work out the exact spots that still fit, and a player without one has to find them by eye. The number line helps, but doesn't remove that edge.
 
 ### 3.3 Money
 
@@ -163,7 +158,7 @@ These come from the real rules (`npm run sim`). An earlier quick simulation made
 
 - **Waiting is safer in small rooms, and early digs get stronger as rooms grow.** No timing wins every time in rooms up to about 12 players.
 - **YOLO is a real gamble in small rooms,** which may be fine, because that's what YOLO means. **The last clue is too weak in big rooms.** We check both at the playtest gate.
-- **The simulated players are simple.** They aim near a random landmark that still fits, so they already behave as if they can see the dimmed map, which suits this design. Real players will still differ, so these numbers are a starting point.
+- **The simulated players are simple.** They aim near a random landmark that still fits, so they behave like someone who always finds the spots that fit. Real players will still differ, so these numbers are a starting point.
 
 Other scoring rules stay as they are: ties go to whoever dug first, and if everyone scores 0, the closest wins.
 
@@ -187,20 +182,16 @@ If your dig is within 6 pixels of an earlier dig, your score is multiplied by 0.
 - **Payout cap: at most 100× that round's pot.** [My call] Without this, someone could run tiny rounds with their own wallets to try for a jackpot that others built up.
 - If two players hit the exact pixel, the earlier dig wins.
 
-### 3.7 Landmark deeds [You liked it]
+### 3.7 Landmark NFTs [You]
 
-Every landmark on every map is a deed that one player can own. With 3 maps of 60 landmarks, that's 180 deeds.
+One NFT for each kind of landmark on each map, such as the Snowy Penguin. [You] With 12 kinds on 3 maps, that's about 36. Everything is fake for now, with no contract logic decided yet. [You]
 
-- **First sale:** a fixed price of 1 NEAR [Tune]. The money goes into the jackpot, so we earn nothing from it. [My call]
-- **Earning:** when the treasure lands at your landmark, you get the 2% deed share.
-- **Trading:** a deed isn't for sale until its owner lists it. The owner sets any price and can cancel, and anyone can buy at the listed price.
-- **Fairness:** owners can't influence where the treasure lands, and owning a deed gives no information.
+- **First sale:** a fixed price of 3 NEAR [Tune]. The money goes into the jackpot. [My call]
+- **Earning:** when the treasure lands by any landmark of that kind, the owner gets the 2% share.
+- **Mini marketplace** [You]: an NFT only sells if its owner lists it. The owner sets any price, and can change it or take it off the market. A sale pays the seller.
+- **Fairness:** owners can't influence where the treasure lands, and owning an NFT gives no information.
 
-**Landmarks don't have equal chances.** In the simulation, the chance ranged from 1.05% to 2.64%, where perfectly even would be 1.67%. This comes from how clue 3 narrows things down. I'd leave it as is, because it gives deeds different values, and show each deed's chance on its card so buyers know what they're getting. [My call]
-
-**A host who owns deeds on a map may prefer hosting there.** I previously flagged this as a concern, but it's actually good: owners have a reason to run rounds, and they still can't steer the treasure.
-
-**One deed-buying rule:** buying a deed needs a wallet approval. [My call] See section 7.
+**Kinds don't have equal chances,** because some have more landmarks on the map. Each NFT's card shows its chance so buyers know what they're getting. [My call]
 
 ### 3.8 Season with prizes [You]
 
@@ -303,11 +294,11 @@ The map stays visible so players can study it, and the island toys work here too
 
 - **Clues stay on screen.** Earlier clues stay until the end, so all four show by the last clue. They aren't crossed out, because they're still true.
 - **The bar** shows the round's time and where the bonus drops.
-- **A new clue is a big moment:** its stop lights up, the clue pops in, and the impossible areas sweep to dark, along with the existing banner and music change. [You]
+- **A new clue is a big moment:** its stop lights up and the clue pops in, along with the existing banner and music change. [You]
 - **The YOLO clue** gets its own look, with the parrot saying something like "No clue yet. YOLO!"
 - **On a phone:** one line per clue in plain wording, and the parrot's joke for the newest clue only. Four lines must fit around the map on small phones, so we need to test this at 360×640 early.
 
-**The number line** stays as well as the dimming. [You] It's exact once the final clue is out, because the final pick is equal across whatever remains. Before that it's approximate, so it says "about".
+**The number line** is how players judge the odds. It's exact once the final clue is out, because the final pick is equal across whatever remains. Before that it's approximate, so it says "about".
 
 ### 4.5 After you dig (fixes the boredom) [You asked, ideas are mine]
 
@@ -317,7 +308,7 @@ Built in this order:
 ```
  You'd win on 2 of 4 spots right now
 ```
-- A new clue darkens spots: "Your horse is gone!"
+- A new clue rules out spots: "Your horse is gone!"
 - A new dig can take a spot from you: "mabel.near just stole a spot from you!"
 - The browser works it out from public data, assuming the treasure lands on each landmark. It's labelled "right now", because it can change.
 
@@ -335,7 +326,7 @@ The existing reveal stays. The score table now shows how each score was made (fo
 
 Shows on first visit, with **Skip** and **Don't show again**. A "How to play" button can reopen it. Four short cards:
 
-1. **Read the clues.** The first clue is nothing: YOLO, for the biggest bonus. Three more clues follow, and impossible areas go dark each time.
+1. **Read the clues.** The first clue is nothing: YOLO, for the biggest bonus. Three more clues narrow it down.
 2. **Mark your spot.** Place your X on land. You get one dig per round.
 3. **Dig early or wait.** Score = closeness × bonus, and the bonus drops with each clue. Example: 90 closeness at ×1.5 scores 135, which beats a perfect dig at ×1 (100). Don't dig right next to someone else.
 4. **The treasure appears.** A small animation: four trees light up at 25% each and land on one. Highest score wins the pot, and the exact pixel wins the jackpot.
@@ -350,9 +341,9 @@ Tapping a landmark gives a silly reaction: the duck quacks and runs, the windmil
 
 Shows **game balance** and **wallet** separately, with Deposit (quick amounts plus custom) and Withdraw. If your balance is too low when you join, it opens with the missing amount filled in.
 
-### 4.10 Deed Market (new)
+### 4.10 NFT market (new) [You]
 
-A map view of who owns what. Tapping a landmark shows its owner, price, chance, times the treasure landed there, and total earned, with Buy or List for sale. "My deeds" shows your earnings.
+The map is only the background. You choose from cards, not from the map. Tabs: For sale, All NFTs, My NFTs, with a map filter. Each card shows the art, map, owner, chance, times landed, and earnings, with Buy, List for sale, Change price, or Take off market.
 
 ### 4.11 Season page (new)
 
@@ -368,7 +359,9 @@ Top players, your rank, prize pool, and time left.
 | **Snowy island** | Penguins, pine trees, igloos, snowmen | Cosy and cold |
 | **Desert oasis** | Camels, cacti, tents, wells | Hot and dusty |
 
-**Same on every map:** size, 60 landmarks, the 4 clue categories, and the rules.
+**Same on every map:** size, 40 landmarks from 12 kinds, the 4 clue categories, and the rules.
+
+**Designed places, not scatter** [You asked for a better map]: landmarks are grouped into villages, farms, forests and harbours, with hills, paths, streams, bridges and ground detail between them.
 
 **Different on every map:** coast shape, landmarks, colours, clue jokes, and a music variation.
 
@@ -386,7 +379,7 @@ Top players, your rank, prize pool, and time left.
 | `types.ts` | Room stages, map ID, min and max players, countdown, joined players, crowding, deed, jackpot and season types. Clues stored as IDs, with wording in the UI. |
 | `rules.ts` | All the new numbers from section 3. |
 | `engine.ts` | Join, leave, start, deadline, dig with crowding, whole-number scoring, pot split, jackpot, deed share, season points, and `standing()` for live standing. |
-| `clues.ts` | Works per map. Four clues, where the first rolls nothing. Wording moves to per-map files. Adds `possibleCells()`, the lit area for the dimming. |
+| `clues.ts` | Works per map. Four clues, where the first rolls nothing. Wording moves to per-map files. |
 | `map.ts` | `MAPS[mapId]`. `MAP` is used directly in 7 files today, and all of them change. |
 | `sim.ts` (new) | Balance simulation in the repo, so re-testing a number takes one command. |
 
@@ -409,7 +402,7 @@ Top players, your rank, prize pool, and time left.
 ### Island (`src/lib/world/`)
 - `terrain.ts`: bakes and caches each map, with its own colours.
 - `sprites.ts`: about 18 new sprites and per-map palettes.
-- `world.ts`: `enterGame` takes a map, plus the dimming and its sweep animation, toy reactions, crowding circles, and final-seconds effects.
+- `world.ts`: `enterGame` takes a map, plus toy reactions, crowding circles, and final-seconds effects.
 
 ### Audio (`src/lib/audio/`)
 - A fourth music intensity level for the extra clue, per-map music variations, plus new sounds for joining, room filling, a spot being stolen, and the jackpot.
@@ -447,7 +440,6 @@ I said a stolen limited key "could only spend balance on digs". That's true, but
 | **Randomness limits, from NEAR's docs** | A block's validator can predict the seed and could refuse to include a transaction. Others can't predict it. We'd disclose this. It's acceptable on testnet, and it would need a stronger design before real money. |
 | **Decimals** | Whole-number maths only, using pixels and basis points. A contract can't use the current `Math.cos` and decimal scoring. |
 | **Land check** | Export each map to a land grid and landmark table, which the contract includes as data. |
-| **Dimming** | Needs nothing on chain. The browser works it out from the public clues and map data. |
 | **Last-second digs** | `dig` includes the clue the player saw. If the bonus changed before it landed, the dig is rejected instead of quietly scoring less, and the player can retry. The fee stays safe. |
 | **Storage cost** (1 NEAR per 100 KB) | Bond and registration cover it. Fixed player limits, name length limits, and old rooms deleted. |
 | **Game list without a server** | View calls with paging, then sort and filter in the browser. |
@@ -467,7 +459,7 @@ Social or email login through NEAR Auth. Its docs show a React SDK and a testnet
 | Level | What |
 |---|---|
 | **Rule tests** | Every rule in section 3. Money is never lost or created in any split, refund or payout. Updates the existing 57 tests. |
-| **Map tests** | For all 3 maps: landmark spacing, on land, enough of each kind, and every clue path ends with a valid spot. **The treasure always lands in a lit area.** |
+| **Map tests** | For all 3 maps: landmark spacing, on land, enough of each kind, and every clue path ends with a valid spot. The treasure always lands near a landmark that fits the clues. |
 | **Balance simulation** | Re-run whenever a number changes. |
 | **Browser tests** | Full journey on 5 phone and desktop sizes with touch, as we did before: tutorial, deposit, join, wait, dig, reveal, withdraw. |
 | **You playing** | Fun and sound can only be judged by you. Real phones too. I'd ask before using your Galaxy A73. |
@@ -499,7 +491,7 @@ You chose game first, which is the right order. But if the rules keep changing a
 1. Dig tray (players can only follow one room at a time)
 2. Island toys beyond a handful
 3. Third map (ship 2)
-4. Deed resale (players can buy deeds but not resell them)
+4. NFT resale (players can buy NFTs but not list them)
 5. Automatic season ending (a simpler points table, with no on-chain prizes)
 
 **Never cut:** the contract, deposit, waiting room, clue trail, tutorial, Game Board, crowding, and the jackpot.
@@ -513,8 +505,8 @@ You chose game first, which is the right order. But if the rules keep changing a
 | **Too much for 10 days.** This is a lot of work, deeds and seasons especially | Contract rushed or missing | The Nov 9 freeze and the cut list |
 | **Rules get complicated** | Fails the 10-second test | Tutorial covers only clues, dig, score, and jackpot. Deeds and seasons stay optional. |
 | **A lone judge can't get past the waiting room** | Judge never sees the best part | **Must be solved at the Nov 9 gate** (section 11) |
+| **Scripts can see the exact possible spots** | Script users find spots faster than people searching by eye | The number line helps. We accepted this when removing the dimmed map. |
 | **Multi-wallet farming** | Unfair seasons and crowding abuse | Rewards scale with the pot, the jackpot has a cap, and we disclose the weakness. |
-| **The dimmed map makes late digs too easy,** or removes the fun of searching | Waiting becomes the best play, or the map feels solved | The bonus keeps early digs valuable. Check this at the playtest gate. |
 | **Testing shows the numbers are wrong** | Rounds feel unfair | All numbers live in one file and can be re-simulated. |
 | **Phones run out of space** | Clue trail crowds the map | Test at 360×640 early. |
 | **Real players take time to confirm** | Dig timing feels bad | Fake delay rehearses this from stage 1. |

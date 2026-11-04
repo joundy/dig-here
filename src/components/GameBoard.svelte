@@ -99,7 +99,7 @@
     <a class="btn alt" href="#/new">Host a game</a>
     <div class="jackpot"><JackpotBadge compact={compact || ui.short} /></div>
     <div class="links">
-      <a href="#/deeds">Deeds</a>
+      <a href="#/deeds">NFTs</a>
       <a href="#/season">Season</a>
     </div>
   </div>

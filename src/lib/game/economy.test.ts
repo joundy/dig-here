@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  balanceOf, buyDeed, closeSeason, deedId, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, newLedger, openRoom,
+  balanceOf, buyDeed, closeSeason, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, newLedger, openRoom,
   payRoom, seasonRanking, totalMoney, walletOf, withdraw,
 } from './economy';
 import type { Ledger } from './economy';
+import { deedChance } from './clues';
 import { advance, finishAt, placeDig, startGame } from './engine';
 import { getMap, MAP_IDS, seededRng } from './map';
 import { RULES } from './rules';
@@ -137,7 +138,8 @@ describe('payout', () => {
     const owner = 'owner.near';
     fund(ledger, [owner]);
     const landing = 5;
-    buyDeed(ledger, owner, deedId('tropical', landing));
+    const kind = getMap('tropical').landmarks[landing].kind;
+    buyDeed(ledger, owner, deedId('tropical', kind));
     const jackpotBefore = ledger.jackpot;
     const spots = { 'p0.near': 0, 'p1.near': 1 };
     // Off by one pixel, so the jackpot isn't hit.
@@ -149,7 +151,7 @@ describe('payout', () => {
     expect(balanceOf(ledger, 'host.near')).toBe(50000 + 500);
     expect(balanceOf(ledger, game.result!.winner!)).toBe(49000 + 8900);
     expect(game.result!.deedOwner).toBe(owner);
-    expect(deedOf(ledger, deedId('tropical', landing))).toMatchObject({ earned: 200, landings: 1 });
+    expect(deedOf(ledger, deedId('tropical', kind))).toMatchObject({ earned: 200, landings: 1 });
   });
 
   it('sends the deed share to the jackpot when nobody owns the landmark', () => {
@@ -208,7 +210,13 @@ describe('jackpot', () => {
 });
 
 describe('deeds', () => {
-  const id = deedId('snowy', 3);
+  const kind = getMap('snowy').landmarks[0].kind;
+  const id = deedId('snowy', kind);
+
+  it('is one deed per kind per map', () => {
+    expect(deedKinds('snowy')).toContain(kind);
+    expect(new Set(deedKinds('snowy')).size).toBe(deedKinds('snowy').length);
+  });
 
   it('sends the first sale into the jackpot', () => {
     const ledger = newLedger(NOW);
@@ -218,28 +226,41 @@ describe('deeds', () => {
     expect(deedOf(ledger, id).owner).toBe('a.near');
   });
 
-  it('isn\'t for sale until listed, and resale pays the seller', () => {
+  it('can\'t be bought from an owner until they list it, and a sale pays the seller', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near', 'b.near']);
     buyDeed(ledger, 'a.near', id);
+    expect(deedOf(ledger, id).price).toBeNull();
     expect(() => buyDeed(ledger, 'b.near', id)).toThrow(/for sale/);
-    expect(() => buyDeed(ledger, 'a.near', id)).toThrow(/already/);
     expect(() => listDeed(ledger, 'b.near', id, 3000)).toThrow(/own/);
     expect(() => listDeed(ledger, 'a.near', id, 0)).toThrow(GameError);
-    listDeed(ledger, 'a.near', id, 3000);
+    listDeed(ledger, 'a.near', id, 7000);
     buyDeed(ledger, 'b.near', id);
-    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedFirstPrice + 3000);
-    expect(balanceOf(ledger, 'b.near')).toBe(47000);
+    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedFirstPrice + 7000);
+    expect(balanceOf(ledger, 'b.near')).toBe(50000 - 7000);
     expect(deedOf(ledger, id)).toMatchObject({ owner: 'b.near', price: null });
   });
 
-  it('can be taken off sale', () => {
+  it('can be taken off the market', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near', 'b.near']);
     buyDeed(ledger, 'a.near', id);
     listDeed(ledger, 'a.near', id, 3000);
     listDeed(ledger, 'a.near', id, null);
     expect(() => buyDeed(ledger, 'b.near', id)).toThrow(/for sale/);
+  });
+
+  it('won\'t let you buy your own, or pay a price you didn\'t agree to', () => {
+    const ledger = newLedger(NOW);
+    fund(ledger, ['a.near', 'b.near']);
+    buyDeed(ledger, 'a.near', id);
+    expect(() => buyDeed(ledger, 'a.near', id)).toThrow(/already/);
+    listDeed(ledger, 'a.near', id, 4000);
+    listDeed(ledger, 'a.near', id, 9000);
+    expect(() => buyDeed(ledger, 'b.near', id, 4000)).toThrow(/price/);
+    expect(balanceOf(ledger, 'b.near')).toBe(50000);
+    buyDeed(ledger, 'b.near', id, 9000);
+    expect(deedOf(ledger, id).owner).toBe('b.near');
   });
 
   it('charges nothing if the buyer can\'t afford it', () => {
@@ -249,6 +270,13 @@ describe('deeds', () => {
     expect(() => buyDeed(ledger, 'a.near', id)).toThrow(GameError);
     expect(deedOf(ledger, id).owner).toBeNull();
     expect(ledger.jackpot).toBe(0);
+  });
+
+  it('gives every deed a chance, adding up to 1 across a map', () => {
+    for (const mapId of MAP_IDS) {
+      const total = deedKinds(mapId).reduce((sum, k) => sum + deedChance(mapId, k), 0);
+      expect(total).toBeCloseTo(1, 8);
+    }
   });
 });
 
@@ -326,7 +354,7 @@ it('never creates or loses a coin through hundreds of random rounds', () => {
     if (game.stage === 'waiting' && game.players.length >= game.minPlayers && r(5) > 0) {
       startGame(game, host, r);
       const { landmarks } = getMap(mapId);
-      for (const p of game.players) if (r(5) > 0) placeDig(game, p, landmarks[r(60)]);
+      for (const p of game.players) if (r(5) > 0) placeDig(game, p, landmarks[r(landmarks.length)]);
       advance(game, 100, r);
     } else {
       advance(game, RULES.waitingDeadlineSec, r);
@@ -334,7 +362,8 @@ it('never creates or loses a coin through hundreds of random rounds', () => {
     }
     payRoom(ledger, game);
     if (r(10) === 0) {
-      const id = deedId(mapId, r(60));
+      const kinds = deedKinds(mapId);
+      const id = deedId(mapId, kinds[r(kinds.length)]);
       const buyer = people[r(people.length)];
       try { buyDeed(ledger, buyer, id); listDeed(ledger, buyer, id, 1 + r(3000)); } catch (e) { expect(e).toBeInstanceOf(GameError); }
     }

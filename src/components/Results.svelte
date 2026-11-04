@@ -78,9 +78,9 @@
   });
 
   const deedLine = $derived.by(() => {
-    if (!result.deedOwner) return `Nobody owns this ${kind}, so the share went to the jackpot.`;
-    if (result.deedOwner === me) return `You own this ${kind}, so you earned ${near(result.split.deed)}.`;
-    return `The ${kind}'s owner ${result.deedOwner} earned ${near(result.split.deed)}.`;
+    if (!result.deedOwner) return `Nobody owns the ${kind} NFT, so the share went to the jackpot.`;
+    if (result.deedOwner === me) return `You own the ${kind} NFT, so you earned ${near(result.split.deed)}.`;
+    return `${result.deedOwner} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
   });
 
   const refundLine = $derived(result.refundReason === 'expired' ? 'Not enough players joined.' : `A game needs ${RULES.minDigs} digs.`);
@@ -88,7 +88,7 @@
     { label: 'Winner', amount: result.split.prize },
     { label: game.host === me ? 'You hosted' : 'Host', amount: result.split.hostCut },
     { label: 'Jackpot', amount: result.split.jackpot },
-    { label: 'Deed share', amount: result.split.deed },
+    { label: 'NFT owner', amount: result.split.deed },
     { label: 'Season', amount: result.split.season },
   ]);
 </script>

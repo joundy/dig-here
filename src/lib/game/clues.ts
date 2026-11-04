@@ -1,5 +1,5 @@
 import { getMap } from './map';
-import type { Clue, Game, Landmark, MapId, Rng, Tag } from './types';
+import type { Clue, Game, Kind, Landmark, MapId, Rng, Tag } from './types';
 
 function landmarksOf(mapId: MapId, ids: number[]): Landmark[] {
   const { landmarks } = getMap(mapId);
@@ -78,4 +78,10 @@ export function landingChance(mapId: MapId): number[] {
   });
   chances.set(mapId, result);
   return result;
+}
+
+/** The chance the treasure lands by any landmark of this kind, which is what a deed earns on. */
+export function deedChance(mapId: MapId, kind: Kind): number {
+  const chance = landingChance(mapId);
+  return getMap(mapId).landmarks.reduce((sum, l) => (l.kind === kind ? sum + chance[l.id] : sum), 0);
 }

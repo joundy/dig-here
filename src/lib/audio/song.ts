@@ -32,16 +32,9 @@ type HuntLevel = {
   tempo: number;
   lift: number;
   leadVolume: number;
-  leadDuty: number;
-  /** Fraction of each note that sounds. Below 0.92 the lead turns choppy. */
-  leadGate: number;
-  leadEcho: boolean;
-  /** Long notes sag at the end, like someone playing with one hand. */
-  leadSag: boolean;
   harmony: boolean;
   octave: boolean;
   arpeggio: boolean;
-  bass: { step: number; offset: number }[];
   kicks: number[];
   snares: number[];
   hats: number[];
@@ -59,29 +52,12 @@ const BASS_STEPS = [
 
 const everyNth = (n: number) => Array.from({ length: STEPS_PER_BAR / n }, (_, i) => i * n);
 
-const BUILDING = { tempo: 1, lift: 0, leadDuty: 0.25, leadGate: 0.92, leadEcho: true, leadSag: false, bass: BASS_STEPS };
-
-/** Index is the music intensity: 0 YOLO clue, then 1, 2 and 3 as more clues land. */
+/** Index is the music intensity, which steps up with each clue. */
 export const HUNT_LEVELS: HuntLevel[] = [
-  {
-    ...BUILDING,
-    leadVolume: 0.13,
-    leadDuty: 0.125,
-    leadGate: 0.55,
-    leadEcho: false,
-    leadSag: true,
-    harmony: false,
-    octave: false,
-    arpeggio: false,
-    bass: [BASS_STEPS[0], BASS_STEPS[4]],
-    kicks: [0, 11],
-    snares: [],
-    hats: [14],
-    fill: false,
-  },
-  { ...BUILDING, leadVolume: 0.13, harmony: false, octave: false, arpeggio: false, kicks: [0, 8], snares: [12], hats: everyNth(4), fill: false },
-  { ...BUILDING, leadVolume: 0.17, harmony: true, octave: false, arpeggio: true, kicks: [0, 6, 8], snares: [4, 12], hats: everyNth(2), fill: true },
-  { ...BUILDING, tempo: 1.1, lift: 2, leadVolume: 0.17, harmony: true, octave: true, arpeggio: true, kicks: [0, 3, 6, 8, 11], snares: [4, 12], hats: everyNth(1), fill: true },
+  { tempo: 1, lift: 0, leadVolume: 0.13, harmony: false, octave: false, arpeggio: false, kicks: [0, 8], snares: [], hats: everyNth(4), fill: false },
+  { tempo: 1, lift: 0, leadVolume: 0.13, harmony: false, octave: false, arpeggio: false, kicks: [0, 8], snares: [12], hats: everyNth(4), fill: false },
+  { tempo: 1, lift: 0, leadVolume: 0.17, harmony: true, octave: false, arpeggio: true, kicks: [0, 6, 8], snares: [4, 12], hats: everyNth(2), fill: true },
+  { tempo: 1.1, lift: 2, leadVolume: 0.17, harmony: true, octave: true, arpeggio: true, kicks: [0, 3, 6, 8, 11], snares: [4, 12], hats: everyNth(1), fill: true },
 ];
 
 function clampIntensity(intensity: number): number {
@@ -129,14 +105,14 @@ export function scheduleBar(ac: BaseAudioContext, buses: Buses, name: TrackName,
     : scheduleHunt(ac, buses, barIndex, intensity, start, map);
 }
 
-function altLead(ac: BaseAudioContext, { dry, send }: Buses, style: LeadStyle, t: number, f: number, d: number, volume: number, slideTo?: number) {
+function altLead(ac: BaseAudioContext, { dry, send }: Buses, style: LeadStyle, t: number, f: number, d: number, volume: number) {
   if (style === 'chime') {
-    tone(ac, dry, t, f, d, volume, { type: 'sine', sustain: 0.3, slideTo });
+    tone(ac, dry, t, f, d, volume, { type: 'sine', sustain: 0.3 });
     tone(ac, dry, t, f * 2, d * 0.6, volume * 0.22, { type: 'sine', sustain: 0.2 });
     tone(ac, dry, t, f * 3, Math.min(d, 0.08), volume * 0.12, { type: 'sine', sustain: 0.2 });
     tone(ac, send, t, f, d, volume * 0.4, { type: 'sine', sustain: 0.3 });
   } else {
-    tone(ac, dry, t, f, d, volume * 0.9, { duty: 0.5, vibrato: true, sustain: 0.55, slideTo });
+    tone(ac, dry, t, f, d, volume * 0.9, { duty: 0.5, vibrato: true, sustain: 0.55 });
     tone(ac, send, t, f, d, volume * 0.4, { duty: 0.25 });
   }
 }
@@ -203,14 +179,13 @@ function scheduleHunt(ac: BaseAudioContext, buses: Buses, barIndex: number, inte
   for (const n of bar.lead) {
     const written = noteToMidi(n.note);
     const f = midiToFreq(pitch(written));
-    const d = n.length * s * level.leadGate;
-    const volume = breakdown && levelIndex > 0 ? 0.15 : level.leadVolume;
-    const slideTo = level.leadSag && n.length >= 4 ? f * 0.94 : undefined;
+    const d = n.length * s * 0.92;
+    const volume = breakdown ? 0.15 : level.leadVolume;
     if (map.lead === 'pulse') {
-      tone(ac, dry, at(n.step), f, d, volume, { duty: breakdown ? 0.5 : level.leadDuty, vibrato: true, slideTo });
-      if (level.leadEcho) tone(ac, send, at(n.step), f, d, volume * 0.5, { duty: 0.25 });
+      tone(ac, dry, at(n.step), f, d, volume, { duty: breakdown ? 0.5 : 0.25, vibrato: true });
+      tone(ac, send, at(n.step), f, d, volume * 0.5, { duty: 0.25 });
     } else {
-      altLead(ac, buses, map.lead, at(n.step), f, d, volume, slideTo);
+      altLead(ac, buses, map.lead, at(n.step), f, d, volume);
     }
     if (bar.section === 'A2' && level.harmony && !map.sparse) {
       tone(ac, dry, at(n.step), midiToFreq(pitch(thirdBelow(written))), d, volume * 0.5, { duty: 0.125 });
@@ -220,12 +195,12 @@ function scheduleHunt(ac: BaseAudioContext, buses: Buses, barIndex: number, inte
     }
   }
 
-  for (const { step, offset } of map.sparse ? level.bass.filter((b) => b.step % 2 === 0) : level.bass) {
+  for (const { step, offset } of map.sparse ? BASS_STEPS.filter((b) => b.step % 2 === 0) : BASS_STEPS) {
     const midi = pitch(CHORD_ROOT_MIDI[chordAt(bar, step)] + offset);
     playBass(ac, dry, at(step), midiToFreq(midi), s * 2.2, 0.26, map);
   }
 
-  if (level.arpeggio || (breakdown && levelIndex > 0)) {
+  if (level.arpeggio || breakdown) {
     const pattern = [0, 1, 2, 3, 2, 1];
     for (let step = 0; step < STEPS_PER_BAR; step += map.sparse ? 2 : 1) {
       const notes = chordNotes(chordAt(bar, step), 72);

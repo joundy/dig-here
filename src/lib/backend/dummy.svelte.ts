@@ -140,7 +140,7 @@ class DummyBackend implements GameBackend {
     return this.#tx((a) => { placeDig(this.#find(gameId), a, spot, seenClue); });
   }
 
-  buyDeed(id: string) { return this.#tx((a) => economy.buyDeed(this.#state.ledger, a, id)); }
+  buyDeed(id: string, seenPrice: number) { return this.#tx((a) => economy.buyDeed(this.#state.ledger, a, id, seenPrice)); }
   listDeed(id: string, price: number | null) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
 
   // Playtest controls. These exist only on the dummy and aren't part of GameBackend.
@@ -276,13 +276,8 @@ class DummyBackend implements GameBackend {
 
     // Bots own about a third of the deeds, which is also what fills the jackpot at the start.
     for (const mapId of MAP_IDS) {
-      for (const { id } of getMap(mapId).landmarks) {
-        if (Math.random() > 0.33) continue;
-        const owner = pickFrom(BOT_NAMES);
-        this.#fundBot(owner, RULES.deedFirstPrice);
-        const deed = economy.deedId(mapId, id);
-        economy.buyDeed(ledger, owner, deed);
-        if (Math.random() < 0.4) economy.listDeed(ledger, owner, deed, 1200 + mathRng(30) * 100);
+      for (const kind of economy.deedKinds(mapId)) {
+        if (Math.random() < 0.34) this.#botBuyDeed(economy.deedId(mapId, kind));
       }
     }
 
@@ -302,6 +297,18 @@ class DummyBackend implements GameBackend {
       this.#advanceGame(games[0], Math.random() * 25);
     }
     for (let i = 0; i < 4; i++) this.#botHostRoom(true);
+  }
+
+  /** A bot buys a deed if it can, and sometimes lists it straight away for more than it paid. */
+  #botBuyDeed(id: string) {
+    const { ledger } = this.#state;
+    const buyer = pickFrom(BOT_NAMES);
+    const deed = economy.deedOf(ledger, id);
+    const cost = economy.deedCost(deed);
+    if (deed.owner === buyer || cost === null) return;
+    this.#fundBot(buyer, cost);
+    economy.buyDeed(ledger, buyer, id);
+    if (Math.random() < 0.55) economy.listDeed(ledger, buyer, id, Math.round(cost * (1.1 + Math.random() * 1.4) / 100) * 100);
   }
 
   /** Runs a bot room through its waiting stage and part of its round. */
@@ -328,6 +335,12 @@ class DummyBackend implements GameBackend {
       for (const id of drop) delete this.#state.bots[id];
     }
     if (Date.now() >= ledger.season.endsAt) economy.closeSeason(ledger, Date.now());
+
+    // Now and then a bot buys a deed, so the market keeps moving on its own.
+    if (Math.random() < 0.002 * this.speed) {
+      const mapId = pickFrom(MAP_IDS);
+      this.#botBuyDeed(economy.deedId(mapId, pickFrom(economy.deedKinds(mapId))));
+    }
   }
 
   #advanceGame(game: Game, seconds: number) {

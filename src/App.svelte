@@ -29,7 +29,7 @@
 
   const inGame = $derived(route.name === 'game');
   // These pages are one wide panel with the island behind it, rather than a map and a rail.
-  const full = $derived(route.name === 'lobby' || route.name === 'season');
+  const full = $derived(route.name === 'lobby' || route.name === 'season' || route.name === 'deeds');
 
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -45,7 +45,7 @@
 
   // NewGame and DeedMarket choose their own map.
   $effect(() => {
-    if (full) world.showMap('tropical');
+    if (full && route.name !== 'deeds') world.showMap('tropical');
   });
 
   // Once per visit, so a reload in the middle of a round never covers the map.

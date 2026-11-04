@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { landingChance } from './clues';
 import { clueText } from './copy';
 import {
-  advance, createGame, currentBonus, finishAt, joinGame, leaveGame, placeDig, possibleArea, potOf, rankDigs, scoreDig,
+  advance, createGame, currentBonus, finishAt, joinGame, leaveGame, placeDig, potOf, rankDigs, scoreDig,
   secondsToNextClue, splitPot, standing, startGame,
 } from './engine';
 import { getMap, H, isLand, MAP_IDS, seededRng, W } from './map';
@@ -150,7 +150,7 @@ describe('clues', () => {
   it('starts with a YOLO clue that narrows nothing and pays the top bonus', () => {
     const game = live();
     expect(game.clues).toEqual([{ level: 'yolo' }]);
-    expect(game.candidateIds).toHaveLength(60);
+    expect(game.candidateIds).toHaveLength(getMap('tropical').landmarks.length);
     expect(currentBonus(game)).toBe(25000);
   });
 
@@ -208,38 +208,21 @@ describe('treasure', () => {
     expect(JSON.stringify(game)).not.toContain('treasure');
   });
 
-  it.each(MAP_IDS)('always lands on land inside the lit area on %s', (mapId) => {
+  it.each(MAP_IDS)('always lands on land, close to a landmark that fits the clues, on %s', (mapId) => {
     for (let seed = 0; seed < 150; seed++) {
       const r = seededRng(seed);
       const game = live(['a.near', 'b.near'], { mapId });
       placeDig(game, 'a.near', landSpot(game, 0));
       placeDig(game, 'b.near', landSpot(game, 1));
       advance(game, 99, r);
-      const area = possibleArea(mapId, game.candidateIds);
       const candidates = [...game.candidateIds];
       advance(game, 1, r);
       const t = game.result!.treasure!;
+      const landmark = getMap(mapId).landmarks[t.landmarkId];
       expect(isLand(mapId, t)).toBe(true);
-      expect(area[t.y * W + t.x]).toBe(1);
       expect(candidates).toContain(t.landmarkId);
+      expect(Math.hypot(t.x - landmark.x, t.y - landmark.y)).toBeLessThanOrEqual(RULES.treasureScatter);
     }
-  });
-});
-
-describe('possible area', () => {
-  it('only covers land near the given landmarks', () => {
-    const map = getMap('tropical');
-    const area = possibleArea('tropical', [0]);
-    let lit = 0;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        if (!area[y * W + x]) continue;
-        lit++;
-        expect(map.land[y * W + x]).toBe(1);
-        expect(Math.hypot(x - map.landmarks[0].x, y - map.landmarks[0].y)).toBeLessThanOrEqual(RULES.treasureScatter);
-      }
-    }
-    expect(lit).toBeGreaterThan(50);
   });
 });
 
@@ -279,9 +262,8 @@ describe('scoring', () => {
 
   it('doesn\'t crowd a dig just outside the radius', () => {
     const game = live();
-    const area = possibleArea(game.mapId, game.candidateIds);
     let a: Point | null = null;
-    for (let i = 0; i < area.length && !a; i++) {
+    for (let i = 0; i < W * H && !a; i++) {
       const x = i % W;
       const y = Math.floor(i / W);
       if (isLand(game.mapId, { x, y }) && isLand(game.mapId, { x: x + RULES.crowdRadius + 1, y })) a = { x, y };
@@ -353,14 +335,15 @@ describe('standing', () => {
     expect(standing(game, 'a.near')).toBeNull();
     placeDig(game, 'a.near', landSpot(game, 0));
     const alone = standing(game, 'a.near')!;
-    expect(alone.of).toBe(60);
-    expect(alone.wins).toHaveLength(60);
+    const count = getMap('tropical').landmarks.length;
+    expect(alone.of).toBe(count);
+    expect(alone.wins).toHaveLength(count);
     placeDig(game, 'b.near', landSpot(game, 1));
     const shared = standing(game, 'a.near')!;
     const theirs = standing(game, 'b.near')!;
     expect(shared.wins).toContain(0);
     expect(theirs.wins).toContain(1);
-    expect(shared.wins.length + theirs.wins.length).toBe(60);
+    expect(shared.wins.length + theirs.wins.length).toBe(count);
   });
 });
 

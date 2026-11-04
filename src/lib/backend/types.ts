@@ -30,7 +30,8 @@ export interface GameBackend {
   start(gameId: string): Promise<void>;
   /** `seenClue` is how many clues the player could see, so a new clue can't quietly cost them bonus. */
   dig(gameId: string, spot: Point, seenClue: number): Promise<void>;
-  buyDeed(id: string): Promise<void>;
-  /** A null price takes it off sale. */
+  /** `seenPrice` is the price the buyer agreed to. */
+  buyDeed(id: string, seenPrice: number): Promise<void>;
+  /** A null price takes it off the market. */
   listDeed(id: string, price: number | null): Promise<void>;
 }

@@ -11,7 +11,7 @@
 
   const NAV = [
     { name: 'lobby', href: '#/', label: 'Games' },
-    { name: 'deeds', href: '#/deeds', label: 'Deeds' },
+    { name: 'deeds', href: '#/deeds', label: 'NFTs' },
     { name: 'season', href: '#/season', label: 'Season' },
   ];
 

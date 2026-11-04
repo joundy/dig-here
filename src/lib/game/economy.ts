@@ -2,13 +2,15 @@
 import { createGame, isOpen, joinGame, leaveGame } from './engine';
 import { RULES } from './rules';
 import { GameError } from './types';
-import type { Game, MapId, NewGameInput } from './types';
+import { getMap } from './map';
+import type { Game, Kind, MapId, NewGameInput } from './types';
 
-export type DeedId = `${MapId}:${number}`;
+/** One deed per kind of landmark per map, like the Snowy Penguin. */
+export type DeedId = `${MapId}:${Kind}`;
 
 export type Deed = {
   owner: string | null;
-  /** Null means not for sale. */
+  /** What the owner is asking. Null means it isn't listed. */
   price: number | null;
   earned: number;
   landings: number;
@@ -119,8 +121,13 @@ function record(ledger: Ledger, host: string, field: keyof HostRecord): void {
   ledger.hosts[host][field]++;
 }
 
-export function deedId(mapId: MapId, landmarkId: number): DeedId {
-  return `${mapId}:${landmarkId}`;
+export function deedId(mapId: MapId, kind: Kind): DeedId {
+  return `${mapId}:${kind}`;
+}
+
+/** The kinds of landmark on a map, each of which is one deed. */
+export function deedKinds(mapId: MapId): Kind[] {
+  return [...new Set(getMap(mapId).landmarks.map((l) => l.kind))];
 }
 
 export function deedOf(ledger: Ledger, id: string): Deed {
@@ -157,8 +164,8 @@ export function payRoom(ledger: Ledger, game: Game): void {
   ledger.jackpot += split.jackpot;
   record(ledger, game.host, 'finished');
 
-  // The deed share goes to the owner of wherever the treasure landed, or the jackpot if nobody owns it.
-  const id = deedId(game.mapId, treasure!.landmarkId);
+  // The deed share goes to the owner of the kind of landmark the treasure landed by, or the jackpot if nobody owns it.
+  const id = deedId(game.mapId, getMap(game.mapId).landmarks[treasure!.landmarkId].kind);
   const deed = deedOf(ledger, id);
   deed.landings++;
   if (deed.owner) {
@@ -191,26 +198,33 @@ export function payRoom(ledger: Ledger, game: Game): void {
   }
 }
 
-export function buyDeed(ledger: Ledger, account: string, id: string): void {
+/** What buying this deed costs right now, or null if the owner hasn't listed it. Nobody owns it at first. */
+export function deedCost(deed: Deed): number | null {
+  return deed.owner === null ? RULES.deedFirstPrice : deed.price;
+}
+
+/**
+ * `seenPrice` is the price the buyer agreed to, so an owner raising it while the purchase is on its
+ * way can't cost them more than they expected.
+ */
+export function buyDeed(ledger: Ledger, account: string, id: string, seenPrice?: number): void {
   const deed = deedOf(ledger, id);
-  if (deed.owner === account) throw new GameError('You already own this deed.');
-  if (deed.owner === null) {
-    spend(ledger, account, RULES.deedFirstPrice);
-    ledger.jackpot += RULES.deedFirstPrice;
-  } else {
-    if (deed.price === null) throw new GameError('This deed isn\'t for sale.');
-    spend(ledger, account, deed.price);
-    credit(ledger, deed.owner, deed.price);
-  }
+  const cost = deedCost(deed);
+  if (deed.owner === account) throw new GameError('You already own this NFT.');
+  if (cost === null) throw new GameError('This NFT isn\'t for sale.');
+  if (seenPrice !== undefined && seenPrice !== cost) throw new GameError('The price just changed. Check it and try again.');
+  spend(ledger, account, cost);
+  if (deed.owner === null) ledger.jackpot += cost;
+  else credit(ledger, deed.owner, cost);
   deed.owner = account;
   deed.price = null;
   ledger.deeds[id] = deed;
 }
 
-/** Puts a deed up for sale, or takes it off with a null price. */
+/** Lists a deed for sale at a price, or takes it off the market with null. */
 export function listDeed(ledger: Ledger, account: string, id: string, price: number | null): void {
   const deed = deedOf(ledger, id);
-  if (deed.owner !== account) throw new GameError('You don\'t own this deed.');
+  if (deed.owner !== account) throw new GameError('You don\'t own this NFT.');
   if (price !== null && (!Number.isInteger(price) || price <= 0)) throw new GameError('Set a price above 0.');
   deed.price = price;
 }

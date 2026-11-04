@@ -7,7 +7,7 @@
   import Sprite from './Sprite.svelte';
 
   const CARDS = [
-    { title: 'Read the clues', text: 'The first clue is nothing: YOLO, for the biggest bonus. Three more follow, and impossible areas go dark each time.' },
+    { title: 'Read the clues', text: 'The first clue is nothing: YOLO, for the biggest bonus. Three more follow, and each one narrows it down.' },
     { title: 'Mark your spot', text: 'Put your X on land. You get one dig per round.' },
     { title: 'Dig early or wait', text: 'Score = closeness × bonus, and the bonus drops with each clue. 90 close at ×1.5 beats a perfect dig at ×1. Don\'t dig right next to someone else.' },
     { title: 'The treasure appears', text: 'Only when the timer ends. Highest score wins the pot. The exact pixel wins the jackpot.' },
