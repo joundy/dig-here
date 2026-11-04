@@ -1,0 +1,219 @@
+:root {
+  --sea: #155fc4;
+  --deep: #123f9a;
+  --sand: #ffd766;
+  --ink: #141b3c;
+  --sun: #ffc800;
+  --pink: #ff5ea8;
+  --foam: #f7f7ee;
+  --mist: #cfe0fb;
+
+  /* One art pixel on the board is three screen pixels, and the UI borders match it. */
+  --px: 3px;
+
+  --display: 'Jersey 10', ui-monospace, monospace;
+  --body: 'Jersey 20', ui-monospace, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--sea);
+  color: var(--foam);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.2;
+  font-synthesis: none;
+  -webkit-font-smoothing: none;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* A round on a phone is one screen, like an app: the page itself never scrolls or bounces. */
+.app.locked {
+  position: fixed;
+  inset: 0;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--foam);
+  outline-offset: 2px;
+}
+
+/* Phone upright: one column. In a round the rail's parts sit directly around the map. */
+.stage.compact {
+  display: block;
+  padding: 0 0.75rem calc(1.5rem + env(safe-area-inset-bottom));
+}
+
+.stage.compact .board-wrap {
+  position: static;
+  margin: 0 -0.75rem 0.5rem;
+}
+
+.stage.compact.new .board-wrap {
+  display: none;
+}
+
+.stage.compact.game {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.stage.compact.game .board-wrap {
+  order: 2;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+}
+
+.stage.compact.game .rail {
+  display: contents;
+}
+
+/* Phone sideways: map and rail side by side, with only the rail scrolling. */
+.stage.short {
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: max-content minmax(260px, 1fr);
+  padding: 0 calc(0.5rem + env(safe-area-inset-right)) 0 calc(0.5rem + env(safe-area-inset-left));
+}
+
+.stage.short .board-wrap {
+  position: static;
+}
+
+.stage.short .rail {
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: 1rem;
+}
+
+/* The island on the left, sized in whole pixels, and everything else in the rail beside it. */
+.stage {
+  display: grid;
+  grid-template-columns: max-content minmax(320px, 460px);
+  justify-content: center;
+  align-items: start;
+  column-gap: clamp(0.75rem, 1.5vw, 1.5rem);
+  padding: 0 clamp(0.5rem, 1vw, 1rem) 2rem;
+}
+
+.board-wrap {
+  position: sticky;
+  top: 0.5rem;
+}
+
+.rail {
+  min-width: 0;
+  font-size: 1.3rem;
+}
+
+.btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font: inherit;
+  font-family: var(--display);
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--sun);
+  border: 0;
+  padding: 0.5rem 1rem 0.7rem;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow:
+    inset 0 -6px 0 #d98f00,
+    inset 0 3px 0 #ffe680,
+    0 calc(-1 * var(--px)) 0 0 var(--ink),
+    0 var(--px) 0 0 var(--ink),
+    calc(-1 * var(--px)) 0 0 0 var(--ink),
+    var(--px) 0 0 0 var(--ink);
+  transition: transform 0.09s cubic-bezier(0.3, 1.6, 0.6, 1), box-shadow 0.09s;
+}
+
+@media (hover: hover) {
+  .btn:hover {
+    transform: translateY(-3px);
+  }
+}
+
+.btn:active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 -2px 0 #d98f00,
+    inset 0 3px 0 #ffe680,
+    0 calc(-1 * var(--px)) 0 0 var(--ink),
+    0 var(--px) 0 0 var(--ink),
+    calc(-1 * var(--px)) 0 0 0 var(--ink),
+    var(--px) 0 0 0 var(--ink);
+}
+
+.btn:disabled {
+  opacity: 0.75;
+  cursor: progress;
+  transform: none;
+}
+
+.error {
+  margin: 0.5rem 0 0;
+  padding: 0.3rem 0.6rem;
+  color: var(--ink);
+  background: #ffc2d9;
+  font-size: 1.25rem;
+  line-height: 1.15;
+  animation: nudge 0.25s steps(4);
+}
+
+@keyframes nudge {
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.env.*
+*.local
+# Holds the home lab's internal address. Kept out of history until we decide whether to publish it.
+config/deploy.yml
+.kamal

@@ -1,0 +1,522 @@
+// All the pixel art, drawn by hand as text. Each letter is one colour from PALETTE; '.' is see-through.
+
+export const PALETTE: Record<string, string> = {
+  k: '#141b3c', w: '#f7f7ee', c: '#c8d4e6', d: '#7d8bab',
+  y: '#ffc800', Y: '#d98f00', o: '#ff7a1a', r: '#e8413c', R: '#a8263b',
+  p: '#ff5ea8', P: '#ffb3d1',
+  g: '#7ecb3f', G: '#4fa63a', f: '#1f8a4d', F: '#12554a',
+  b: '#a8642c', B: '#6b3d22', t: '#e0a965', s: '#ffd766', S: '#e8b24a',
+  u: '#4fb8ea', U: '#2a84d8', n: '#155fc4', N: '#123f9a', l: '#9fe0f7',
+};
+
+export const SPRITE_ART = {
+  horse: [
+    '...........kk...',
+    '..........kBbk..',
+    '.........kBbbbk.',
+    '.........kBbkbbk',
+    '........kBbbbbbk',
+    '........kBbbkkk.',
+    '.kkkkkkkkBbbk...',
+    'kBkbbbbbbbbbk...',
+    'kBkbbbbbbbbbk...',
+    'kBkbbbbbbbbbk...',
+    'k.kbbbbbbbbtk...',
+    'k.kbbkkkkbbk....',
+    '..kbk....kbk....',
+    '..kbk....kbk....',
+    '..kBk....kBk....',
+    '..kkk....kkk....',
+  ],
+  cow: [
+    '...........k..k.',
+    '...........kkkk.',
+    '..........kwwwwk',
+    '..........kwkwwk',
+    '.kkkkkkkkkkwwwwk',
+    'kwwkkkwwwwkPPPPk',
+    'kwkkkkwwwwkPkPk.',
+    'kwwkkwwkkwwkkk..',
+    'kwwwwwkkkkwwk...',
+    'kwwwwwwkkwwwk...',
+    '.kwkkkkkkkkwk...',
+    '.kwk.....kwk....',
+    '.kkk.....kkk....',
+  ],
+  sheep: [
+    '...kkk.kkk......',
+    '..kwwwkwwwkk....',
+    '.kwwwwwwwwwwkkk.',
+    'kwwwwcwwwwwkdddk',
+    'kwwwwwwwcwwkdwdk',
+    'kwcwwwwwwwwkdddk',
+    '.kwwwwcwwwwwkkk.',
+    '..kkwwwkwwwkk...',
+    '...kdkkkkkdk....',
+    '...kdk...kdk....',
+    '...kkk...kkk....',
+  ],
+  duck: [
+    '....kkkk....',
+    '...kyyyyk...',
+    '...kykyyk...',
+    '...kyyyykook',
+    'k..kyyyykook',
+    'kk..kyyk.kk.',
+    'kyk.kyyyk...',
+    'kyykkyyyyk..',
+    'kyyyYYyyyk..',
+    '.kyyyyyyk...',
+    '..kyyyyk....',
+    '...kkkk.....',
+  ],
+  palm: [
+    '....kk...kk.....',
+    '..kkffk.kffkk...',
+    '.kfggfkkkfggfk..',
+    'kfggkfffffkggfk.',
+    'kfgk.kgggk.kgfk.',
+    '.kk.kfkbkfk.kk..',
+    '....kk.kbk.kk...',
+    '......kbbk......',
+    '......kbtk......',
+    '......kbbk......',
+    '.....kbbk.......',
+    '.....kbtk.......',
+    '.....kbbk.......',
+    '.....kbbk.......',
+    '....kbtbk.......',
+    '....kbbbk.......',
+    '....kkkkk.......',
+  ],
+  pine: [
+    '......k......',
+    '.....kfk.....',
+    '....kfffk....',
+    '...kfgfffk...',
+    '....kkffkk...',
+    '...kfgfffk...',
+    '..kfgffffFk..',
+    '.kfgfffffFFk.',
+    '..kkkfffkkk..',
+    '..kfgffffFk..',
+    '.kfgfffffFFk.',
+    'kfgffffffFFFk',
+    'kkkkkkkkkkkkk',
+    '.....kBk.....',
+    '.....kBk.....',
+    '.....kkk.....',
+  ],
+  apple: [
+    '....kkkkkk....',
+    '..kkgggggGkk..',
+    '.kgggrggggGGk.',
+    'kgggggggrgggGk',
+    'kggrggggggggGk',
+    'kgggggrgggGGGk',
+    'kggggggggrgGGk',
+    '.kggrgggggGGk.',
+    '..kkGGGGGGkk..',
+    '....kkbbkk....',
+    '.....kbtk.....',
+    '.....kbbk.....',
+    '.....kbbk.....',
+    '.....kkkk.....',
+  ],
+  hut: [
+    '.......kk.......',
+    '......krrk......',
+    '.....krrrrk.....',
+    '....krrRrrrk....',
+    '...krrrrrrRrk...',
+    '..krrRrrrrrrrk..',
+    '.krrrrrrRrrrrrk.',
+    'kkkkkkkkkkkkkkkk',
+    '.kttttttttttttk.',
+    '.kttttkkkkttttk.',
+    '.kwwktkBBktkwwk.',
+    '.kwwktkBBktkwwk.',
+    '.kkkktkBBktkkkk.',
+    '.kttttkBBkttttk.',
+    '.kkkkkkkkkkkkkk.',
+  ],
+  windmill: [
+    '................',
+    '................',
+    '................',
+    '................',
+    '.......kk.......',
+    '......kRRk......',
+    '.....kRRRRk.....',
+    '.....kRRRRk.....',
+    '.....kttttk.....',
+    '.....kttttk.....',
+    '....kttttttk....',
+    '....kttttttk....',
+    '....kttkkttk....',
+    '....kttkkttk....',
+    '....kttttttk....',
+    '...kttttttttk...',
+    '...kttttttttk...',
+    '...kttkkkkttk...',
+    '...kttkBBkttk...',
+    '...kttkBBkttk...',
+    '...kkkkkkkkkk...',
+  ],
+  well: [
+    '.....kkkk.....',
+    '..kkkkrrkkkk..',
+    '.krrrrrrrrrrk.',
+    'kkkkkkkkkkkkkk',
+    '..kBk.kk.kBk..',
+    '..kBk.kk.kBk..',
+    '..kBk.kk.kBk..',
+    '.kkkkkkkkkkkk.',
+    '.kcdcdcdcdcdk.',
+    '.kdcdcdcdcdck.',
+    '.kcdcdcdcdcdk.',
+    '.kkkkkkkkkkkk.',
+  ],
+  lighthouse: [
+    '.....kk.....',
+    '....krrk....',
+    '...krrrrk...',
+    '..kkkkkkkk..',
+    '..kywyywyk..',
+    '..kkkkkkkk..',
+    '...krrrrk...',
+    '...krrrrk...',
+    '..kwwwwwwk..',
+    '..kwwwwwwk..',
+    '..krrrrrrk..',
+    '..krrrrrrk..',
+    '..kwwwwwwk..',
+    '..kwwwwwwk..',
+    '.krrrrrrrrk.',
+    '.krrrrrrrrk.',
+    '.kwwwwwwwwk.',
+    '.kwwkkwwwwk.',
+    '.kwwkkwwwwk.',
+    'kkkkkkkkkkkk',
+  ],
+  scarecrow: [
+    '.....kkkk.....',
+    '....kbbbbk....',
+    '...kkbbbbkk...',
+    '..kbbbbbbbbk..',
+    '...kkkkkkkk...',
+    '....kttttk....',
+    '....ktkktk....',
+    '....ktttkk....',
+    'kkkkkkkkkkkkkk',
+    'kooooooooooook',
+    'kkkkkooookkkkk',
+    '....kooook....',
+    '....kooook....',
+    '....kkkkkk....',
+    '......kBk.....',
+    '......kBk.....',
+    '......kkk.....',
+  ],
+  campfire: [
+    '.....k......',
+    '....kok.....',
+    '....kook....',
+    '...koyok.k..',
+    '..koyyokok..',
+    '..koyyyook..',
+    '..koywyyok..',
+    '...kkkkkk...',
+    'kkkk....kkkk',
+    'kbbbkkkkbbbk',
+    'kkkbbbbbbkkk',
+    '...kkkkkk...',
+  ],
+  campfire2: [
+    '......k.....',
+    '.....kok....',
+    '....koook...',
+    '..k.koyok...',
+    '.kokkoyyok..',
+    '.kooyyyyok..',
+    '..koywwyok..',
+    '...kkkkkk...',
+    'kkkk....kkkk',
+    'kbbbkkkkbbbk',
+    'kkkbbbbbbkkk',
+    '...kkkkkk...',
+  ],
+  campfire3: [
+    '............',
+    '....k.......',
+    '...kok..k...',
+    '...kook.kk..',
+    '..kooyokok..',
+    '..koyyyyok..',
+    '..koywyyok..',
+    '...kkkkkk...',
+    'kkkk....kkkk',
+    'kbbbkkkkbbbk',
+    'kkkbbbbbbkkk',
+    '...kkkkkk...',
+  ],
+  boat: [
+    '.......k........',
+    '.......kk.......',
+    '.......kwk......',
+    '.......kwwk.....',
+    '.......kwwwk....',
+    '......kkwwwwk...',
+    '.....krkwwwwwk..',
+    '....krrkwwwwwwk.',
+    '...krrrkkkkkkkk.',
+    '..kkkkkkk.......',
+    'kkkkkkkkkkkkkkkk',
+    'kbbbbbbbbbbbbbbk',
+    '.kbtbbtbbtbbtbk.',
+    '..kbbbbbbbbbbk..',
+    '...kkkkkkkkkk...',
+  ],
+  bladesPlus: [
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    'kkkkkkkkkkkkkkk',
+    'kwwwwwwkwwwwwwk',
+    'kkkkkkkkkkkkkkk',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+    '......kwk......',
+  ],
+  bladesCross: [
+    'kk...........kk',
+    'kwk.........kwk',
+    '.kwk.......kwk.',
+    '..kwk.....kwk..',
+    '...kwk...kwk...',
+    '....kwk.kwk....',
+    '.....kwkwk.....',
+    '......kkk......',
+    '.....kwkwk.....',
+    '....kwk.kwk....',
+    '...kwk...kwk...',
+    '..kwk.....kwk..',
+    '.kwk.......kwk.',
+    'kwk.........kwk',
+    'kk...........kk',
+  ],
+  chest: [
+    '..kkkkkkkkkkkk..',
+    '.kbbbbbbbbbbbbk.',
+    'kbtbbbbbbbbbbtbk',
+    'kbbbbbbbbbbbbbbk',
+    'kkkkkkkyykkkkkkk',
+    'kBBBBBkyykBBBBBk',
+    'kbbbbbbkkbbbbbbk',
+    'kbtbbbbbbbbbbtbk',
+    'kbbbbbbbbbbbbbbk',
+    'kBBBBBBBBBBBBBBk',
+    'kkkkkkkkkkkkkkkk',
+  ],
+  chestOpen: [
+    '..kkkkkkkkkkkk..',
+    '.kBBBBBBBBBBBBk.',
+    'kBBBBBBBBBBBBBBk',
+    'kkkkkkkkkkkkkkkk',
+    'kyYyyYyywyYyyYyk',
+    'kYywYyyYyyYywYyk',
+    'kkkkkkkyykkkkkkk',
+    'kBBBBBkyykBBBBBk',
+    'kbbbbbbkkbbbbbbk',
+    'kbtbbbbbbbbbbtbk',
+    'kbbbbbbbbbbbbbbk',
+    'kBBBBBBBBBBBBBBk',
+    'kkkkkkkkkkkkkkkk',
+  ],
+  shovel: [
+    '...kkkkk...',
+    '...kbBbk...',
+    '...kkbkk...',
+    '....kbk....',
+    '....kbk....',
+    '....kbk....',
+    '....kbk....',
+    '..kkkkkkk..',
+    '.kcccccdck.',
+    '.kcwccccdk.',
+    '.kccccccdk.',
+    '..kcccddk..',
+    '...kcddk...',
+    '....kdk....',
+    '.....k.....',
+  ],
+  gull: ['k.....k', '.k.w.k.', '..kwk..'],
+  gull2: ['.......', 'kkkwkkk', 'k..w..k'],
+  coin: ['..kkk..', '.kyyyk.', 'kyYyyyk', 'kyYyyyk', 'kyYyyyk', '.kyyyk.', '..kkk..'],
+  coin2: ['...k...', '..kyk..', '..kYk..', '..kyk..', '..kYk..', '..kyk..', '...k...'],
+  noteOn: [
+    '...kkkkk',
+    '...kwwwk',
+    '...kwkkk',
+    '...kwk..',
+    '...kwk..',
+    '.kkkwk..',
+    'kwwwwk..',
+    'kwwwwk..',
+    '.kkkk...',
+  ],
+  noteOff: [
+    '...kkkkk',
+    '...kdddk',
+    '...kdkkk',
+    '...kdk..',
+    '...kdk..',
+    '.kkkdk..',
+    'kddddk..',
+    'kddddk..',
+    '.kkkk...',
+  ],
+  speakerOn: [
+    '....kk....',
+    '...kwk.w..',
+    'kkkwwk..w.',
+    'kwwwwk..w.',
+    'kwwwwk..w.',
+    'kkkwwk..w.',
+    '...kwk.w..',
+    '....kk....',
+  ],
+  speakerOff: [
+    '....kk....',
+    '...kdk....',
+    'kkkddkk.k.',
+    'kddddk.k..',
+    'kddddk.k..',
+    'kkkddkk.k.',
+    '...kdk....',
+    '....kk....',
+  ],
+  parrot: [
+    '......kkkkkkkkkk........',
+    '.....kkkkkkkkkkkk.......',
+    '....kkkkkwkkwkkkkk......',
+    '...kkkkkkkwwkkkkkkk.....',
+    '.kkkkkkkkkkkkkkkkkkkk...',
+    'kkkkkkkkkkkkkkkkkkkkkk..',
+    '....krrrrrrrrrrrrk......',
+    '...krrrrrrrrrrrrrrk.....',
+    '...krrrrrwwwwwwrrrrk....',
+    '..krrrrrwwkkwwwwrkkk....',
+    '..krrrrrwwkkwwwkdddk....',
+    '..krrrrrwwwwwwkdddddk...',
+    '..krrrrrrwwwwkddddddk...',
+    '..krrrrrrrrrrkkdddddk...',
+    '..kurrrrrrrrrrrkkddk....',
+    '..kuurrrrrrrrrrrrkk.....',
+    '..kuuurrrrrrrrrrrk......',
+    '..kUuuyrrrrrrrrrk.......',
+    '..kUuuyyrrrrrrrk........',
+    '...kUuuyyrrrrrk.........',
+    '...kUUuyyrrrrk..........',
+    '....kkkkkkkkk...........',
+  ],
+  parrotTalk: [
+    '......kkkkkkkkkk........',
+    '.....kkkkkkkkkkkk.......',
+    '....kkkkkwkkwkkkkk......',
+    '...kkkkkkkwwkkkkkkk.....',
+    '.kkkkkkkkkkkkkkkkkkkk...',
+    'kkkkkkkkkkkkkkkkkkkkkk..',
+    '....krrrrrrrrrrrrk......',
+    '...krrrrrrrrrrrrrrk.....',
+    '...krrrrrwwwwwwrrrrk....',
+    '..krrrrrwwkkwwwwrkkk....',
+    '..krrrrrwwkkwwwkdddk....',
+    '..krrrrrwwwwwwkdddddk...',
+    '..krrrrrrwwwwkkkkkkkk...',
+    '..krrrrrrrrrkRRRRk......',
+    '..kurrrrrrrrkkkkkkkk....',
+    '..kuurrrrrrrrrkdddddk...',
+    '..kuuurrrrrrrrrkkkkk....',
+    '..kUuuyrrrrrrrrrk.......',
+    '..kUuuyyrrrrrrrk........',
+    '...kUuuyyrrrrrk.........',
+    '...kUUuyyrrrrk..........',
+    '....kkkkkkkkk...........',
+  ],
+} as const;
+
+export type SpriteName = keyof typeof SPRITE_ART;
+
+export type Sprite = { canvas: HTMLCanvasElement; flipped: HTMLCanvasElement; w: number; h: number };
+
+function paint(rows: readonly string[], palette = PALETTE): HTMLCanvasElement {
+  const w = Math.max(...rows.map((r) => r.length));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = rows.length;
+  const ctx = canvas.getContext('2d')!;
+  rows.forEach((row, y) => {
+    [...row].forEach((letter, x) => {
+      const color = palette[letter];
+      if (!color) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, 1, 1);
+    });
+  });
+  return canvas;
+}
+
+function flip(source: HTMLCanvasElement): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.translate(source.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(source, 0, 0);
+  return canvas;
+}
+
+const cache = new Map<string, Sprite>();
+
+export function sprite(name: SpriteName): Sprite {
+  let found = cache.get(name);
+  if (!found) {
+    const canvas = paint(SPRITE_ART[name]);
+    found = { canvas, flipped: flip(canvas), w: canvas.width, h: canvas.height };
+    cache.set(name, found);
+  }
+  return found;
+}
+
+/** An X mark, `arm` pixels from the middle to each corner, in any colour. */
+export function xMark(arm: number, color: string): Sprite {
+  const key = `x${arm}${color}`;
+  let found = cache.get(key);
+  if (!found) {
+    const size = arm * 2 + 3;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const stamp = (fill: string, grow: number) => {
+      ctx.fillStyle = fill;
+      for (let i = -arm; i <= arm; i++) {
+        for (const x of [i, -i]) {
+          ctx.fillRect(arm + 1 + x - grow, arm + 1 + i - grow, 1 + grow * 2, 1 + grow * 2);
+        }
+      }
+    };
+    stamp(PALETTE.k, 1);
+    stamp(color, 0);
+    found = { canvas, flipped: canvas, w: size, h: size };
+    cache.set(key, found);
+  }
+  return found;
+}
