@@ -153,16 +153,16 @@ Earlier digs still score higher, as you wanted. The new numbers stop one early d
 
 | Players | YOLO ×2.5 | Clue 2 ×1.5 | Clue 3 ×1.25 | Clue 4 ×1 | Even |
 |---|---|---|---|---|---|
-| 4 | 30.8% | 12.1% | 26.0% | 31.2% | 25.0% |
-| 8 | 10.8% | 8.4% | 16.9% | 13.9% | 12.5% |
-| 12 | 7.1% | 6.7% | 12.4% | 7.2% | 8.3% |
-| 20 | 5.2% | 5.1% | 7.4% | 2.3% | 5.0% |
-| 30 | 4.5% | 3.7% | 4.1% | **0.7%** | 3.3% |
+| 4 | 14.5% | 16.7% | 29.6% | 39.3% | 25.0% |
+| 8 | 8.0% | 8.9% | 17.8% | 15.3% | 12.5% |
+| 12 | 6.7% | 6.6% | 12.3% | 7.8% | 8.3% |
+| 20 | 5.4% | 5.0% | 7.1% | 2.4% | 5.0% |
+| 30 | 4.5% | 3.8% | 4.1% | **0.8%** | 3.3% |
 
-For comparison, today's rules gave the last clue 4.9% at 9 players (even: 11.1%), and 0.5% at 20 players.
+These come from the real rules (`npm run sim`). An earlier quick simulation made YOLO look better in small rooms because of a bug, and this table replaces it. For comparison, today's rules gave the last clue about 5% at 9 players (even: 11.1%).
 
-- **Every clue is a real choice in rooms up to about 12 players.** No timing wins every time.
-- **Clue 2 is a bit weak in small rooms,** and **the last clue is too weak in big rooms.** Moving clue 4 earlier may help, so we'd test that at the playtest gate.
+- **Waiting is safer in small rooms, and early digs get stronger as rooms grow.** No timing wins every time in rooms up to about 12 players.
+- **YOLO is a real gamble in small rooms,** which may be fine, because that's what YOLO means. **The last clue is too weak in big rooms.** We check both at the playtest gate.
 - **The simulated players are simple.** They aim near a random landmark that still fits, so they already behave as if they can see the dimmed map, which suits this design. Real players will still differ, so these numbers are a starting point.
 
 Other scoring rules stay as they are: ties go to whoever dug first, and if everyone scores 0, the closest wins.

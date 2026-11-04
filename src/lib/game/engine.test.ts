@@ -1,173 +1,386 @@
 import { describe, expect, it } from 'vitest';
-import { advance, createGame, placeDig, rankDigs, scoreDig, splitPot } from './engine';
-import { isLand, MAP, seededRng } from './map';
+import { landingChance } from './clues';
+import { clueText } from './copy';
+import {
+  advance, createGame, currentBonus, finishAt, joinGame, leaveGame, placeDig, possibleArea, potOf, rankDigs, scoreDig,
+  secondsToNextClue, splitPot, standing, startGame,
+} from './engine';
+import { getMap, H, isLand, MAP_IDS, seededRng, W } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
-import type { Dig, Game, Point } from './types';
+import type { Dig, Game, MapId, Point } from './types';
 
-const input = { name: 'Test', host: 'host.near', fee: 1000, durationSec: 100, hostCutBps: 500 };
-const landSpot: Point = { x: MAP.landmarks[0].x, y: MAP.landmarks[0].y };
+const rng = seededRng(7);
+const input = {
+  name: 'Test', host: 'host.near', mapId: 'tropical' as MapId, fee: 1000, durationSec: 100, hostCutBps: 500,
+  minPlayers: 2, maxPlayers: 4, countdownSec: 0,
+};
 
-function newGame(seed = 1): Game {
-  return createGame('g', input, seededRng(seed));
+function room(over: Partial<typeof input> = {}): Game {
+  return createGame('g', { ...input, ...over });
 }
 
-function digAt(x: number, bonus: number, dugAt = 0): Dig {
-  return { account: `p${x}`, x, y: 0, clueIndex: 0, bonus, dugAt };
+function live(players = ['a.near', 'b.near', 'c.near'], over: Partial<typeof input> = {}): Game {
+  const game = room(over);
+  players.forEach((p) => joinGame(game, p));
+  startGame(game, game.host, rng);
+  return game;
 }
 
-describe('map', () => {
-  it('keeps landmarks far enough apart for their sprites', () => {
-    for (const a of MAP.landmarks) {
-      for (const b of MAP.landmarks) {
-        if (a.id !== b.id) expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(58);
-      }
-    }
+/** A land cell a safe distance from the first landmark. */
+function landSpot(game: Game, index = 0): Point {
+  const { x, y } = getMap(game.mapId).landmarks[index];
+  return { x, y };
+}
+
+function dig(x: number, bonusBps: number, dugAt = 0, crowded = false): Dig {
+  return { account: `p${x}`, x, y: 0, clueIndex: 0, bonusBps, crowded, dugAt };
+}
+
+describe('room stages', () => {
+  it('starts in waiting, where nobody can dig', () => {
+    const game = room();
+    joinGame(game, 'a.near');
+    expect(game.stage).toBe('waiting');
+    expect(() => placeDig(game, 'a.near', landSpot(game))).toThrow(GameError);
   });
 
-  it('places every landmark on land and has several of each kind', () => {
-    expect(MAP.landmarks.every((l) => isLand(l))).toBe(true);
-    const counts = new Map<string, number>();
-    for (const l of MAP.landmarks) counts.set(l.kind, (counts.get(l.kind) ?? 0) + 1);
-    expect(counts.size).toBe(14);
-    expect(Math.min(...counts.values())).toBeGreaterThanOrEqual(3);
+  it('counts a fee for every player who joined', () => {
+    const game = room();
+    joinGame(game, 'a.near');
+    joinGame(game, 'b.near');
+    expect(potOf(game)).toBe(2000);
+    leaveGame(game, 'b.near');
+    expect(potOf(game)).toBe(1000);
+  });
+
+  it('turns away a second join, a full room, and anyone after the start', () => {
+    const game = room({ maxPlayers: 2 });
+    joinGame(game, 'a.near');
+    expect(() => joinGame(game, 'a.near')).toThrow(GameError);
+    joinGame(game, 'b.near');
+    expect(() => joinGame(game, 'c.near')).toThrow(/full/);
+    startGame(game, game.host, rng);
+    expect(() => joinGame(game, 'c.near')).toThrow(/started/);
+    expect(() => leaveGame(game, 'a.near')).toThrow(GameError);
+  });
+
+  it('lets only the host start, and only at the minimum', () => {
+    const game = room({ minPlayers: 3 });
+    joinGame(game, 'a.near');
+    joinGame(game, 'b.near');
+    expect(() => startGame(game, game.host, rng)).toThrow(/3 players/);
+    joinGame(game, 'c.near');
+    expect(() => startGame(game, 'a.near', rng)).toThrow(/host/);
+    startGame(game, game.host, rng);
+    expect(game.stage).toBe('live');
+  });
+
+  it('runs the host\'s countdown from the minimum, and cancels it if players leave', () => {
+    const game = room({ countdownSec: 30 });
+    joinGame(game, 'a.near');
+    expect(game.startIn).toBeNull();
+    joinGame(game, 'b.near');
+    expect(game.startIn).toBe(30);
+    advance(game, 10, rng);
+    expect(game.startIn).toBe(20);
+    leaveGame(game, 'b.near');
+    expect(game.startIn).toBeNull();
+    joinGame(game, 'b.near');
+    advance(game, 30, rng);
+    expect(game.stage).toBe('live');
+  });
+
+  it('starts a full room in 5 seconds, with no countdown set', () => {
+    const game = room({ maxPlayers: 2 });
+    joinGame(game, 'a.near');
+    joinGame(game, 'b.near');
+    expect(game.startIn).toBe(RULES.fullRoomStartSec);
+    advance(game, RULES.fullRoomStartSec, rng);
+    expect(game.stage).toBe('live');
+  });
+
+  it('at the deadline, starts a room at its minimum', () => {
+    const game = room();
+    joinGame(game, 'a.near');
+    joinGame(game, 'b.near');
+    advance(game, RULES.waitingDeadlineSec, rng);
+    expect(game.stage).toBe('live');
+  });
+
+  it('at the deadline, refunds a room below its minimum, so a missing host traps nothing', () => {
+    const game = room();
+    joinGame(game, 'a.near');
+    advance(game, RULES.waitingDeadlineSec, rng);
+    expect(game.stage).toBe('refunded');
+    expect(game.result?.refundReason).toBe('expired');
+    expect(game.result?.treasure).toBeNull();
+  });
+
+  it('refunds when fewer than 2 players dug, and rolls no treasure', () => {
+    const game = live();
+    placeDig(game, 'a.near', landSpot(game));
+    advance(game, 100, rng);
+    expect(game.stage).toBe('refunded');
+    expect(game.result?.refundReason).toBe('too-few-digs');
+    expect(game.result?.treasure).toBeNull();
+  });
+
+  it('keeps a no-show\'s fee in the pot when the round finishes', () => {
+    const game = live();
+    placeDig(game, 'a.near', landSpot(game, 0));
+    placeDig(game, 'b.near', landSpot(game, 1));
+    advance(game, 100, rng);
+    expect(game.stage).toBe('finished');
+    expect(game.result?.pot).toBe(3000);
+    expect(game.result?.ranking).toHaveLength(2);
+  });
+
+  it('validates the host\'s settings', () => {
+    expect(() => room({ name: ' ' })).toThrow(GameError);
+    expect(() => room({ fee: 0 })).toThrow(GameError);
+    expect(() => room({ hostCutBps: 2001 })).toThrow(/20%/);
+    expect(() => room({ minPlayers: 1 })).toThrow(GameError);
+    expect(() => room({ maxPlayers: 31 })).toThrow(GameError);
+    expect(() => room({ minPlayers: 5, maxPlayers: 4 })).toThrow(GameError);
   });
 });
 
 describe('clues', () => {
-  it('appears at 0%, 50% and 90% of the round, and only narrows the candidates', () => {
-    const rng = seededRng(7);
-    const game = createGame('g', input, rng);
-    expect(game.clues).toHaveLength(1);
-    const first = game.candidateIds.length;
+  it('starts with a YOLO clue that narrows nothing and pays the top bonus', () => {
+    const game = live();
+    expect(game.clues).toEqual([{ level: 'yolo' }]);
+    expect(game.candidateIds).toHaveLength(60);
+    expect(currentBonus(game)).toBe(25000);
+  });
 
-    advance(game, 49, rng);
+  it('appears at 0, 30, 60 and 85 percent of the round, and only narrows', () => {
+    const game = live();
+    const counts = [game.candidateIds.length];
+    expect(secondsToNextClue(game)).toBe(30);
+    advance(game, 29, rng);
     expect(game.clues).toHaveLength(1);
     advance(game, 1, rng);
     expect(game.clues).toHaveLength(2);
-    const second = game.candidateIds.length;
-    expect(second).toBeLessThan(first);
-
-    advance(game, 40, rng);
-    expect(game.clues).toHaveLength(3);
-    expect(game.candidateIds.length).toBeLessThanOrEqual(second);
-    expect(game.candidateIds.length).toBeGreaterThan(0);
+    expect(game.clues[1].level).toBe('category');
+    counts.push(game.candidateIds.length);
+    advance(game, 30, rng);
+    expect(game.clues[2].level).toBe('kind');
+    counts.push(game.candidateIds.length);
+    advance(game, 25, rng);
+    expect(game.clues[3].level).toBe('detail');
+    expect(secondsToNextClue(game)).toBeNull();
+    counts.push(game.candidateIds.length);
+    for (let i = 1; i < counts.length; i++) expect(counts[i]).toBeLessThanOrEqual(counts[i - 1]);
+    expect(counts[3]).toBeGreaterThan(0);
   });
 
-  it('stores no treasure location until the round has ended', () => {
-    const rng = seededRng(3);
-    const game = createGame('g', input, rng);
-    placeDig(game, 'a.near', landSpot);
-    advance(game, 99, rng);
+  it('has wording for every clue that can come up on every map', () => {
+    for (const mapId of MAP_IDS) {
+      for (let seed = 0; seed < 30; seed++) {
+        const game = live(['a.near', 'b.near'], { mapId });
+        advance(game, 90, seededRng(seed));
+        for (const clue of game.clues) {
+          const { text, plain } = clueText(mapId, clue);
+          expect(text.length).toBeGreaterThan(5);
+          expect(plain.length).toBeGreaterThan(5);
+          expect(`${text} ${plain}`).not.toContain('undefined');
+        }
+      }
+    }
+  });
+
+  it('gives every landmark a chance, adding up to exactly 1', () => {
+    for (const mapId of MAP_IDS) {
+      const chance = landingChance(mapId);
+      expect(chance.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 8);
+      expect(Math.min(...chance)).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('treasure', () => {
+  it('stores no location until the round has ended', () => {
+    const game = live();
+    placeDig(game, 'a.near', landSpot(game));
+    advance(game, 90, rng);
     expect(game.result).toBeNull();
     expect(JSON.stringify(game)).not.toContain('treasure');
   });
 
-  it('always lands the treasure near a landmark matching the final clue', () => {
-    for (let seed = 0; seed < 200; seed++) {
-      const rng = seededRng(seed);
-      const game = createGame('g', input, rng);
-      placeDig(game, 'a.near', landSpot);
-      placeDig(game, 'b.near', landSpot);
-      advance(game, 95, rng);
-      const finalCandidates = [...game.candidateIds];
-      advance(game, 5, rng);
-
-      const treasure = game.result!.treasure!;
-      expect(finalCandidates).toContain(treasure.landmarkId);
-      const landmark = MAP.landmarks[treasure.landmarkId];
-      expect(Math.hypot(treasure.x - landmark.x, treasure.y - landmark.y)).toBeLessThanOrEqual(RULES.treasureScatter);
-      expect(isLand(treasure)).toBe(true);
+  it.each(MAP_IDS)('always lands on land inside the lit area on %s', (mapId) => {
+    for (let seed = 0; seed < 150; seed++) {
+      const r = seededRng(seed);
+      const game = live(['a.near', 'b.near'], { mapId });
+      placeDig(game, 'a.near', landSpot(game, 0));
+      placeDig(game, 'b.near', landSpot(game, 1));
+      advance(game, 99, r);
+      const area = possibleArea(mapId, game.candidateIds);
+      const candidates = [...game.candidateIds];
+      advance(game, 1, r);
+      const t = game.result!.treasure!;
+      expect(isLand(mapId, t)).toBe(true);
+      expect(area[t.y * W + t.x]).toBe(1);
+      expect(candidates).toContain(t.landmarkId);
     }
+  });
+});
+
+describe('possible area', () => {
+  it('only covers land near the given landmarks', () => {
+    const map = getMap('tropical');
+    const area = possibleArea('tropical', [0]);
+    let lit = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!area[y * W + x]) continue;
+        lit++;
+        expect(map.land[y * W + x]).toBe(1);
+        expect(Math.hypot(x - map.landmarks[0].x, y - map.landmarks[0].y)).toBeLessThanOrEqual(RULES.treasureScatter);
+      }
+    }
+    expect(lit).toBeGreaterThan(50);
   });
 });
 
 describe('scoring', () => {
-  const treasure = { x: 0, y: 0 };
-  const range = RULES.closenessRange;
+  it('matches the tutorial: 90 closeness at ×1.5 scores 135, and beats a perfect dig at ×1', () => {
+    const t = { x: 0, y: 0 };
+    const early = scoreDig({ ...dig(0, 15000), x: 4, y: 3 }, t);
+    expect(early.distance).toBe(5000);
+    expect(early.closeness).toBe(896);
+    const ninety = scoreDig({ ...dig(0, 15000), x: 4, y: 3 }, { x: 0, y: 0 });
+    expect(ninety.score).toBe(Math.floor((896 * 15000) / 10000));
+    const perfect = scoreDig(dig(0, 10000), t);
+    expect(perfect.closeness).toBe(1000);
+    expect(perfect.score).toBe(1000);
+    expect(ninety.score).toBeGreaterThan(perfect.score);
+  });
 
-  it('matches the worked example: an early dig can beat a closer late dig, but not a far one', () => {
-    const ana = scoreDig(digAt(range * 0.3, 1.5), treasure);
-    const ben = scoreDig(digAt(range * 0.1, 1), treasure);
-    const cara = scoreDig(digAt(range * 0.45, 1.5), treasure);
-    expect(ana.score).toBeCloseTo(105);
-    expect(ben.score).toBeCloseTo(90);
-    expect(cara.score).toBeCloseTo(82.5);
-    expect(rankDigs([cara, ben, ana]).map((d) => d.account)).toEqual([ana.account, ben.account, cara.account]);
+  it('reaches zero at the closeness range', () => {
+    expect(scoreDig(dig(RULES.closenessRange, 25000), { x: 0, y: 0 }).closeness).toBe(0);
+  });
+
+  it('multiplies a crowded dig by 0.85', () => {
+    const t = { x: 0, y: 0 };
+    expect(scoreDig(dig(0, 10000, 0, true), t).score).toBe(850);
+    expect(scoreDig(dig(0, 10000, 0, false), t).score).toBe(1000);
+  });
+
+  it('crowds only the later digger, within 6 pixels', () => {
+    const game = live();
+    const base = landSpot(game);
+    const first = placeDig(game, 'a.near', base);
+    const second = placeDig(game, 'b.near', { x: base.x, y: base.y });
+    expect(first.crowded).toBe(false);
+    expect(second.crowded).toBe(true);
+    expect(game.digs[0].crowded).toBe(false);
+  });
+
+  it('doesn\'t crowd a dig just outside the radius', () => {
+    const game = live();
+    const area = possibleArea(game.mapId, game.candidateIds);
+    let a: Point | null = null;
+    for (let i = 0; i < area.length && !a; i++) {
+      const x = i % W;
+      const y = Math.floor(i / W);
+      if (isLand(game.mapId, { x, y }) && isLand(game.mapId, { x: x + RULES.crowdRadius + 1, y })) a = { x, y };
+    }
+    placeDig(game, 'a.near', a!);
+    expect(placeDig(game, 'b.near', { x: a!.x + RULES.crowdRadius + 1, y: a!.y }).crowded).toBe(false);
   });
 
   it('gives equal scores to whoever dug first', () => {
-    const late = { ...scoreDig(digAt(30, 1, 50), treasure), account: 'late' };
-    const early = { ...scoreDig(digAt(30, 1, 10), treasure), account: 'early' };
-    expect(rankDigs([late, early])[0].account).toBe('early');
+    const t = { x: 0, y: 0 };
+    const ranked = rankDigs([scoreDig({ ...dig(1, 10000, 5), account: 'late' }, t), scoreDig({ ...dig(1, 10000, 1), account: 'early' }, t)]);
+    expect(ranked[0].account).toBe('early');
   });
 
   it('falls back to the closest dig when nobody scored', () => {
-    const far = scoreDig(digAt(range * 3, 2), treasure);
-    const nearer = scoreDig(digAt(range * 2, 1, 50), treasure);
-    expect(far.score).toBe(0);
-    expect(rankDigs([far, nearer])[0].account).toBe(nearer.account);
+    const t = { x: 0, y: 0 };
+    const ranked = rankDigs([scoreDig(dig(200, 25000), t), scoreDig(dig(100, 10000), t)]);
+    expect(ranked[0].x).toBe(100);
   });
 
   it('records the bonus of the clue showing when the player dug', () => {
-    const rng = seededRng(2);
-    const game = createGame('g', input, rng);
-    expect(placeDig(game, 'a.near', landSpot).bonus).toBe(2);
-    advance(game, 50, rng);
-    expect(placeDig(game, 'b.near', landSpot).bonus).toBe(1.5);
-    advance(game, 40, rng);
-    expect(placeDig(game, 'c.near', landSpot).bonus).toBe(1);
+    const game = live();
+    const yolo = placeDig(game, 'a.near', landSpot(game, 0));
+    advance(game, 30, rng);
+    const second = placeDig(game, 'b.near', landSpot(game, 1));
+    expect(yolo.bonusBps).toBe(25000);
+    expect(second.bonusBps).toBe(15000);
+    expect(second.clueIndex).toBe(1);
   });
 });
 
-describe('money', () => {
-  it('never loses or creates money when splitting the pot', () => {
-    for (const [pot, bps] of [[1000, 500], [3333, 777], [7, 2000], [100000, 0], [1, 1999]]) {
-      const { hostCut, prize } = splitPot(pot, bps);
-      expect(hostCut + prize).toBe(pot);
-      expect(hostCut).toBeGreaterThanOrEqual(0);
-    }
+describe('digging', () => {
+  it('rejects anyone who didn\'t join', () => {
+    const game = live();
+    expect(() => placeDig(game, 'stranger.near', landSpot(game))).toThrow(/joined/);
   });
 
-  it('pays the winner the pot minus the host share', () => {
-    const rng = seededRng(5);
-    const game = createGame('g', input, rng);
-    placeDig(game, 'a.near', landSpot);
-    placeDig(game, 'b.near', landSpot);
-    advance(game, 100, rng);
-    expect(game.status).toBe('finished');
-    expect(game.result).toMatchObject({ pot: 2000, hostCut: 100, prize: 1900 });
-  });
-
-  it('refunds when fewer than two players joined, and rolls no treasure', () => {
-    const rng = seededRng(5);
-    const game = createGame('g', input, rng);
-    placeDig(game, 'a.near', landSpot);
-    advance(game, 100, rng);
-    expect(game.status).toBe('refunded');
-    expect(game.result?.treasure).toBeNull();
-  });
-});
-
-describe('rules', () => {
   it('rejects a second dig from the same wallet', () => {
-    const game = newGame();
-    placeDig(game, 'a.near', landSpot);
-    expect(() => placeDig(game, 'a.near', landSpot)).toThrow(GameError);
+    const game = live();
+    placeDig(game, 'a.near', landSpot(game, 0));
+    expect(() => placeDig(game, 'a.near', landSpot(game, 1))).toThrow(/already/);
   });
 
-  it('rejects a dig in the sea', () => {
-    expect(() => placeDig(newGame(), 'a.near', { x: 2, y: 2 })).toThrow(/water/);
+  it('rejects water, and positions that aren\'t whole pixels', () => {
+    const game = live();
+    expect(() => placeDig(game, 'a.near', { x: 0, y: 0 })).toThrow(/water/);
+    expect(() => placeDig(game, 'a.near', { x: 100.5, y: 100 })).toThrow(/water/);
+  });
+
+  it('turns a dig down if a new clue arrived on the way, so it never quietly loses bonus', () => {
+    const game = live();
+    const seen = game.clues.length;
+    advance(game, 30, rng);
+    expect(() => placeDig(game, 'a.near', landSpot(game), seen)).toThrow(/new clue/);
+    expect(game.digs).toHaveLength(0);
+    expect(placeDig(game, 'a.near', landSpot(game), game.clues.length).bonusBps).toBe(15000);
   });
 
   it('rejects a dig after the round ends', () => {
-    const rng = seededRng(1);
-    const game = createGame('g', input, rng);
+    const game = live();
     advance(game, 100, rng);
-    expect(() => placeDig(game, 'a.near', landSpot)).toThrow(/ended/);
+    expect(() => placeDig(game, 'a.near', landSpot(game))).toThrow(/ended/);
   });
+});
 
-  it('rejects a host share above the cap', () => {
-    expect(() => createGame('g', { ...input, hostCutBps: 2001 }, seededRng(1))).toThrow(/20%/);
+describe('standing', () => {
+  it('is null before you dig, and counts the spots you would win', () => {
+    const game = live();
+    expect(standing(game, 'a.near')).toBeNull();
+    placeDig(game, 'a.near', landSpot(game, 0));
+    const alone = standing(game, 'a.near')!;
+    expect(alone.of).toBe(60);
+    expect(alone.wins).toHaveLength(60);
+    placeDig(game, 'b.near', landSpot(game, 1));
+    const shared = standing(game, 'a.near')!;
+    const theirs = standing(game, 'b.near')!;
+    expect(shared.wins).toContain(0);
+    expect(theirs.wins).toContain(1);
+    expect(shared.wins.length + theirs.wins.length).toBe(60);
   });
+});
+
+describe('splitPot', () => {
+  it('matches the plan\'s example and never loses a coin', () => {
+    expect(splitPot(10000, 500)).toEqual({ hostCut: 500, jackpot: 300, deed: 200, season: 100, prize: 8900 });
+    for (const pot of [1, 7, 999, 1234567]) {
+      for (const bps of [0, 333, 2000]) {
+        const s = splitPot(pot, bps);
+        expect(s.hostCut + s.jackpot + s.deed + s.season + s.prize).toBe(pot);
+      }
+    }
+  });
+});
+
+it('finishAt ranks digs against the given treasure', () => {
+  const game = live();
+  const spot = landSpot(game, 0);
+  placeDig(game, 'a.near', spot);
+  placeDig(game, 'b.near', landSpot(game, 1));
+  finishAt(game, { ...spot, landmarkId: 0 });
+  expect(game.result?.winner).toBe('a.near');
 });

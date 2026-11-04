@@ -15,8 +15,12 @@ export const ui = $state<{
   coarse: boolean;
   /** Bumped to put the map camera back to showing the whole island. */
   cameraReset: number;
-  /** A map point the camera should keep in view, such as where the chest landed. */
+  /** A map pixel the camera should keep in view, such as where the chest landed. */
   focus: { x: number; y: number } | null;
+  /** The wallet dialog, if open. `need` is the coins missing for what the player just tried. */
+  wallet: { need: number | null } | null;
+  /** The how-to-play pop-up. */
+  tutorial: boolean;
 }>({
   heldBalance: null,
   banner: null,
@@ -25,6 +29,8 @@ export const ui = $state<{
   coarse: matchMedia(COARSE).matches,
   cameraReset: 0,
   focus: null,
+  wallet: null,
+  tutorial: false,
 });
 
 matchMedia(COMPACT).addEventListener('change', (e) => (ui.compact = e.matches));
@@ -43,4 +49,8 @@ export function showBanner(title: string, detail: string) {
 /** A little phone vibration. iPhones don't offer this to web pages, so there it does nothing. */
 export function buzz(pattern: number | number[]) {
   navigator.vibrate?.(pattern);
+}
+
+export function openWallet(need: number | null = null) {
+  ui.wallet = { need };
 }

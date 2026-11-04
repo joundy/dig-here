@@ -1,39 +1,55 @@
 // A stand-in chain that lives in one browser tab: fake wallets, fake money, bot players.
-import { advance, createGame, placeDig, secondsToNextClue } from '../game/engine';
-import { isLand, MAP } from '../game/map';
+import * as economy from '../game/economy';
+import type { Ledger } from '../game/economy';
+import { advance, finishAt, isCrowded, isOpen, placeDig, secondsToNextClue, startGame } from '../game/engine';
+import { getMap, isLand, MAP_IDS, mathRng } from '../game/map';
+import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
-import type { Game, Point } from '../game/types';
+import type { Game, NewGameInput, Point } from '../game/types';
 import type { GameBackend } from './types';
 
-const STORAGE_KEY = 'dig-here-dummy-v1';
+const STORAGE_KEY = 'dig-here-dummy-v2';
 const TICK_MS = 250;
-const FAKE_TX_MS = 350;
+const MAX_FINISHED = 40;
 
 export const PLAYABLE_ACCOUNTS = ['you.near', 'friend.near', 'rival.near'];
-const STARTING_BALANCE = 50_000;
-const BOT_NAMES = [
-  'salty.near', 'mabel.near', 'shovel_guy.near', 'goose.near', 'dr_dig.near', 'nana.near',
-  'lucky_kev.near', 'mudlark.near', 'barnacle.near', 'tilda.near', 'hole_in_one.near', 'ferris.near',
-];
+const STARTING_WALLET = 50_000;
 
-type BotPlan = { account: string; joinAt: number; sloppiness: number; joined: boolean };
+const BOT_NAMES = [
+  'salty.near', 'mabel.near', 'shovel_guy.near', 'goose.near', 'dr_dig.near', 'nana.near', 'lucky_kev.near', 'mudlark.near',
+  'barnacle.near', 'tilda.near', 'hole_in_one.near', 'ferris.near', 'pickaxe_pam.near', 'dune_buggy.near', 'frostbite.near',
+  'sir_digs_a_lot.near', 'marigold.near', 'old_pete.near', 'captain_crab.near', 'wobble.near', 'tinpot.near', 'gritty.near',
+  'bumble.near', 'orla.near', 'snowdrift.near', 'cactus_jack.near', 'pebble.near', 'moss.near', 'quill.near', 'yarrow.near',
+];
+const HOST_NAMES = ['captain.near', 'goose.near', 'mabel.near', 'old_pete.near', 'tilda.near', 'dr_dig.near', 'marigold.near', 'orla.near'];
+const SPAM_HOSTS = ['free_money_4u.near', 'click_me_now.near', 'aaaaaaaaaaaa.near'];
+const ROOM_NAMES = [
+  'Lunch money', 'Big digs', 'Horse whisperers', 'High rollers only', 'Shovel Sunday', 'Quick hole', 'Sand in my socks', 'X marks my mum',
+  'Ducks welcome', 'Coin toss', 'No crying', 'Treasure taxi', 'Bring a spade', 'Friendly dig', 'Dig or die', 'The usual',
+  'Pocket change', 'Mud club', 'Hot shovels', 'Late night dig',
+];
+const SPAM_NAMES = ['FREE NEAR CLICK', 'aaaaaaa', 'test123', '$$$ WIN BIG $$$', 'asdfgh', 'best game real'];
+
+type BotPlan = { account: string; joinAfter: number; digPct: number; slop: number; joined: boolean; dug: boolean };
+type RoomBots = { plans: BotPlan[]; /** A bot host presses Start after this long, once the room can. */ hostStartAfter: number | null };
 
 type Persisted = {
   account: string;
-  balances: Record<string, number>;
+  ledger: Ledger;
   games: Game[];
-  bots: Record<string, BotPlan[]>;
+  bots: Record<string, RoomBots>;
   nextId: number;
 };
 
-function freshState(): Persisted {
-  return {
-    account: PLAYABLE_ACCOUNTS[0],
-    balances: Object.fromEntries(PLAYABLE_ACCOUNTS.map((a) => [a, STARTING_BALANCE])),
-    games: [],
-    bots: {},
-    nextId: 1,
-  };
+const pickFrom = <T>(items: readonly T[]) => items[mathRng(items.length)];
+
+function shuffled<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = mathRng(i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 function load(): Persisted | null {
@@ -45,60 +61,87 @@ function load(): Persisted | null {
   }
 }
 
-function pickBots(): string[] {
-  const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-  return names.slice(0, 5 + Math.floor(Math.random() * 5));
+function freshAccounts(ledger: Ledger): void {
+  for (const account of PLAYABLE_ACCOUNTS) ledger.wallets[account] = STARTING_WALLET;
 }
 
 // A mix of early gamblers and late, careful players, so the bonus trade-off shows up in play.
-function planBots(): BotPlan[] {
-  return pickBots().map((account) => {
-    const style = Math.random();
-    const joinAt = style < 0.3 ? 0.03 + Math.random() * 0.4 : style < 0.7 ? 0.52 + Math.random() * 0.36 : 0.91 + Math.random() * 0.08;
-    return { account, joinAt, sloppiness: 8 + Math.random() * 60, joined: false };
+function botDigPct(): number {
+  const style = Math.random();
+  if (style < 0.18) return 3 + Math.random() * 24;
+  if (style < 0.5) return 32 + Math.random() * 26;
+  if (style < 0.84) return 62 + Math.random() * 21;
+  return 86 + Math.random() * 11;
+}
+
+function planBots(count: number, exclude: string | null, joinGap: number): BotPlan[] {
+  let joinAfter = 1 + Math.random() * joinGap;
+  return shuffled(BOT_NAMES.filter((n) => n !== exclude)).slice(0, count).map((account) => {
+    const plan = { account, joinAfter, digPct: botDigPct(), slop: 1 + mathRng(12), joined: false, dug: false };
+    joinAfter += 1 + Math.random() * joinGap;
+    return plan;
   });
 }
 
 class DummyBackend implements GameBackend {
-  #state = $state<Persisted>(load() ?? freshState());
+  #state = $state<Persisted>(load() ?? this.#fresh());
   speed = $state(1);
 
   constructor() {
-    if (this.#state.games.length === 0) this.#seedLobby();
+    if (this.#state.games.length === 0) this.#seed();
     setInterval(() => this.#tick(TICK_MS / 1000), TICK_MS);
     setInterval(() => this.#save(), 2000);
   }
 
-  get account() {
-    return this.#state.account;
+  #fresh(): Persisted {
+    const ledger = economy.newLedger(Date.now());
+    freshAccounts(ledger);
+    return { account: PLAYABLE_ACCOUNTS[0], ledger, games: [], bots: {}, nextId: 1 };
   }
 
-  get games() {
-    return this.#state.games;
-  }
+  get account() { return this.#state.account; }
+  get games() { return this.#state.games; }
+  get jackpot() { return this.#state.ledger.jackpot; }
+  get season() { return this.#state.ledger.season; }
 
-  balanceOf(account: string) {
-    return this.#state.balances[account] ?? 0;
-  }
+  walletOf(account: string) { return economy.walletOf(this.#state.ledger, account); }
+  balanceOf(account: string) { return economy.balanceOf(this.#state.ledger, account); }
+  hostRecord(account: string) { return economy.hostRecord(this.#state.ledger, account); }
+  deedOf(id: string) { return economy.deedOf(this.#state.ledger, id); }
+  seasonRanking() { return economy.seasonRanking(this.#state.ledger); }
 
-  async createGame(input: { name: string; fee: number; durationSec: number; hostCutBps: number }) {
-    // Whoever signed is fixed at the moment of the click, as with a real wallet.
-    const host = this.account;
-    await this.#fakeTx();
-    return this.#addGame({ ...input, host });
-  }
-
-  async dig(gameId: string, spot: Point) {
+  // Whoever signed is fixed at the moment of the click, as with a real wallet.
+  async #tx<T>(action: (account: string) => T): Promise<T> {
     const account = this.account;
-    await this.#fakeTx();
-    const game = this.#find(gameId);
-    if (this.balanceOf(account) < game.fee) {
-      throw new GameError('Not enough NEAR in this wallet for the entry fee.');
-    }
-    placeDig(game, account, spot);
-    this.#state.balances[account] -= game.fee;
+    await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 1200));
+    const result = action(account);
     this.#save();
+    return result;
   }
+
+  deposit(amount: number) { return this.#tx((a) => economy.deposit(this.#state.ledger, a, amount)); }
+  withdraw(amount: number) { return this.#tx((a) => economy.withdraw(this.#state.ledger, a, amount)); }
+
+  createGame(input: Omit<NewGameInput, 'host'>) {
+    return this.#tx((host) => {
+      const id = this.#open({ ...input, host });
+      // Other players turn up in a hosted room, so a playtest doesn't wait alone.
+      const count = Math.min(input.maxPlayers - 1, input.minPlayers + mathRng(5));
+      this.#state.bots[id] = { plans: planBots(count, host, 5), hostStartAfter: null };
+      return id;
+    });
+  }
+
+  join(gameId: string) { return this.#tx((a) => economy.joinRoom(this.#state.ledger, this.#find(gameId), a)); }
+  leave(gameId: string) { return this.#tx((a) => economy.leaveRoom(this.#state.ledger, this.#find(gameId), a)); }
+  start(gameId: string) { return this.#tx((a) => startGame(this.#find(gameId), a, mathRng)); }
+
+  dig(gameId: string, spot: Point, seenClue: number) {
+    return this.#tx((a) => { placeDig(this.#find(gameId), a, spot, seenClue); });
+  }
+
+  buyDeed(id: string) { return this.#tx((a) => economy.buyDeed(this.#state.ledger, a, id)); }
+  listDeed(id: string, price: number | null) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
 
   // Playtest controls. These exist only on the dummy and aren't part of GameBackend.
 
@@ -107,25 +150,69 @@ class DummyBackend implements GameBackend {
     this.#save();
   }
 
+  /** Brings a waiting room up to its minimum with bots. */
+  fillRoom(gameId: string) {
+    const game = this.#find(gameId);
+    if (game.stage !== 'waiting') return;
+    const needed = Math.max(1, game.minPlayers - game.players.length);
+    const room = (this.#state.bots[gameId] ??= { plans: [], hostStartAfter: null });
+    const taken = new Set([...game.players, ...room.plans.map((p) => p.account)]);
+    const extra = shuffled(BOT_NAMES.filter((n) => !taken.has(n))).slice(0, needed);
+    room.plans.push(...extra.map((account) => ({ account, joinAfter: 0, digPct: botDigPct(), slop: 1 + mathRng(12), joined: false, dug: false })));
+    for (const plan of room.plans.filter((p) => !p.joined).slice(0, needed)) this.#botJoin(game, plan);
+  }
+
+  startNow(gameId: string) {
+    const game = this.#find(gameId);
+    if (game.stage !== 'waiting') return;
+    if (game.players.length < game.minPlayers) this.fillRoom(gameId);
+    startGame(game, game.host, mathRng);
+  }
+
   skipToNextClue(gameId: string) {
     const game = this.#find(gameId);
+    if (game.stage !== 'live') return this.startNow(gameId);
     const wait = secondsToNextClue(game);
-    this.#advanceGame(game, wait === null ? game.durationSec - game.elapsed : Math.max(wait, 0));
+    this.#advanceGame(game, wait === null ? game.durationSec - game.elapsed : Math.max(wait, 0.01));
   }
 
   endNow(gameId: string) {
     const game = this.#find(gameId);
+    if (game.stage === 'waiting') this.startNow(gameId);
     this.#advanceGame(game, game.durationSec - game.elapsed);
   }
 
-  reset() {
-    this.#state = freshState();
-    this.#seedLobby();
+  /** Ends the round with the treasure on this player's exact pixel, to show off a jackpot win. */
+  forceJackpot(gameId: string) {
+    const game = this.#find(gameId);
+    if (game.stage === 'waiting') this.startNow(gameId);
+    if (game.stage !== 'live') return;
+    const me = this.account;
+    const { landmarks } = getMap(game.mapId);
+    if (game.players.includes(me) && !game.digs.some((d) => d.account === me)) {
+      const l = landmarks[game.candidateIds[0]];
+      placeDig(game, me, { x: l.x, y: l.y });
+    }
+    this.#botsDigAll(game);
+    if (game.digs.length < RULES.minDigs) return;
+    const target = game.digs.find((d) => d.account === me) ?? game.digs[0];
+    const nearest = game.candidateIds
+      .map((id) => ({ id, d: Math.hypot(landmarks[id].x - target.x, landmarks[id].y - target.y) }))
+      .sort((a, b) => a.d - b.d)[0].id;
+    finishAt(game, { x: target.x, y: target.y, landmarkId: nearest });
+    economy.payRoom(this.#state.ledger, game);
     this.#save();
   }
 
-  #fakeTx() {
-    return new Promise((resolve) => setTimeout(resolve, FAKE_TX_MS));
+  endSeason() {
+    economy.closeSeason(this.#state.ledger, Date.now());
+    this.#save();
+  }
+
+  reset() {
+    this.#state = this.#fresh();
+    this.#seed();
+    this.#save();
   }
 
   #find(gameId: string): Game {
@@ -134,91 +221,174 @@ class DummyBackend implements GameBackend {
     return game;
   }
 
-  #addGame(input: { name: string; host: string; fee: number; durationSec: number; hostCutBps: number }): string {
+  #open(input: NewGameInput): string {
     const id = String(this.#state.nextId++);
-    const game = createGame(id, input, Math.random);
+    const game = economy.openRoom(this.#state.ledger, this.#state.games, id, input);
     this.#state.games.unshift(game);
-    this.#state.bots[id] = planBots();
-    return id;
+    return this.#state.games[0].id;
   }
 
-  #seedLobby() {
-    // Started part-way through, so the first look at the lobby shows games with players in them.
-    const seeds = [
-      { name: 'High rollers only', host: 'goose.near', fee: 5000, durationSec: 600, hostCutBps: 200, progress: 0.3 },
-      { name: 'Horse whisperers', host: 'mabel.near', fee: 1000, durationSec: 300, hostCutBps: 1000, progress: 0.6 },
-      { name: 'Lunch money', host: 'captain.near', fee: 500, durationSec: 180, hostCutBps: 500, progress: 0.15 },
-    ];
-    for (const { progress, ...input } of seeds) {
-      const id = this.#addGame(input);
-      this.#advanceGame(this.#find(id), progress * input.durationSec);
+  /** Bots always have enough, so their rooms never stall. Only the dummy can create coins like this. */
+  #fundBot(account: string, need: number) {
+    const { ledger } = this.#state;
+    if (economy.balanceOf(ledger, account) >= need) return;
+    ledger.wallets[account] = economy.walletOf(ledger, account) + need + 20_000;
+    economy.deposit(ledger, account, need + 20_000);
+  }
+
+  #botHostRoom(spam: boolean) {
+    const { games } = this.#state;
+    const hosts = spam ? SPAM_HOSTS : HOST_NAMES;
+    const free = hosts.filter((h) => games.filter((g) => g.host === h && isOpen(g)).length < RULES.maxOpenRoomsPerHost);
+    if (!free.length) return;
+    const host = pickFrom(free);
+    const mapId = pickFrom(MAP_IDS);
+    this.#fundBot(host, RULES.hostBond);
+
+    if (spam) {
+      const id = this.#open({
+        name: pickFrom(SPAM_NAMES), host, mapId, fee: pickFrom([1, 10, 9000]), durationSec: 600, hostCutBps: RULES.maxHostCutBps,
+        minPlayers: 20, maxPlayers: 30, countdownSec: 0,
+      });
+      this.#state.bots[id] = { plans: [], hostStartAfter: null };
+      return;
     }
+
+    const minPlayers = 2 + mathRng(4);
+    const maxPlayers = minPlayers + 2 + mathRng(12);
+    const countdownSec = pickFrom(RULES.countdownChoices);
+    const id = this.#open({
+      name: pickFrom(ROOM_NAMES), host, mapId, fee: pickFrom([100, 250, 500, 1000, 1000, 2000, 5000]),
+      durationSec: pickFrom(RULES.timerChoices.slice(0, 3)), hostCutBps: pickFrom([0, 200, 500, 500, 1000, 1500]),
+      minPlayers, maxPlayers, countdownSec,
+    });
+    const count = Math.min(maxPlayers, minPlayers + mathRng(maxPlayers - minPlayers + 1));
+    this.#state.bots[id] = {
+      plans: planBots(count, null, 3 + Math.random() * 18),
+      hostStartAfter: countdownSec === 0 ? 20 + Math.random() * 60 : null,
+    };
+  }
+
+  #seed() {
+    const { ledger, games } = this.#state;
+    for (const host of HOST_NAMES) ledger.hosts[host] = { finished: 4 + mathRng(40), expired: mathRng(2) };
+    for (const host of SPAM_HOSTS) ledger.hosts[host] = { finished: 0, expired: 3 + mathRng(10) };
+
+    // Bots own about a third of the deeds, which is also what fills the jackpot at the start.
+    for (const mapId of MAP_IDS) {
+      for (const { id } of getMap(mapId).landmarks) {
+        if (Math.random() > 0.33) continue;
+        const owner = pickFrom(BOT_NAMES);
+        this.#fundBot(owner, RULES.deedFirstPrice);
+        const deed = economy.deedId(mapId, id);
+        economy.buyDeed(ledger, owner, deed);
+        if (Math.random() < 0.4) economy.listDeed(ledger, owner, deed, 1200 + mathRng(30) * 100);
+      }
+    }
+
+    // Some finished rounds, for the Finished tab and the season table.
+    for (let i = 0; i < 8; i++) {
+      this.#botHostRoom(false);
+      const game = games[0];
+      this.#fastForward(game, 1);
+    }
+    // Rooms at every stage, so the board looks busy from the first second.
+    for (let i = 0; i < 7; i++) {
+      this.#botHostRoom(false);
+      this.#fastForward(games[0], 0.1 + Math.random() * 0.7);
+    }
+    for (let i = 0; i < 9; i++) {
+      this.#botHostRoom(false);
+      this.#advanceGame(games[0], Math.random() * 25);
+    }
+    for (let i = 0; i < 4; i++) this.#botHostRoom(true);
+  }
+
+  /** Runs a bot room through its waiting stage and part of its round. */
+  #fastForward(game: Game, fraction: number) {
+    const room = this.#state.bots[game.id];
+    for (const plan of room?.plans ?? []) if (!plan.joined) this.#botJoin(game, plan);
+    if (game.players.length < game.minPlayers) this.fillRoom(game.id);
+    if (game.stage === 'waiting') startGame(game, game.host, mathRng);
+    this.#advanceGame(game, fraction * game.durationSec + (fraction >= 1 ? 1 : 0));
   }
 
   #tick(realSeconds: number) {
     const seconds = realSeconds * this.speed;
     for (const game of this.#state.games) {
-      if (game.status === 'open') this.#advanceGame(game, seconds);
+      if (isOpen(game)) this.#advanceGame(game, seconds);
     }
-    if (this.#state.games.filter((g) => g.status === 'open').length < 2) {
-      this.#addGame({ name: `Round ${this.#state.nextId}`, host: 'captain.near', fee: 1000, durationSec: 180, hostCutBps: 500 });
+    const { games, ledger } = this.#state;
+    if (games.filter((g) => g.stage === 'waiting').length < 9) this.#botHostRoom(games.filter((g) => g.stage === 'waiting' && g.host.includes('_')).length < 2 && Math.random() < 0.3);
+
+    const finished = games.filter((g) => !isOpen(g));
+    if (finished.length > MAX_FINISHED) {
+      const drop = new Set(finished.slice(MAX_FINISHED).map((g) => g.id));
+      this.#state.games = games.filter((g) => !drop.has(g.id));
+      for (const id of drop) delete this.#state.bots[id];
     }
+    if (Date.now() >= ledger.season.endsAt) economy.closeSeason(ledger, Date.now());
   }
 
   #advanceGame(game: Game, seconds: number) {
-    if (game.status !== 'open') return;
-    // Step through the jump so bots still act under the clue they would have seen.
+    if (!isOpen(game)) return;
+    // Step through a jump so bots still act under the clue they would have seen.
     let left = seconds;
-    while (left > 0 && game.status === 'open') {
-      const nextClue = secondsToNextClue(game);
-      const roundEnd = game.durationSec - game.elapsed;
-      const step = Math.min(left, nextClue !== null && nextClue > 0 ? nextClue : roundEnd, 1);
-      this.#runBots(game, game.elapsed / game.durationSec + step / game.durationSec);
-      if (game.elapsed + step >= game.durationSec) break;
-      advance(game, step, Math.random);
+    while (left > 0 && isOpen(game)) {
+      const step = Math.min(left, 1);
+      this.#runBots(game);
+      advance(game, step, mathRng);
       left -= step;
     }
-    if (left > 0 && game.status === 'open') {
-      advance(game, game.durationSec - game.elapsed, Math.random);
-    }
-    if (game.status !== 'open') this.#payOut(game);
+    if (!isOpen(game)) economy.payRoom(this.#state.ledger, game);
   }
 
-  #runBots(game: Game, fraction: number) {
-    for (const bot of this.#state.bots[game.id] ?? []) {
-      if (bot.joined || bot.joinAt > fraction) continue;
-      bot.joined = true;
-      placeDig(game, bot.account, this.#botSpot(game, bot.sloppiness));
+  #botJoin(game: Game, plan: BotPlan) {
+    plan.joined = true;
+    if (game.stage !== 'waiting' || game.players.length >= game.maxPlayers || game.players.includes(plan.account)) return;
+    this.#fundBot(plan.account, game.fee);
+    economy.joinRoom(this.#state.ledger, game, plan.account);
+  }
+
+  #botDig(game: Game, plan: BotPlan) {
+    plan.dug = true;
+    if (game.players.includes(plan.account)) placeDig(game, plan.account, this.#botSpot(game, plan.slop));
+  }
+
+  #botsDigAll(game: Game) {
+    for (const plan of this.#state.bots[game.id]?.plans ?? []) {
+      if (!plan.dug && plan.joined) this.#botDig(game, plan);
     }
   }
 
-  // Bots only use the public clues: a random landmark that still fits, plus some sloppiness.
-  #botSpot(game: Game, sloppiness: number): Point {
-    const id = game.candidateIds[Math.floor(Math.random() * game.candidateIds.length)];
-    const landmark = MAP.landmarks[id];
+  #runBots(game: Game) {
+    const room = this.#state.bots[game.id];
+    if (!room) return;
+    if (game.stage === 'waiting') {
+      for (const plan of room.plans) if (!plan.joined && plan.joinAfter <= game.waited) this.#botJoin(game, plan);
+      if (room.hostStartAfter !== null && game.waited >= room.hostStartAfter && game.players.length >= game.minPlayers) {
+        startGame(game, game.host, mathRng);
+      }
+      return;
+    }
+    const pct = (game.elapsed / game.durationSec) * 100;
+    for (const plan of room.plans) {
+      if (!plan.dug && plan.digPct <= pct) this.#botDig(game, plan);
+    }
+  }
+
+  // Bots only use the public clues: a landmark that still fits, plus some sloppiness.
+  #botSpot(game: Game, slop: number): Point {
+    const { landmarks } = getMap(game.mapId);
+    const landmark = landmarks[game.candidateIds[mathRng(game.candidateIds.length)]];
+    let fallback: Point = { x: landmark.x, y: landmark.y };
     for (let attempt = 0; attempt < 30; attempt++) {
-      const angle = Math.random() * Math.PI * 2;
-      const spot = {
-        x: landmark.x + Math.cos(angle) * sloppiness,
-        y: landmark.y + Math.sin(angle) * sloppiness,
-      };
-      if (isLand(spot)) return spot;
+      const spot = { x: landmark.x + mathRng(slop * 2 + 1) - slop, y: landmark.y + mathRng(slop * 2 + 1) - slop };
+      if (!isLand(game.mapId, spot)) continue;
+      fallback = spot;
+      if (!isCrowded(game.digs, spot)) return spot;
     }
-    return { x: landmark.x, y: landmark.y };
-  }
-
-  #payOut(game: Game) {
-    const { balances } = this.#state;
-    const credit = (account: string, amount: number) => {
-      balances[account] = (balances[account] ?? 0) + amount;
-    };
-    if (game.status === 'refunded') {
-      for (const dig of game.digs) credit(dig.account, game.fee);
-    } else if (game.result?.winner) {
-      credit(game.result.winner, game.result.prize);
-      credit(game.host, game.result.hostCut);
-    }
-    this.#save();
+    return fallback;
   }
 
   #save() {
@@ -231,3 +401,4 @@ class DummyBackend implements GameBackend {
 }
 
 export const dummy = new DummyBackend();
+
