@@ -48,7 +48,11 @@
     if (full) world.showMap('tropical');
   });
 
-  if (!tutorialHidden()) ui.tutorial = true;
+  // Once per visit, so a reload in the middle of a round never covers the map.
+  if (!tutorialHidden() && !sessionStorage.getItem('dig-here-tutorial-seen')) {
+    sessionStorage.setItem('dig-here-tutorial-seen', '1');
+    ui.tutorial = true;
+  }
 
   // Every button and link answers with a sound, wherever it is on the page.
   function onclick(event: MouseEvent) {

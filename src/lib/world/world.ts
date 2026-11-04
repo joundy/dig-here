@@ -92,6 +92,8 @@ type Cloud = { x: number; y: number; vx: number; canvas: HTMLCanvasElement };
 
 type Chest = { x: number; y: number; bornAt: number; landed: boolean; open: boolean; finish: (() => void) | null };
 
+export type DeedMark = 'mine' | 'owned' | 'sale';
+
 export type Hover = { text: string; x: number; y: number } | null;
 
 const clamp = (n: number, low: number, high: number) => Math.min(high, Math.max(low, n));
@@ -229,6 +231,7 @@ class World {
   #tension = 0;
   #tensionBeat = -1;
   #highlightId: number | null = null;
+  #deedMarks: Map<number, DeedMark> | null = null;
 
   #roll: {
     order: number[]; at: number; nextAt: number; final: number; total: number; startedAt: number;
@@ -318,6 +321,7 @@ class World {
     this.#fountain = null;
     this.#tension = 0;
     this.#highlightId = null;
+    this.#deedMarks = null;
     this.setPossible(null, false);
     this.#tapLabelUntil = 0;
     this.#emitHover(null);
@@ -431,6 +435,11 @@ class World {
   }
 
   /** A gold ring on one landmark, for the Deed Market. */
+  /** Little flags over landmarks in the Deed Market: yours, someone else's, or for sale. */
+  setDeedMarks(marks: Map<number, DeedMark> | null) {
+    this.#deedMarks = marks;
+  }
+
   highlight(landmarkId: number | null) {
     this.#highlightId = landmarkId;
   }
@@ -943,6 +952,7 @@ class World {
     this.#drawLights(ctx, t);
     this.#drawTension(ctx, t);
     this.#drawRoll(ctx, t);
+    this.#drawDeedMarks(ctx);
     this.#drawHighlight(ctx, t);
     this.#drawSpot(ctx, t);
     this.#drawCursor(ctx, t);
@@ -1226,6 +1236,21 @@ class World {
       this.#ring(ctx, landmark.x, landmark.y - 6, 9 + Math.round(wave * 7), PALETTE.y);
     }
     ctx.globalAlpha = 1;
+  }
+
+  #drawDeedMarks(ctx: CanvasRenderingContext2D) {
+    if (!this.#deedMarks) return;
+    const colors: Record<DeedMark, string> = { mine: PALETTE.p, owned: PALETTE.c, sale: PALETTE.y };
+    for (const actor of this.#actors) {
+      const mark = this.#deedMarks.get(actor.landmark.id);
+      if (!mark) continue;
+      const top = actor.y - sprite(actor.landmark.kind).h - 5;
+      ctx.fillStyle = PALETTE.k;
+      ctx.fillRect(actor.x - 1, top - 1, 7, 6);
+      ctx.fillRect(actor.x - 1, top + 5, 2, 3);
+      ctx.fillStyle = colors[mark];
+      ctx.fillRect(actor.x, top, 5, 4);
+    }
   }
 
   #drawHighlight(ctx: CanvasRenderingContext2D, t: number) {

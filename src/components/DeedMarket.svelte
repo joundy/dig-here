@@ -10,6 +10,7 @@
   import type { Kind, MapId } from '../lib/game/types';
   import { openWallet, ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
+  import type { DeedMark } from '../lib/world/world';
   import MapBadge from './MapBadge.svelte';
   import Sprite from './Sprite.svelte';
 
@@ -51,6 +52,19 @@
 
   $effect(() => {
     world.showMap(mapId);
+  });
+
+  // Every landmark's flag on the map. Unowned ones have none, and can always be bought at the first price.
+  $effect(() => {
+    void mapId;
+    const marks = new Map<number, DeedMark>();
+    for (const l of landmarks) {
+      const { owner, price } = backend.deedOf(deedId(mapId, l.id));
+      if (owner === me) marks.set(l.id, 'mine');
+      else if (owner) marks.set(l.id, price === null ? 'owned' : 'sale');
+    }
+    world.setDeedMarks(marks);
+    return () => world.setDeedMarks(null);
   });
 
   // Changing map clears the ring, even when the new deed has the same number as the old one.
@@ -130,6 +144,12 @@
 <div class="market">
   <h1>Deeds</h1>
   <p class="what">Own a landmark. When the treasure lands there, you get {percent(RULES.deedBps)} of the pot.</p>
+  <p class="legend">
+    <span><i class="flag mine"></i>Yours</span>
+    <span><i class="flag sale"></i>For sale</span>
+    <span><i class="flag owned"></i>Owned</span>
+    <span>No flag: first sale</span>
+  </p>
 
   <div class="tabs" role="tablist" aria-label="Maps">
     {#each MAP_IDS as map}
@@ -223,6 +243,28 @@
 </div>
 
 <style>
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.75rem;
+    margin: 0.3rem 0 0.5rem;
+    color: var(--mist);
+    font-size: 1.1rem;
+    line-height: 1.1;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .flag {
+    width: 0.7rem;
+    height: 0.55rem;
+    outline: 2px solid var(--ink);
+  }
+  .flag.mine { background: #ff5ea8; }
+  .flag.sale { background: var(--sun); }
+  .flag.owned { background: #c8d4e6; }
   .market {
     display: grid;
     gap: 0.6rem;
