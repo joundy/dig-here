@@ -3,10 +3,9 @@
   import { cubicOut } from 'svelte/easing';
   import { Tween } from 'svelte/motion';
   import { audio } from '../lib/audio/audio.svelte';
-  import { MAP_H, MAP_W } from '../lib/game/map';
+  import { H, W } from '../lib/game/map';
   import type { Point } from '../lib/game/types';
   import { buzz, ui } from '../lib/ui.svelte';
-  import { H, UNIT, W } from '../lib/world/terrain';
   import { world } from '../lib/world/world';
   import type { Hover } from '../lib/world/world';
 
@@ -64,8 +63,8 @@
     void view.set({ s, ...center }, duration === undefined ? undefined : { duration });
   }
 
-  const restX = () => (ui.focus ? ui.focus.x / UNIT : W / 2);
-  const restY = () => (ui.focus ? ui.focus.y / UNIT : H / 2);
+  const restX = () => (ui.focus ? ui.focus.x : W / 2);
+  const restY = () => (ui.focus ? ui.focus.y : H / 2);
 
   function measure() {
     dpr = window.devicePixelRatio || 1;
@@ -126,7 +125,7 @@
   $effect(() => {
     if (!ui.focus) return;
     const { x, y } = ui.focus;
-    untrack(() => setView(target.k, x / UNIT, y / UNIT));
+    untrack(() => setView(target.k, x, y));
   });
 
   const place = $derived.by(() => {
@@ -162,8 +161,8 @@
     if (!spot || !pickable) return false;
     const box = canvas!.getBoundingClientRect();
     const s = box.width / W;
-    const x = box.left + (spot.x / UNIT) * s;
-    const y = box.top + (spot.y / UNIT) * s;
+    const x = box.left + spot.x * s;
+    const y = box.top + spot.y * s;
     return Math.hypot(clientX - x, clientY - y) < GRAB_RADIUS;
   }
 
@@ -262,14 +261,15 @@
       touchedRecently = false;
       return;
     }
-    if (!pickable) return;
     const { x, y } = toArt(event.clientX, event.clientY);
-    world.pointerClick(x, y);
+    audio.unlock();
+    if (pickable) world.pointerClick(x, y);
+    else world.pokeAt(x, y);
   }
 
   function onkeydown(event: KeyboardEvent) {
     if (!pickable) return;
-    const step = event.shiftKey ? 40 : 12;
+    const step = event.shiftKey ? 12 : 4;
     const move: Record<string, [number, number]> = {
       ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0],
     };
@@ -277,8 +277,11 @@
     if (!delta) return;
     event.preventDefault();
     audio.unlock();
-    const from = spot ?? { x: MAP_W / 2, y: MAP_H / 2 };
-    world.onPick?.({ x: from.x + delta[0], y: from.y + delta[1] });
+    const from = spot ?? { x: W / 2, y: H / 2 };
+    world.onPick?.({
+      x: Math.max(0, Math.min(W - 1, from.x + delta[0])),
+      y: Math.max(0, Math.min(H - 1, from.y + delta[1])),
+    });
   }
 
   function zoom(direction: 1 | -1) {
@@ -288,14 +291,16 @@
     if (next === undefined) return;
     buzz(8);
     const onSpot = direction > 0 && spot;
-    setView(next, onSpot ? spot.x / UNIT : target.cx, onSpot ? spot.y / UNIT : target.cy);
+    setView(next, onSpot ? spot.x : target.cx, onSpot ? spot.y : target.cy);
   }
 
   const tip = $derived.by(() => {
     if (!hover) return null;
     const left = hover.x * place.s + place.tx;
     const top = hover.y * place.s + place.ty;
-    return { text: hover.text, left: Math.min(frameW - 60, Math.max(60, left)), top: Math.max(26, top) };
+    // The toys say whole sentences, so keep the middle far enough in for the ends to fit on a phone.
+    const half = Math.min(frameW / 2, Math.max(60, hover.text.length * 4.5));
+    return { text: hover.text, left: Math.min(frameW - half, Math.max(half, left)), top: Math.max(26, top) };
   });
 </script>
 
@@ -323,7 +328,10 @@
     {onpointermove}
     {onpointerup}
     onpointercancel={onpointerup}
-    onpointerleave={() => world.pointerLeave()}
+    onpointerleave={(event) => {
+      // A finger "leaves" the moment it lifts, which would wipe the line its tap just brought up.
+      if (event.pointerType === 'mouse') world.pointerLeave();
+    }}
     {onclick}
     {onkeydown}
   ></canvas>

@@ -54,3 +54,22 @@ export function buzz(pattern: number | number[]) {
 export function openWallet(need: number | null = null) {
   ui.wallet = { need };
 }
+
+const TUTORIAL_KEY = 'dig-here-tutorial-hidden';
+
+export function tutorialHidden(): boolean {
+  try {
+    return localStorage.getItem(TUTORIAL_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function setTutorialHidden(hidden: boolean) {
+  try {
+    if (hidden) localStorage.setItem(TUTORIAL_KEY, '1');
+    else localStorage.removeItem(TUTORIAL_KEY);
+  } catch {
+    // Private browsing can refuse storage. The worst case is seeing the tutorial again.
+  }
+}

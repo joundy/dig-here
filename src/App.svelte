@@ -1,13 +1,18 @@
 <script lang="ts">
   import { fly } from 'svelte/transition';
   import { audio } from './lib/audio/audio.svelte';
-  import { ui } from './lib/ui.svelte';
+  import { tutorialHidden, ui } from './lib/ui.svelte';
   import { world } from './lib/world/world';
   import Board from './components/Board.svelte';
+  import DeedMarket from './components/DeedMarket.svelte';
+  import DigTray from './components/DigTray.svelte';
+  import GameBoard from './components/GameBoard.svelte';
   import Header from './components/Header.svelte';
-  import Lobby from './components/Lobby.svelte';
   import NewGame from './components/NewGame.svelte';
   import Room from './components/Room.svelte';
+  import SeasonPage from './components/SeasonPage.svelte';
+  import Tutorial from './components/Tutorial.svelte';
+  import WalletDialog from './components/WalletDialog.svelte';
   import type { Point } from './lib/game/types';
 
   let hash = $state(location.hash);
@@ -17,20 +22,33 @@
     const game = path.match(/^\/game\/(.+)$/);
     if (game) return { name: 'game' as const, id: game[1], key: path };
     if (path === '/new') return { name: 'new' as const, id: '', key: path };
+    if (path === '/deeds') return { name: 'deeds' as const, id: '', key: path };
+    if (path === '/season') return { name: 'season' as const, id: '', key: path };
     return { name: 'lobby' as const, id: '', key: '/' };
   });
 
   const inGame = $derived(route.name === 'game');
+  // These pages are one wide panel with the island behind it, rather than a map and a rail.
+  const full = $derived(route.name === 'lobby' || route.name === 'season');
+
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // The Room tells the board what it needs. Other screens leave the island idle.
   let board = $state<{ pickable: boolean; spot: Point | null; label: string }>({ pickable: false, spot: null, label: 'Map of the island' });
 
   $effect(() => {
-    if (route.name === 'game') return;
-    world.idle();
+    if (inGame) return;
     board = { pickable: false, spot: null, label: 'Map of the island' };
+    audio.setMapMusic('tropical');
     audio.playMusic('lobby');
   });
+
+  // NewGame and DeedMarket choose their own map.
+  $effect(() => {
+    if (full) world.showMap('tropical');
+  });
+
+  if (!tutorialHidden()) ui.tutorial = true;
 
   // Every button and link answers with a sound, wherever it is on the page.
   function onclick(event: MouseEvent) {
@@ -54,13 +72,15 @@
 />
 
 <div class="app" class:locked={ui.short || (ui.compact && inGame)}>
-<Header />
+<Header current={route.name} />
+<div class="tray"><DigTray /></div>
 <main
   class="stage"
   class:compact={ui.compact}
   class:short={ui.short}
   class:game={inGame}
   class:new={route.name === 'new'}
+  class:full
 >
   <div class="board-wrap">
     <Board
@@ -68,19 +88,26 @@
       spot={board.spot}
       label={board.label}
       camera={ui.coarse && inGame}
-      fill={ui.compact && inGame}
+      fill={full || (ui.compact && inGame)}
     />
   </div>
   {#key route.key}
-    <div class="rail" in:fly={{ x: 40, duration: 240 }}>
+    <div class="rail" in:fly={{ x: 40, duration: calm ? 0 : 240 }}>
       {#if route.name === 'game'}
         <Room id={route.id} onboard={(b) => (board = b)} />
       {:else if route.name === 'new'}
         <NewGame />
+      {:else if route.name === 'deeds'}
+        <DeedMarket />
+      {:else if route.name === 'season'}
+        <SeasonPage />
       {:else}
-        <Lobby />
+        <GameBoard />
       {/if}
     </div>
   {/key}
 </main>
 </div>
+
+{#if ui.wallet}<WalletDialog />{/if}
+{#if ui.tutorial}<Tutorial />{/if}

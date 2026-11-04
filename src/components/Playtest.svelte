@@ -4,21 +4,35 @@
   let { gameId }: { gameId: string } = $props();
 
   const SPEEDS = [1, 5, 20];
+  const stage = $derived(dummy.games.find((g) => g.id === gameId)?.stage);
+
+  // The game ids start again after a reset, so staying here would show a different room.
+  function reset() {
+    dummy.reset();
+    location.hash = '#/';
+  }
 </script>
 
 <details class="playtest">
   <summary>Playtest controls</summary>
   <div class="row" role="group" aria-label="Game speed">
     {#each SPEEDS as speed}
-      <button class:on={dummy.speed === speed} aria-pressed={dummy.speed === speed} onclick={() => (dummy.speed = speed)}>×{speed} speed</button>
+      <button class:on={dummy.speed === speed} aria-pressed={dummy.speed === speed} onclick={() => (dummy.speed = speed)}>×{speed}</button>
     {/each}
   </div>
   <div class="row">
-    <button onclick={() => dummy.skipToNextClue(gameId)}>Skip to next clue</button>
-    <button onclick={() => dummy.endNow(gameId)}>End game now</button>
+    {#if stage === 'waiting'}
+      <button onclick={() => dummy.fillRoom(gameId)}>Fill room</button>
+      <button onclick={() => dummy.startNow(gameId)}>Start now</button>
+    {:else if stage === 'live'}
+      <button onclick={() => dummy.skipToNextClue(gameId)}>Skip to next clue</button>
+    {/if}
+    <button onclick={() => dummy.endNow(gameId)}>End game</button>
+    <button onclick={() => dummy.forceJackpot(gameId)}>Force jackpot</button>
   </div>
   <div class="row">
-    <button onclick={() => dummy.reset()}>Reset everything</button>
+    <button onclick={() => dummy.endSeason()}>End season</button>
+    <button onclick={reset}>Reset everything</button>
   </div>
 </details>
 
@@ -29,6 +43,9 @@
   }
   summary {
     cursor: pointer;
+  }
+  :global(.stage.compact.game) .playtest {
+    margin-top: 0.35rem;
   }
   .row {
     display: flex;

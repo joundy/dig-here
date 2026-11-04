@@ -1,52 +1,81 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import { Tween } from 'svelte/motion';
   import { fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { cubicOut } from 'svelte/easing';
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
-  import { bonus, clock, near, percent } from '../lib/format';
-  import { currentBonus, potOf, secondsLeft, secondsToNextClue, splitPot } from '../lib/game/engine';
-  import { isLand } from '../lib/game/map';
+  import { bonus, near, percent } from '../lib/format';
+  import { clueText } from '../lib/game/copy';
+  import { currentBonus, isCrowded, isOpen, possibleArea, potOf, secondsLeft, splitPot } from '../lib/game/engine';
+  import { isLand, W } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
-  import type { Point } from '../lib/game/types';
+  import type { Game, Point } from '../lib/game/types';
   import { buzz, showBanner, ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
+  import '../round.css';
+  import ClueTrail from './ClueTrail.svelte';
   import Parrot from './Parrot.svelte';
   import Playtest from './Playtest.svelte';
   import Results from './Results.svelte';
+  import Standing from './Standing.svelte';
+  import WaitingRoom from './WaitingRoom.svelte';
+
+  /** Tension builds over the last ten seconds and is at full strength for the last three. */
+  const TENSE_SEC = 10;
+  const PEAK_SEC = 3;
+  const LAST_DIG_SEC = 1;
 
   type BoardState = { pickable: boolean; spot: Point | null; label: string };
   let { id, onboard }: { id: string; onboard: (b: BoardState) => void } = $props();
 
   const game = $derived(backend.games.find((g) => g.id === id));
   const me = $derived(backend.account);
+  const joined = $derived(!!game?.players.includes(me));
   const myDig = $derived(game?.digs.find((d) => d.account === me));
-  const canPick = $derived(game?.status === 'open' && !myDig);
+  const canPick = $derived(game?.stage === 'live' && joined && !myDig);
 
-  let spot = $state<Point | null>(null);
+  let spot = $state.raw<Point | null>(null);
   let error = $state('');
   let busy = $state(false);
   /** On a phone, the pot, the player list and the test controls live in a slide-up sheet. */
   let moreOpen = $state(false);
 
-  /** 'playing' during the round, then 'rolling', 'chest', 'scores' through the reveal, then 'done'. */
-  let phase = $state<'playing' | 'rolling' | 'chest' | 'scores' | 'done'>('done');
+  /** 'round' while the room is open, then 'rolling', 'chest', 'scores' through the reveal, then 'done'. */
+  let phase = $state<'round' | 'rolling' | 'chest' | 'scores' | 'done'>(untrack(() => (game && !isOpen(game) ? 'done' : 'round')));
   let dramatic = $state(false);
 
-  const pot = new Tween(0, { duration: 350, easing: cubicOut });
+  const pot = new Tween(untrack(() => (game ? potOf(game) : 0)), { duration: 350, easing: cubicOut });
   $effect(() => {
     pot.target = game ? potOf(game) : 0;
   });
 
-  // Enter the room: the island shows this round's digs, with no effects for the old ones.
-  untrack(() => {
+  let alive = true;
+
+  // In an effect, because going from one room straight to another builds the new Room before the
+  // old one is torn down. The old teardown has to finish before this claims the shared island.
+  $effect(() => {
+    untrack(enterRoom);
+    world.onPick = pick;
+    return () => {
+      alive = false;
+      world.onPick = null;
+      world.setTension(0);
+      world.setPossible(null, false);
+      ui.heldBalance = null;
+      ui.focus = null;
+    };
+  });
+
+  function enterRoom() {
     const g = game;
     if (!g) return;
-    world.enterGame($state.snapshot(g.digs));
-    if (g.status === 'open') {
-      phase = 'playing';
+    world.enterGame(g.mapId, $state.snapshot(g.digs), g.stage === 'waiting' || g.stage === 'refunded' ? null : [...g.candidateIds]);
+    audio.setMapMusic(g.mapId);
+    if (g.stage === 'waiting') {
+      audio.playMusic('lobby');
+    } else if (g.stage === 'live') {
       audio.stopMusic(0.15);
       audio.playMusic('hunt', g.clues.length - 1);
     } else {
@@ -57,9 +86,7 @@
         ui.focus = { x: g.result.treasure.x, y: g.result.treasure.y };
       }
     }
-  });
-
-  world.onPick = pick;
+  }
 
   $effect(() => {
     onboard({
@@ -71,7 +98,7 @@
 
   $effect(() => {
     if (!game) return;
-    world.sync({ digs: $state.snapshot(game.digs), me, spot, pickable: !!canPick });
+    world.sync({ digs: $state.snapshot(game.digs), me, spot, pickable: !!canPick, crowdRings: !!canPick });
   });
 
   // Each account makes its own choice, so a half-made one doesn't carry over when you switch.
@@ -81,74 +108,107 @@
     lastMe = me;
     spot = null;
     error = '';
+    ui.heldBalance = null;
   });
 
   $effect(() => {
-    if (game?.status === 'open') world.setDusk(game.elapsed / game.durationSec);
+    if (game?.stage === 'live') world.setDusk(game.elapsed / game.durationSec);
   });
 
-  // New clue: banner, jingle, and the music steps up.
+  // Winnings arrive in the same tick the round ends, so the balance to hold back during the reveal
+  // has to be remembered while the round is still going.
+  let balanceBefore = untrack(() => backend.balanceOf(me));
+  $effect(() => {
+    if (game && isOpen(game)) balanceBefore = backend.balanceOf(me);
+  });
+
+  let lastStage = untrack(() => game?.stage);
+  $effect(() => {
+    const g = game;
+    const stage = g?.stage;
+    const was = lastStage;
+    lastStage = stage;
+    if (!g || stage === was) return;
+    untrack(() => {
+      if (stage === 'live') startRound(g);
+      else if (stage === 'finished' && (was === 'waiting' || was === 'live')) void reveal(g);
+      else if (stage === 'refunded') refunded();
+    });
+  });
+
+  function startRound(g: Game) {
+    spot = null;
+    error = '';
+    if (joined) showBanner('Dig!', `Digs count ${bonus(currentBonus(g))} right now`);
+    else showBanner('Dig!', "You're watching this one");
+    buzz(30);
+    audio.roundStart();
+    audio.stopMusic(0.15);
+    audio.playMusic('hunt', g.clues.length - 1);
+    world.setPossible([...g.candidateIds]);
+  }
+
+  // New clue: banner, jingle, the music steps up and impossible areas go dark.
   let seenClues = untrack(() => game?.clues.length ?? 0);
   $effect(() => {
-    const count = game?.clues.length ?? 0;
-    if (count <= seenClues || !game) return;
+    const g = game;
+    const count = g?.clues.length ?? 0;
+    if (!g || count <= seenClues) return;
+    const was = seenClues;
     seenClues = count;
-    // A round ended early rolls its remaining clues at once, and those aren't news.
-    if (game.status !== 'open') return;
+    // The first clue is the round starting. A round ended early rolls its last clues at once, and those aren't news.
+    if (was === 0 || g.stage !== 'live') return;
     untrack(() => {
-      const bonusNow = RULES.clueSchedule[count - 1].bonus;
-      showBanner('New clue!', `Digs now count ${bonus(bonusNow)}`);
+      showBanner(clueText(g.mapId, g.clues[count - 1]).plain, `Digs now count ${bonus(RULES.clueSchedule[count - 1].bonusBps)}`);
       buzz(20);
       audio.newClue();
       audio.playMusic('hunt', count - 1);
+      world.setPossible([...g.candidateIds]);
       world.flash();
     });
   });
 
-  // The final ten seconds tick.
-  let lastSecond = Infinity;
+  // The final seconds tick and the island gets nervous.
+  let lastSecond = untrack(() => (game?.stage === 'live' ? Math.ceil(secondsLeft(game)) : Infinity));
   $effect(() => {
-    if (game?.status !== 'open') return;
-    const whole = Math.ceil(secondsLeft(game));
-    if (whole !== lastSecond && whole <= 10 && whole > 0) audio.tick(whole <= 3);
+    if (game?.stage !== 'live') return;
+    const left = secondsLeft(game);
+    const whole = Math.ceil(left);
+    if (whole !== lastSecond && whole <= TENSE_SEC && whole > 0) audio.tick(whole <= PEAK_SEC);
     lastSecond = whole;
+    if (left <= TENSE_SEC) world.setTension(Math.min(1, (TENSE_SEC - left) / (TENSE_SEC - PEAK_SEC)));
   });
 
-  let alive = true;
-  let lastStatus = untrack(() => game?.status);
+  function clearRound() {
+    spot = null;
+    error = '';
+    moreOpen = false;
+    ui.cameraReset++;
+    world.setTension(0);
+  }
 
-  $effect(() => {
-    const g = game;
-    const status = g?.status;
-    if (lastStatus === 'open' && status && status !== 'open') {
-      untrack(() => {
-        spot = null;
-        moreOpen = false;
-        ui.cameraReset++;
-        if (status === 'finished') void reveal();
-        else {
-          audio.stopMusic(0.4);
-          audio.refund();
-          phase = 'done';
-          setTimeout(() => alive && audio.playMusic('lobby'), 1500);
-        }
-      });
-    }
-    lastStatus = status;
-  });
+  function refunded() {
+    clearRound();
+    world.setPossible(null);
+    audio.stopMusic(0.4);
+    audio.refund();
+    phase = 'done';
+    setTimeout(() => alive && audio.playMusic('lobby'), 1500);
+  }
 
-  async function reveal() {
-    const g = game;
-    const result = g?.result;
-    if (!g || !result?.treasure) return;
+  async function reveal(g: Game) {
+    const result = g.result;
+    if (!result?.treasure) return;
+    clearRound();
     // Hold the header balance back, so a win isn't given away before the chest lands.
-    const prize = (result.winner === me ? result.prize : 0) + (g.host === me ? result.hostCut : 0);
-    ui.heldBalance = backend.balanceOf(me) - prize;
+    ui.heldBalance = balanceBefore;
 
     audio.stopMusic(0.2);
     dramatic = true;
     phase = 'rolling';
     world.setDusk(1);
+    // A round ended early never showed its last clues, and the treasure must land somewhere lit.
+    world.setPossible([...g.candidateIds]);
     audio.drumroll(2.7);
     await world.rollCandidates([...g.candidateIds], result.treasure.landmarkId);
     if (!alive) return;
@@ -169,16 +229,9 @@
     setTimeout(() => alive && audio.playMusic('lobby'), 2600);
   }
 
-  onDestroy(() => {
-    alive = false;
-    ui.heldBalance = null;
-    ui.focus = null;
-    world.onPick = null;
-  });
-
   function pick(point: Point, quiet = false) {
-    if (!game || game.status !== 'open' || myDig || busy) return;
-    if (!isLand(point)) {
+    if (!game || !canPick || busy) return;
+    if (!isLand(game.mapId, point)) {
       if (quiet) return;
       error = 'That spot is water. Pick a spot on land.';
       audio.error();
@@ -189,37 +242,32 @@
     if (!quiet) audio.pick();
   }
 
+  const tooLate = $derived(game?.stage === 'live' && secondsLeft(game) <= LAST_DIG_SEC);
+
   async function dig() {
-    if (!game || !spot) return;
+    if (!game || !spot || busy || tooLate) return;
+    // The count at the moment of the tap: a clue landing while this is on its way must turn it down.
+    const seenClue = game.clues.length;
+    const signer = me;
     error = '';
     busy = true;
     try {
-      await backend.dig(game.id, spot);
-      spot = null;
+      await backend.dig(game.id, spot, seenClue);
+      if (backend.account === signer) spot = null;
     } catch (e) {
-      error = (e as Error).message;
-      audio.error();
+      if (alive && game?.stage === 'live') {
+        error = (e as Error).message;
+        audio.error();
+      }
     } finally {
       busy = false;
     }
   }
 
-  const clueNow = $derived(game ? game.clues[game.clues.length - 1] : undefined);
-  const earlier = $derived(game ? game.clues.slice(0, -1) : []);
-  const nextIn = $derived(game ? secondsToNextClue(game) : null);
-  const nextBonus = $derived(game ? RULES.clueSchedule[game.clues.length]?.bonus : undefined);
+  const crowded = $derived(!!game && !!spot && isCrowded(game.digs, spot));
+  const outside = $derived(!!game && !!spot && !possibleArea(game.mapId, game.candidateIds)[spot.y * W + spot.x]);
+  const warning = $derived(game?.stage === 'live' && joined && !myDig && !tooLate && secondsLeft(game) <= RULES.noDigWarningSec);
   const payout = $derived(splitPot(Math.round(pot.current), game?.hostCutBps ?? 0));
-  const urgent = $derived(game?.status === 'open' && secondsLeft(game) <= 10);
-
-  // How much of the current bonus window is left, as a fraction for the draining bar.
-  const windowLeft = $derived.by(() => {
-    if (!game) return 0;
-    const schedule = RULES.clueSchedule;
-    const index = game.clues.length - 1;
-    const start = schedule[index].startsAt * game.durationSec;
-    const end = (schedule[index + 1]?.startsAt ?? 1) * game.durationSec;
-    return Math.max(0, Math.min(1, (end - game.elapsed) / (end - start)));
-  });
 </script>
 
 {#if !game}
@@ -227,79 +275,75 @@
     <Parrot text="This game no longer exists. Squawk." />
     <a class="btn gap" href="#/">See open games</a>
   </div>
-{:else if phase === 'playing'}
-  <div class="top">
-    <div class="where">
-      <p class="crumb"><a href="#/">Open games</a> / {game.name}</p>
-      <p class="count">Clue {game.clues.length} of {RULES.clueSchedule.length}</p>
+{:else if game.stage === 'waiting'}
+  <WaitingRoom {game} {me} />
+{:else if phase === 'round'}
+  <!-- Stage and phase change a moment apart when a round ends. In between, show nothing rather than a half-ended round. -->
+  {#if game.stage === 'live'}
+    <div class="top">
+      <p class="round-crumb"><a href="#/">Game board</a> / {game.name}</p>
+      <ClueTrail {game} />
     </div>
-    <Parrot text={clueNow?.text ?? ''} plain={clueNow?.plain ?? ''} />
-    {#if earlier.length}
-      <ul class="earlier">
-        {#each earlier as c}<li>{c.plain}</li>{/each}
-      </ul>
+
+    <div class="bottom">
+      <div class="action">
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
+        {#if !joined}
+          <p class="prompt">This round has started. You're watching.</p>
+        {:else if myDig}
+          {#key me}<Standing {game} {me} />{/key}
+        {:else}
+          <div class="choosing">
+            <div class="notes">
+              {#if warning}<p class="note warn" role="alert">Dig now, or your fee stays in the pot!</p>{/if}
+              {#if spot && crowded}<p class="note crowded">Crowded: {bonus(RULES.crowdBps)}</p>{/if}
+              {#if spot && outside}<p class="note">The treasure can't land here, but your distance still scores.</p>{/if}
+              {#if spot && ui.coarse && !crowded && !outside}<p class="note">Drag the X to fine-tune it.</p>{/if}
+            </div>
+            {#if spot}
+              <button class="btn" onclick={dig} disabled={busy || tooLate}>
+                {busy ? 'Digging…' : tooLate ? 'Too late!' : `Dig here at ${bonus(currentBonus(game))}`}
+              </button>
+            {:else}
+              <p class="prompt">{ui.coarse ? 'Tap the map to choose your spot.' : 'Choose your spot on the map.'} You get one dig.</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <button class="more-toggle" aria-expanded={moreOpen} onclick={() => (moreOpen = true)}>
+        <span>Pot {near(Math.round(pot.current))}, {game.digs.length} of {game.players.length} dug</span>
+        <span aria-hidden="true">Details</span>
+      </button>
+    </div>
+
+    {#if ui.compact && moreOpen}
+      <button class="scrim" aria-label="Close details" onclick={() => (moreOpen = false)}></button>
     {/if}
-  </div>
 
-  <div class="bottom">
-    <div class="stats">
-      <div class="clock" class:urgent role="timer">
-        <strong>{clock(secondsLeft(game))}</strong>
-        <span>left to dig</span>
-      </div>
-      <div class="bonus">
-        <strong>{bonus(currentBonus(game))}</strong>
-        <span>{nextIn !== null && nextBonus ? `Drops to ${bonus(nextBonus)} in ${clock(nextIn)}` : 'Last clue'}</span>
-      </div>
+    <div class="more" class:open={moreOpen} inert={ui.compact && !moreOpen}>
+      <button class="close" onclick={() => (moreOpen = false)}>Close</button>
+      <dl class="pot">
+        <div><dt>Pot</dt><dd>{near(Math.round(pot.current))}</dd></div>
+        <div><dt>Winner gets</dt><dd>{near(payout.prize)}</dd></div>
+        <div><dt>Host keeps {percent(game.hostCutBps)}</dt><dd>{near(payout.hostCut)}</dd></div>
+      </dl>
+
+      <h2>{game.digs.length} of {game.players.length} dug</h2>
+      <ul class="diggers">
+        {#each [...game.digs].reverse() as d (d.account)}
+          <li class:me={d.account === me} in:fly={{ x: 16, duration: 200 }} animate:flip={{ duration: 180 }}>
+            <span>{d.account === me ? 'You' : d.account}</span>
+            <span>{bonus(d.bonusBps)}{d.crowded ? ` ${bonus(RULES.crowdBps)}` : ''}</span>
+          </li>
+        {:else}
+          <li class="empty">Nobody has dug yet. Early digs score more.</li>
+        {/each}
+      </ul>
+
+      <Playtest gameId={game.id} />
     </div>
-    <div class="meter" aria-hidden="true"><div class="fill" style:width="{windowLeft * 100}%"></div></div>
-
-    <div class="action">
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if myDig}
-        <p class="locked">You dug at {bonus(myDig.bonus)}. Your score is decided when the treasure lands.</p>
-      {:else if spot}
-        <button class="btn" onclick={dig} disabled={busy}>
-          {busy ? 'Digging…' : `Dig here for ${near(game.fee)}`}
-        </button>
-        {#if ui.coarse}<p class="hint">Drag the X to fine-tune it.</p>{/if}
-      {:else}
-        <p class="prompt">{ui.coarse ? 'Tap the map to choose your spot.' : 'Choose your spot on the map.'} You get one dig.</p>
-      {/if}
-    </div>
-
-    <button class="more-toggle" aria-expanded={moreOpen} onclick={() => (moreOpen = true)}>
-      <span>Pot {near(Math.round(pot.current))}, {game.digs.length} {game.digs.length === 1 ? 'dig' : 'digs'}</span>
-      <span aria-hidden="true">Details</span>
-    </button>
-  </div>
-
-  {#if ui.compact && moreOpen}
-    <button class="scrim" aria-label="Close details" onclick={() => (moreOpen = false)}></button>
   {/if}
-
-  <div class="more" class:open={moreOpen} inert={ui.compact && !moreOpen}>
-    <button class="close" onclick={() => (moreOpen = false)}>Close</button>
-    <dl class="pot">
-      <div><dt>Pot</dt><dd>{near(Math.round(pot.current))}</dd></div>
-      <div><dt>Winner gets</dt><dd>{near(payout.prize)}</dd></div>
-      <div><dt>Host keeps {percent(game.hostCutBps)}</dt><dd>{near(payout.hostCut)}</dd></div>
-    </dl>
-
-    <h2>{game.digs.length} {game.digs.length === 1 ? 'dig' : 'digs'} so far</h2>
-    <ul class="diggers">
-      {#each [...game.digs].reverse() as d (d.account)}
-        <li class:me={d.account === me} in:fly={{ x: 16, duration: 200 }} animate:flip={{ duration: 180 }}>
-          <span>{d.account === me ? 'You' : d.account}</span>
-          <span>{bonus(d.bonus)}</span>
-        </li>
-      {:else}
-        <li class="empty">Nobody has dug yet. An early dig counts double.</li>
-      {/each}
-    </ul>
-
-    <Playtest gameId={game.id} />
-  </div>
 {:else if phase === 'rolling' || phase === 'chest'}
   <div class="top">
     <Parrot text={phase === 'rolling' ? "Time's up! Where will it land?" : 'There it is!'} />
@@ -314,16 +358,6 @@
   .gap {
     margin-top: 1rem;
   }
-  .where {
-    margin-bottom: 0.1rem;
-  }
-  .hint {
-    margin: 0.35rem 0 0;
-    color: var(--mist);
-    font-size: 1.15rem;
-    line-height: 1;
-    text-align: center;
-  }
   .more-toggle,
   .close,
   .scrim {
@@ -332,87 +366,36 @@
   .more {
     margin-top: 0.8rem;
   }
-  .crumb {
-    margin: 0 0 0.5rem;
-    color: var(--mist);
-    font-size: 1.2rem;
-    line-height: 1.1;
-  }
-  /* Roomier to tap than it looks. */
-  .crumb a {
-    display: inline-block;
-    padding: 0.6rem 0;
-    margin: -0.6rem 0;
-    color: inherit;
-  }
-  .count {
-    margin: 0 0 0.35rem;
-    font-size: 1.3rem;
-    line-height: 1;
-  }
-  .earlier {
-    list-style: none;
-    margin: 0.5rem 0 0;
-    padding: 0;
-    color: var(--mist);
-    font-size: 1.15rem;
-    line-height: 1.15;
-  }
-  .earlier li {
-    text-decoration: line-through;
-  }
-  .stats {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1.25rem;
-    margin-top: 0.8rem;
-  }
-  .stats strong {
-    display: block;
-    font-family: var(--display);
-    font-weight: 400;
-    font-size: 3.4rem;
-    line-height: 0.85;
-    font-variant-numeric: tabular-nums;
-  }
-  .stats span {
-    display: block;
-    color: var(--mist);
-    font-size: 1.2rem;
-    line-height: 1.1;
-  }
-  .bonus strong {
-    color: var(--sun);
-  }
-  .urgent strong {
-    color: #ff8a8a;
-    animation: throb 0.5s steps(2) infinite alternate;
-  }
-  .meter {
-    height: 9px;
-    margin-top: 0.45rem;
-    background: var(--deep);
-  }
-  .fill {
-    height: 100%;
-    background: var(--sun);
-    transition: width 0.25s linear;
-  }
   .action {
     margin-top: 0.8rem;
   }
-  .prompt,
-  .locked {
+  .notes {
+    display: grid;
+    gap: 0.15rem;
+    margin-bottom: 0.45rem;
+  }
+  .notes:empty {
+    display: none;
+  }
+  .note {
+    margin: 0;
+    color: var(--mist);
+    font-size: 1.2rem;
+    line-height: 1.05;
+  }
+  .note.crowded {
+    color: #ff8a8a;
+  }
+  .note.warn {
+    color: var(--sun);
+    animation: warn 0.5s steps(2) infinite alternate;
+  }
+  .prompt {
     margin: 0;
     padding: 0.5rem 0.75rem;
     background: var(--deep);
     font-size: 1.3rem;
     line-height: 1.15;
-  }
-  .locked {
-    box-shadow: inset 6px 0 0 var(--pink);
-    padding-left: 1rem;
-    animation: stamp 0.28s cubic-bezier(0.3, 1.6, 0.6, 1);
   }
   .pot {
     margin: 0;
@@ -455,95 +438,39 @@
   .diggers .empty {
     color: var(--mist);
   }
-  @keyframes throb {
-    to { transform: scale(1.06); }
+  @keyframes warn {
+    to { opacity: 0.55; }
   }
-  @keyframes stamp {
-    from { transform: scale(1.1); opacity: 0.4; }
-  }
-  /* Phone held upright: everything fits around the map, and the details slide up on request. */
-  :global(.stage.compact.game) .top {
-    order: 1;
-    padding: 0 0.75rem 0.35rem;
-  }
-  :global(.stage.compact.game) .where {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 0.2rem;
-  }
-  :global(.stage.compact.game) .crumb {
-    margin: 0;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  :global(.stage.compact.game) .count {
-    margin: 0;
-    flex: none;
-    font-size: 1.2rem;
-    line-height: 1.1;
-  }
-  :global(.stage.compact.game) .earlier {
-    display: none;
-  }
-  :global(.stage.compact.game) .bottom {
-    order: 3;
-    padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
-    box-shadow: 0 -3px 0 var(--ink);
-  }
-  :global(.stage.compact.game) .results-panel {
-    box-shadow: none;
-    max-height: 56%;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding-top: 0.6rem;
-  }
-  :global(.stage.compact.game) .stats {
-    margin-top: 0;
-    align-items: center;
-    gap: 0.9rem;
-  }
-  :global(.stage.compact.game) .stats strong {
-    font-size: 2.6rem;
-  }
-  :global(.stage.compact.game) .stats span {
-    font-size: 1.1rem;
-  }
-  :global(.stage.compact.game) .clock,
-  :global(.stage.compact.game) .bonus {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-  }
-  :global(.stage.compact.game) .clock span {
-    width: 3rem;
-    line-height: 0.95;
-  }
-  :global(.stage.compact.game) .bonus span {
-    line-height: 0.95;
-  }
-  :global(.stage.compact.game) .meter {
-    margin-top: 0.15rem;
-    height: 6px;
-  }
+  /* Phone held upright: the details slide up on request. */
   :global(.stage.compact.game) .action {
-    margin-top: 0.4rem;
+    margin-top: 0;
   }
   :global(.stage.compact.game) .action .error {
     margin: 0 0 0.35rem;
+  }
+  /* A fixed height, so a note appearing doesn't resize the map under a dragging finger. */
+  :global(.stage.compact.game) .choosing {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 6rem;
+  }
+  :global(.stage.compact.game) .notes {
+    margin-bottom: 0.3rem;
   }
   :global(.stage.compact.game) .action .btn {
     width: calc(100% - 6px);
     margin: 0 3px;
   }
-  :global(.stage.compact.game) .prompt,
-  :global(.stage.compact.game) .locked {
+  :global(.stage.compact.game) .prompt {
+    flex: 1;
     font-size: 1.25rem;
-    min-height: 3.25rem;
     display: flex;
     align-items: center;
+    min-height: 3rem;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+    line-height: 1.05;
   }
   :global(.stage.compact.game) .more-toggle {
     display: flex;
@@ -605,21 +532,11 @@
   }
   /* Very short phones: give the map every spare pixel. */
   @media (max-height: 620px) {
-    :global(.stage.compact.game) .where,
-    :global(.stage.compact.game) .hint {
-      display: none;
+    :global(.stage.compact.game) .choosing {
+      min-height: 5rem;
     }
-    :global(.stage.compact.game) .top {
-      padding-top: 0.15rem;
-    }
-    :global(.stage.compact.game) .stats strong {
-      font-size: 2.2rem;
-    }
-    :global(.stage.compact.game) .prompt,
-    :global(.stage.compact.game) .locked {
+    :global(.stage.compact.game) .prompt {
       min-height: 2.6rem;
-      padding-top: 0.3rem;
-      padding-bottom: 0.3rem;
       font-size: 1.15rem;
     }
     :global(.stage.compact.game) .more-toggle {
@@ -628,9 +545,6 @@
     }
   }
   /* Phone held sideways: the button stays reachable as the rail scrolls. */
-  :global(.stage.short) .stats strong {
-    font-size: 2.6rem;
-  }
   :global(.stage.short) .action {
     position: sticky;
     bottom: 0.5rem;

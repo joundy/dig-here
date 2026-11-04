@@ -1,5 +1,6 @@
 // Live audio: the unlock-on-first-gesture context, the music scheduler and the sound effects.
-import { scheduleBar } from './song';
+import type { MapId } from '../game/types';
+import { MAP_MUSIC, scheduleBar } from './song';
 import type { TrackName } from './song';
 import { buildMusicChain, kick, noise, snare, tone } from './synth';
 
@@ -30,6 +31,7 @@ class Audio {
 
   #wanted: Wanted = null;
   #playing: TrackName | null = null;
+  #map = MAP_MUSIC.tropical;
   #bar = 0;
   #nextBarAt = 0;
   #lastBlip = 0;
@@ -83,6 +85,11 @@ class Audio {
     this.#schedule();
   }
 
+  /** Same song, dressed for the map. Bars already scheduled play out, so it lands on the next one. */
+  setMapMusic(mapId: MapId) {
+    this.#map = MAP_MUSIC[mapId];
+  }
+
   stopMusic(fadeSeconds = 0.25) {
     this.#wanted = null;
     this.#playing = null;
@@ -118,7 +125,7 @@ class Audio {
     if (this.#nextBarAt < ac.currentTime) this.#nextBarAt = ac.currentTime + 0.05;
 
     while (this.#nextBarAt < ac.currentTime + LOOK_AHEAD) {
-      this.#nextBarAt += scheduleBar(ac, { dry: this.#chain.dry, send: this.#chain.send }, track, this.#bar, intensity, this.#nextBarAt);
+      this.#nextBarAt += scheduleBar(ac, { dry: this.#chain.dry, send: this.#chain.send }, track, this.#bar, intensity, this.#nextBarAt, this.#map);
       this.#bar++;
     }
   }
@@ -270,6 +277,79 @@ class Audio {
     this.#sfx((ac, out, t) => {
       [392, 370, 349].forEach((f, i) => tone(ac, out, t + i * 0.28, f, 0.26, 0.15, { duty: 0.5 }));
       tone(ac, out, t + 0.84, 330, 0.7, 0.15, { duty: 0.5, vibrato: true, slideTo: 300 });
+    });
+  }
+
+  join() {
+    this.#sfx((ac, out, t) => {
+      tone(ac, out, t, 587, 0.06, 0.13, { duty: 0.25 });
+      tone(ac, out, t + 0.06, 880, 0.12, 0.13, { duty: 0.25, slideTo: 988 });
+    });
+  }
+
+  /** One step of the waiting room filling up. */
+  roomFilling(progress: number) {
+    const p = Math.max(0, Math.min(1, progress || 0));
+    const f = 294 * 2 ** (p * 2);
+    this.#sfx((ac, out, t) => tone(ac, out, t, f, 0.1, 0.1 + p * 0.04, { duty: 0.25, slideTo: f * 1.12 }));
+  }
+
+  spotStolen() {
+    this.#sfx((ac, out, t) => {
+      tone(ac, out, t, 466, 0.14, 0.14, { duty: 0.5 });
+      tone(ac, out, t + 0.16, 370, 0.36, 0.14, { duty: 0.5, vibrato: true, slideTo: 349 });
+    });
+  }
+
+  spotGone() {
+    this.#sfx((ac, out, t) => {
+      tone(ac, out, t, 988, 0.5, 0.13, { duty: 0.25, slideTo: 123 });
+      noise(ac, out, t + 0.42, 0.12, 0.08, 'lowpass', 1200);
+    });
+  }
+
+  /** Our own hook climbing to a held top note, under a shower of coins. */
+  jackpot() {
+    this.#sfx((ac, out, t) => {
+      const line: [number, number, number][] = [
+        [392, 0, 0.1], [523, 0.1, 0.1], [659, 0.2, 0.1], [784, 0.3, 0.2],
+        [659, 0.5, 0.1], [784, 0.6, 0.1], [1047, 0.7, 0.3],
+        [880, 1.0, 0.1], [1047, 1.1, 0.1], [1397, 1.2, 0.3],
+        [1175, 1.5, 0.1], [1397, 1.6, 0.1], [1568, 1.7, 0.3],
+        [1319, 2.0, 0.1], [1568, 2.1, 0.1], [2093, 2.2, 1.2],
+      ];
+      for (const [f, at, d] of line) {
+        tone(ac, out, t + at, f, d, 0.15, { duty: 0.25, vibrato: true });
+        tone(ac, out, t + at, f / 2, d, 0.09, { duty: 0.5 });
+      }
+      const bass: [number, number][] = [[131, 0], [131, 0.5], [175, 1.0], [196, 1.5], [131, 2.2]];
+      bass.forEach(([f, at], i) => tone(ac, out, t + at, f, i === 4 ? 1.2 : 0.42, 0.24, { type: 'triangle', sustain: 0.8 }));
+      for (const at of [0, 0.5, 1.0, 1.5, 2.0, 2.2]) kick(ac, out, t + at, 0.4);
+      for (const at of [0.7, 1.2, 1.7, 2.1]) snare(ac, out, t + at, 0.1);
+      for (let i = 0; i < 44; i++) {
+        tone(ac, out, t + 0.3 + i * 0.07, [988, 1319, 1568, 1976][(i * 3) % 4], 0.06, 0.05, { duty: 0.25 });
+      }
+    });
+  }
+
+  deposit() {
+    this.#sfx((ac, out, t) => {
+      [0, 0.05, 0.09, 0.15, 0.19, 0.26].forEach((at, i) => {
+        tone(ac, out, t + at, [1319, 988, 1568, 1175, 1760, 1319][i], 0.05, 0.09, { duty: 0.25 });
+        noise(ac, out, t + at, 0.025, 0.03, 'highpass', 6000);
+      });
+    });
+  }
+
+  /** A short pickup, then the hit on "go". */
+  roundStart() {
+    this.#sfx((ac, out, t) => {
+      tone(ac, out, t, 392, 0.06, 0.13, { duty: 0.25 });
+      kick(ac, out, t + 0.07, 0.5);
+      snare(ac, out, t + 0.07, 0.14);
+      tone(ac, out, t + 0.07, 784, 0.28, 0.15, { duty: 0.25, slideTo: 880 });
+      tone(ac, out, t + 0.07, 523, 0.28, 0.1, { duty: 0.5 });
+      tone(ac, out, t + 0.07, 196, 0.2, 0.24, { type: 'triangle', sustain: 0.8 });
     });
   }
 

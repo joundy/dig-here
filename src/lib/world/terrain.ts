@@ -1,10 +1,9 @@
 // Bakes the island into pixels once, and animates the water by cycling colours by distance from shore.
-import { inside, isLand, MAP, MAP_W } from '../game/map';
-import { PALETTE } from './sprites';
+import { getMap, H, W } from '../game/map';
+import type { MapId } from '../game/types';
+import { themeOf } from './themes';
 
-export const W = 320;
-export const H = 224;
-export const UNIT = MAP_W / W;
+export { W, H } from '../game/map';
 
 function rgba(hex: string): number {
   const n = parseInt(hex.slice(1), 16);
@@ -51,19 +50,10 @@ export type Terrain = {
   paintWater: (time: number) => void;
 };
 
-export function buildTerrain(): Terrain {
-  const center = (x: number, y: number) => ({ x: (x + 0.5) * UNIT, y: (y + 0.5) * UNIT });
+export function buildTerrain(mapId: MapId): Terrain {
+  const { land: landMask, hills: hillMask } = getMap(mapId);
+  const { land: colors, water: waters } = themeOf(mapId);
 
-  const landMask = new Uint8Array(W * H);
-  const hillMask = new Uint8Array(W * H);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const p = center(x, y);
-      const i = y * W + x;
-      landMask[i] = isLand(p) ? 1 : 0;
-      hillMask[i] = landMask[i] && MAP.hills.some((h) => inside(p, h)) ? 1 : 0;
-    }
-  }
   const toLand = distanceField((i) => landMask[i] === 1);
   const toWater = distanceField((i) => landMask[i] === 0);
   const toHillEdge = distanceField((i) => hillMask[i] === 0);
@@ -75,7 +65,15 @@ export function buildTerrain(): Terrain {
   const landImage = landCtx.createImageData(W, H);
   const landPixels = new Uint32Array(landImage.data.buffer);
 
-  const C = Object.fromEntries(Object.entries(PALETTE).map(([k, v]) => [k, rgba(v)]));
+  const SHORE = rgba(colors.shore);
+  const SAND = rgba(colors.sand);
+  const BASE = rgba(colors.base);
+  const HILL = rgba(colors.hill);
+  const BASE_SPECK = rgba(colors.baseSpeck);
+  const HILL_SPECK = rgba(colors.hillSpeck);
+  const RIPPLE = colors.ripple ? rgba(colors.ripple) : null;
+  let reach = colors.speck;
+  const flecks = colors.flecks.map(([color, share]) => ({ color: rgba(color), upTo: (reach += share) }));
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -85,16 +83,15 @@ export function buildTerrain(): Terrain {
       const checker = (x + y) % 2 === 0;
       const r = hash(x + 3, y + 7);
       let color: number;
-      if (shore < 1.6) color = C.S;
-      else if (shore < 3.6) color = C.s;
-      else if (shore < 5 && checker) color = C.s;
+      if (shore < 1.6) color = SHORE;
+      else if (shore < 3.6) color = SAND;
+      else if (shore < 5 && checker) color = SAND;
       else {
         const hill = hillMask[i] && (toHillEdge[i] > 2 || checker);
-        color = hill ? C.G : C.g;
-        if (r < 0.022) color = hill ? C.f : C.G;
-        else if (r < 0.027 && !hill) color = C.w;
-        else if (r < 0.031 && !hill) color = C.y;
-        else if (r < 0.033 && !hill) color = C.p;
+        color = hill ? HILL : BASE;
+        if (r < colors.speck) color = hill ? HILL_SPECK : BASE_SPECK;
+        else if (!hill) color = flecks.find((fleck) => r < fleck.upTo)?.color ?? color;
+        else if (RIPPLE !== null && Math.floor(y + Math.sin(x * 0.2) * 2.4) % 5 === 0) color = RIPPLE;
       }
       landPixels[i] = color;
     }
@@ -129,6 +126,12 @@ export function buildTerrain(): Terrain {
     }
   }
 
+  const FOAM = rgba(waters.foam);
+  const GLOW = rgba(waters.glow);
+  const SHALLOW = rgba(waters.shallow);
+  const MID = rgba(waters.mid);
+  const OPEN = rgba(waters.open);
+
   const paintWater = (time: number) => {
     const shift = time * 1.1;
     const glintClock = Math.floor(time * 2);
@@ -136,12 +139,12 @@ export function buildTerrain(): Terrain {
       const d = depth[k];
       // Bands get closer to shore as time passes, which reads as waves rolling in.
       const band = Math.floor((d + wobble[k] + shift) / 3.4) & 3;
-      let color = C.n;
-      if (d < 2) color = band <= 1 ? C.w : C.u;
-      else if (d < 7) color = band === 0 ? C.l : C.u;
-      else if (d < 13) color = band === 0 ? C.u : C.U;
-      else if (d < 21) color = band === 0 ? C.U : C.n;
-      else if (glint[k] >= 0 && (glintClock + Math.floor(glint[k])) % 9 === 0) color = C.U;
+      let color = OPEN;
+      if (d < 2) color = band <= 1 ? FOAM : SHALLOW;
+      else if (d < 7) color = band === 0 ? GLOW : SHALLOW;
+      else if (d < 13) color = band === 0 ? SHALLOW : MID;
+      else if (d < 21) color = band === 0 ? MID : OPEN;
+      else if (glint[k] >= 0 && (glintClock + Math.floor(glint[k])) % 9 === 0) color = MID;
       waterPixels[index[k]] = color;
     }
     waterCtx.putImageData(waterImage, 0, 0);

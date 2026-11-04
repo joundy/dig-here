@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getMap, MAP_IDS } from '../game/map';
 import { PALETTE, SPRITE_ART } from './sprites';
 
 describe('sprites', () => {
@@ -10,6 +11,14 @@ describe('sprites', () => {
         for (const letter of row) {
           if (letter !== '.') expect(PALETTE[letter], `unknown colour "${letter}"`).toBeDefined();
         }
+      }
+    });
+  }
+
+  for (const id of MAP_IDS) {
+    it(`every landmark on ${id} has a sprite`, () => {
+      for (const { kind } of getMap(id).landmarks) {
+        expect(SPRITE_ART, `no sprite for ${kind}`).toHaveProperty(kind);
       }
     });
   }

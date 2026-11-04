@@ -3,8 +3,17 @@
   import { ui } from '../lib/ui.svelte';
   import Sprite from './Sprite.svelte';
 
+  type Props = {
+    text: string;
+    plain?: string;
+    /** Small phones: a tiny parrot and a single small line. */
+    compact?: boolean;
+    /** Skip the typing, for a line the player has already been shown. */
+    instant?: boolean;
+  };
+
   // The game's host character. It reads every clue out loud, one letter at a time.
-  let { text, plain = '' }: { text: string; plain?: string } = $props();
+  let { text, plain = '', compact = false, instant = false }: Props = $props();
 
   let shown = $state(0);
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -12,11 +21,12 @@
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const talking = $derived(shown < text.length);
   const mouthOpen = $derived(talking && Math.floor(shown / 2) % 2 === 0);
+  const scale = $derived(compact ? 1 : ui.compact || ui.short ? 2 : 3);
 
   $effect(() => {
     const line = text;
     clearInterval(timer);
-    if (calm) {
+    if (calm || instant) {
       shown = line.length;
       return;
     }
@@ -38,10 +48,10 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="speech" onclick={skip}>
-  <div class="face" class:talking><Sprite name={mouthOpen ? 'parrotTalk' : 'parrot'} scale={ui.compact || ui.short ? 2 : 3} /></div>
+<div class="speech" class:compact onclick={skip}>
+  <div class="face" class:talking><Sprite name={mouthOpen ? 'parrotTalk' : 'parrot'} {scale} /></div>
   <div class="words">
-    <span class="sr-only" aria-live="polite">{text}{plain ? `. ${plain}` : ''}</span>
+    <span class="sr-only" aria-live="polite">{text}{plain ? `${/[.!?]$/.test(text) ? '' : '.'} ${plain}` : ''}</span>
     <!-- The unseen remainder holds the box at its final size, so nothing jumps while it types. -->
     <p class="line" aria-hidden="true">{text.slice(0, shown)}<span class="unseen">{text.slice(shown)}</span></p>
     {#if plain}
@@ -114,6 +124,21 @@
     .line {
       font-size: 1.5rem;
     }
+  }
+  /* After the media queries, so a compact parrot stays small on every screen. */
+  .speech.compact {
+    gap: 0.4rem;
+    padding: 0.15rem 0.35rem;
+    align-items: center;
+  }
+  .speech.compact .face {
+    padding: 0;
+  }
+  .speech.compact .line {
+    font-family: var(--body);
+    font-size: 1.15rem;
+    line-height: 1.05;
+    letter-spacing: 0;
   }
   @keyframes bob {
     to { transform: translateY(-3px); }

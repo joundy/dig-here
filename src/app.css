@@ -127,6 +127,35 @@ a {
   padding: 0 clamp(0.5rem, 1vw, 1rem) 2rem;
 }
 
+/* The Game Board and Season: a wide panel, with the island lying behind it and peeking round on big screens. */
+.tray {
+  position: relative;
+  z-index: 2;
+}
+
+.stage.full {
+  display: block;
+  padding: 0 clamp(0.5rem, 2vw, 1.5rem) calc(1.5rem + env(safe-area-inset-bottom));
+}
+
+.stage.full .board-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  margin: 0;
+}
+
+.stage.full .rail {
+  position: relative;
+  z-index: 1;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.stage.full.short {
+  padding: 0 calc(0.5rem + env(safe-area-inset-right)) 0 calc(0.5rem + env(safe-area-inset-left));
+}
+
 .board-wrap {
   position: sticky;
   top: 0.5rem;
@@ -182,6 +211,98 @@ a {
   opacity: 0.75;
   cursor: progress;
   transform: none;
+}
+
+.btn.alt {
+  background: var(--foam);
+  box-shadow:
+    inset 0 -6px 0 var(--mist),
+    inset 0 3px 0 #fff,
+    0 calc(-1 * var(--px)) 0 0 var(--ink),
+    0 var(--px) 0 0 var(--ink),
+    calc(-1 * var(--px)) 0 0 0 var(--ink),
+    var(--px) 0 0 0 var(--ink);
+}
+
+.btn.alt:active {
+  box-shadow:
+    inset 0 -2px 0 var(--mist),
+    inset 0 3px 0 #fff,
+    0 calc(-1 * var(--px)) 0 0 var(--ink),
+    0 var(--px) 0 0 var(--ink),
+    calc(-1 * var(--px)) 0 0 0 var(--ink),
+    var(--px) 0 0 0 var(--ink);
+}
+
+.panel {
+  margin: var(--px);
+  padding: clamp(0.6rem, 1.5vw, 1rem);
+  background: var(--ink);
+  box-shadow:
+    0 calc(-1 * var(--px)) 0 0 var(--foam),
+    0 var(--px) 0 0 var(--foam),
+    calc(-1 * var(--px)) 0 0 0 var(--foam),
+    var(--px) 0 0 0 var(--foam);
+}
+
+.modal {
+  width: min(27rem, calc(100vw - 1rem));
+  max-width: none;
+  max-height: calc(100dvh - 1rem);
+  margin: auto;
+  padding: var(--px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: 1.3rem;
+  color: var(--foam);
+  background: none;
+  border: 0;
+  animation: pop 0.14s steps(3);
+}
+
+.modal::backdrop {
+  background: rgb(20 27 60 / 0.72);
+}
+
+.modal .panel {
+  margin: 0;
+}
+
+@keyframes pop {
+  from { transform: scale(0.9); opacity: 0; }
+}
+
+.input,
+.select {
+  width: 100%;
+  font: inherit;
+  border: 0;
+}
+
+.input {
+  font-size: 1.5rem;
+  padding: 0.3rem 0.6rem;
+  color: var(--ink);
+  background: var(--foam);
+  box-shadow: inset 0 3px 0 var(--mist);
+}
+
+.input::placeholder {
+  color: #51658a;
+}
+
+.select {
+  height: 2.25rem;
+  padding: 0 0.4rem;
+  font-size: 1.2rem;
+  color: var(--foam);
+  background: var(--deep);
+  cursor: pointer;
+}
+
+.select:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .error {

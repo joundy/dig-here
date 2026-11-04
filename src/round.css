@@ -1,0 +1,60 @@
+/*
+ * A room on a phone held upright: everything sits around the map on one screen, and the map takes
+ * what's left. Global because Room's children render the `.top` and `.bottom` these rules place.
+ */
+.stage.compact.game .top {
+  order: 1;
+  padding: 0 0.75rem 0.35rem;
+}
+
+.stage.compact.game .bottom {
+  order: 3;
+  padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -3px 0 var(--ink);
+}
+
+.stage.compact.game .results-panel {
+  box-shadow: none;
+  max-height: 56%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: 0.6rem;
+}
+
+.stage.compact.game .waiting-panel {
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.round-crumb {
+  margin: 0 0 0.5rem;
+  color: var(--mist);
+  font-size: 1.2rem;
+  line-height: 1.1;
+}
+
+/* Roomier to tap than it looks. */
+.round-crumb a {
+  display: inline-block;
+  padding: 0.6rem 0;
+  margin: -0.6rem 0;
+  color: inherit;
+}
+
+.stage.compact.game .round-crumb {
+  margin: 0 0 0.2rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Very short phones: give the map every spare pixel. */
+@media (max-height: 620px) {
+  .stage.compact.game .top {
+    padding-top: 0.15rem;
+  }
+  .stage.compact.game .round-crumb {
+    display: none;
+  }
+}

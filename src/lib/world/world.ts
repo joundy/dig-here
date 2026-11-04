@@ -1,27 +1,72 @@
 // The living island: one small canvas, redrawn every frame and scaled up by whole pixels.
 import { audio } from '../audio/audio.svelte';
-import { MAP } from '../game/map';
-import type { Dig, Kind, Landmark, Point } from '../game/types';
+import { kindName } from '../game/copy';
+import { possibleArea } from '../game/engine';
+import { getMap, H, W } from '../game/map';
+import { RULES } from '../game/rules';
+import type { Dig, Kind, Landmark, MapId, Point } from '../game/types';
+import { bonus } from '../format';
 import { buzz } from '../ui.svelte';
 import { PALETTE, sprite, xMark } from './sprites';
 import type { SpriteName } from './sprites';
-import { buildTerrain, H, UNIT, W } from './terrain';
+import { buildTerrain } from './terrain';
 import type { Terrain } from './terrain';
-
-const SPRITE_FOR: Record<Kind, SpriteName> = {
-  horse: 'horse', cow: 'cow', sheep: 'sheep', duck: 'duck', palm: 'palm', pine: 'pine', apple: 'apple',
-  hut: 'hut', windmill: 'windmill', well: 'well', lighthouse: 'lighthouse', scarecrow: 'scarecrow',
-  campfire: 'campfire', boat: 'boat',
-};
+import { themeOf } from './themes';
 
 const VOICE: Partial<Record<Kind, number>> = {
   horse: 330, cow: 165, sheep: 415, duck: 660, scarecrow: 247, campfire: 196, boat: 294,
+  penguin: 587, seal: 220, husky: 370, snowman: 277, sled: 311,
+  camel: 139, lizard: 784, vulture: 185, skull: 123, cart: 262, pyramid: 98,
 };
 
-const KIND_LABEL: Record<Kind, string> = {
-  horse: 'Horse', cow: 'Cow', sheep: 'Sheep', duck: 'Duck', palm: 'Palm tree', pine: 'Pine tree', apple: 'Apple tree',
-  hut: 'Hut', windmill: 'Windmill', well: 'Well', lighthouse: 'Lighthouse', scarecrow: 'Scarecrow', campfire: 'Campfire', boat: 'Boat',
+const TOY_LINES: Record<Kind, string> = {
+  horse: 'Neigh. Legally binding.',
+  cow: 'Moo. That was rude.',
+  sheep: 'Baa. Have we met? Baa.',
+  duck: 'QUACK! Not the face!',
+  palm: 'Mind the coconuts.',
+  pine: 'I smell like a taxi.',
+  apple: 'Ow. Have an apple.',
+  hut: 'Nobody home. Go away.',
+  windmill: 'Wheeeeeeeee!',
+  well: 'No refunds on wishes.',
+  lighthouse: 'I see everything. Hi.',
+  scarecrow: 'Boo. Please clap.',
+  campfire: 'You poked a fire. Bold.',
+  boat: 'Parked. Do not tow.',
+  penguin: 'Sir, this is formalwear!',
+  seal: 'Arf. Clap for me.',
+  husky: 'AWOOO! Breakfast?!',
+  snowpine: 'Careful. Loaded with snow.',
+  birch: 'Hands off my pyjamas.',
+  igloo: 'Close the door!',
+  cabin: 'Wipe your boots.',
+  snowman: 'My nose is a snack.',
+  sled: 'No brakes. Never had any.',
+  camel: 'Ptoo! Missed. Hold still.',
+  lizard: 'I was doing push-ups.',
+  vulture: 'No rush. I can wait.',
+  cactus: 'Hug me. I dare you.',
+  deadtree: 'Not dead. Just resting.',
+  tent: 'Occupied! Mostly by sand.',
+  pyramid: 'Some assembly required.',
+  skull: 'I used to dig here too.',
+  cart: 'One wheel left. Ask me how.',
 };
+
+const DIZZY_LINE = 'Wheee! I regret this.';
+const CAMPFIRE = ['campfire', 'campfire2', 'campfire3'] as const;
+
+const SCOOT_REACH = 22;
+const SCOOT_OUT = 0.35;
+const SCOOT_TIME = 1.5;
+const SPIN_TIME = 1.2;
+const TAP_STREAK = 1.2;
+
+const DISSOLVE_TIME = 0.6;
+const DISSOLVE_TICK = 1 / 12;
+// Little-endian RGBA, ink at about 60%, the same way terrain.ts writes its pixels.
+const GLOOM_PIXEL = (153 << 24) | (0x3c << 16) | (0x1b << 8) | 0x14;
 
 const CONFETTI = [PALETTE.y, PALETTE.p, PALETTE.u, PALETTE.g, PALETTE.w, PALETTE.o];
 
@@ -33,10 +78,13 @@ const SKY: [number, [number, number, number]][] = [
   [1, [150, 125, 215]],
 ];
 
-const SEA = [0x15, 0x5f, 0xc4];
-const DEEP = [0x12, 0x3f, 0x9a];
-
-type Actor = { landmark: Landmark; x: number; y: number; phase: number; hopAt: number; hopStart: number };
+type Actor = {
+  landmark: Landmark; x: number; y: number; phase: number; hopAt: number; hopStart: number;
+  /** Outside the possible area, so it sits back. */
+  sunk: boolean; alpha: number;
+  pokedAt: number; taps: number; tappedAt: number;
+  scootAt: number; scootDir: number; spinAt: number; fastUntil: number;
+};
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; gravity: number; coin?: boolean; floor?: number };
 type Mark = { dig: Dig; bornAt: number };
 type Gull = { x: number; y: number; vx: number; phase: number };
@@ -46,7 +94,56 @@ type Chest = { x: number; y: number; bornAt: number; landed: boolean; open: bool
 
 export type Hover = { text: string; x: number; y: number } | null;
 
-const toArt = (u: number) => Math.round(u / UNIT);
+const clamp = (n: number, low: number, high: number) => Math.min(high, Math.max(low, n));
+
+const rings = new Map<string, HTMLCanvasElement>();
+
+// Baked once per size and colour: rings get drawn many times a frame on a phone.
+function ringImage(radius: number, color: string, between = color): HTMLCanvasElement {
+  const key = `${radius}${color}${between}`;
+  let canvas = rings.get(key);
+  if (canvas) return canvas;
+  canvas = document.createElement('canvas');
+  canvas.width = canvas.height = radius * 2 + 1;
+  const ctx = canvas.getContext('2d')!;
+  const dot = (dx: number, dy: number) => ctx.fillRect(radius + dx, radius + dy, 1, 1);
+  let x = radius;
+  let y = 0;
+  let err = 1 - radius;
+  while (x >= y) {
+    ctx.fillStyle = y % 2 === 0 ? color : between;
+    dot(x, y); dot(y, x); dot(-x, y); dot(-y, x);
+    dot(x, -y); dot(y, -x); dot(-x, -y); dot(-y, -x);
+    y++;
+    if (err < 0) err += 2 * y + 1;
+    else {
+      x--;
+      err += 2 * (y - x) + 1;
+    }
+  }
+  rings.set(key, canvas);
+  return canvas;
+}
+
+let dissolveOrder: Uint8Array | null = null;
+
+function dissolveHash(): Uint8Array {
+  if (dissolveOrder) return dissolveOrder;
+  dissolveOrder = new Uint8Array(W * H);
+  for (let i = 0; i < dissolveOrder.length; i++) {
+    let h = Math.imul(i + 1, 2654435761);
+    h ^= h >>> 15;
+    h = Math.imul(h, 2246822519);
+    h ^= h >>> 13;
+    dissolveOrder[i] = h >>> 24;
+  }
+  return dissolveOrder;
+}
+
+function kindLabel(kind: Kind): string {
+  const name = kindName(kind);
+  return name[0].toUpperCase() + name.slice(1);
+}
 
 function makeCloudShadow(w: number, h: number, seed: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
@@ -69,10 +166,14 @@ class World {
   /** `quiet` is for a dragged X: the spot follows the finger, with no sound or water warning. */
   onPick: ((point: Point, quiet?: boolean) => void) | null = null;
   onHover: ((hover: Hover) => void) | null = null;
+  onLandmark: ((id: number) => void) | null = null;
 
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
+  #mapId: MapId = 'tropical';
+  #terrains = new Map<MapId, Terrain>();
   #terrain: Terrain | null = null;
+  #landmarks: Landmark[] = [];
   #raf = 0;
   #last = 0;
   #time = 0;
@@ -87,10 +188,13 @@ class World {
   #smokeClock = 0;
 
   #marks = new Map<string, Mark>();
+  /** Back to front, kept ready so the frame loop doesn't sort. */
+  #markOrder: Mark[] = [];
   #me: string | undefined;
   #spot: Point | null = null;
   #spotBornAt = 0;
   #pickable = false;
+  #crowdRings = false;
 
   #pointer: { x: number; y: number } | null = null;
   #cursor = { x: 0, y: 0 };
@@ -104,7 +208,27 @@ class World {
   #duskTarget = 0;
   #dim = 0;
   #seaApplied = '';
+  #skyMap: MapId | null = null;
+  #skyDusk = 0;
+  #skyDim = 0;
   #shadowLayer: HTMLCanvasElement | null = null;
+
+  // The land nobody can win on: a whole layer, repainted only while it dissolves.
+  #possibleIds: number[] | null = null;
+  #possibleKey: string | null = null;
+  #gloomCtx: CanvasRenderingContext2D | null = null;
+  #gloomLayer: HTMLCanvasElement | null = null;
+  #gloomImage: ImageData | null = null;
+  #gloomPixels: Uint32Array | null = null;
+  #gloomFrom = new Uint8Array(W * H);
+  #gloomTo = new Uint8Array(W * H);
+  #gloomNow = new Uint8Array(W * H);
+  #dissolveAt = -1;
+  #dissolveClock = 0;
+
+  #tension = 0;
+  #tensionBeat = -1;
+  #highlightId: number | null = null;
 
   #roll: {
     order: number[]; at: number; nextAt: number; final: number; total: number; startedAt: number;
@@ -114,6 +238,7 @@ class World {
   #lines: { startedAt: number; winner: string | null; finish: (() => void) | null } | null = null;
   #confettiUntil = 0;
   #confettiClock = 0;
+  #fountain: { x: number; y: number; until: number; clock: number } | null = null;
 
   attach(canvas: HTMLCanvasElement) {
     this.#canvas = canvas;
@@ -122,7 +247,7 @@ class World {
     this.#ctx = canvas.getContext('2d')!;
     this.#ctx.imageSmoothingEnabled = false;
     this.#calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!this.#terrain) this.#build();
+    if (!this.#terrain) this.#build(this.#mapId);
     this.#last = performance.now();
     cancelAnimationFrame(this.#raf);
     this.#raf = requestAnimationFrame((t) => this.#frame(t));
@@ -133,35 +258,68 @@ class World {
     this.#canvas = null;
   }
 
-  #build() {
-    this.#terrain = buildTerrain();
-    const landmarks = [...MAP.landmarks].sort((a, b) => a.y - b.y);
+  #build(mapId: MapId) {
+    this.#mapId = mapId;
+    let terrain = this.#terrains.get(mapId);
+    if (!terrain) {
+      terrain = buildTerrain(mapId);
+      this.#terrains.set(mapId, terrain);
+    }
+    this.#terrain = terrain;
+    this.#waterClock = 1e3;
+    this.#landmarks = getMap(mapId).landmarks;
+    this.#particles.length = 0;
+    const landmarks = [...this.#landmarks].sort((a, b) => a.y - b.y);
     this.#actors = landmarks.map((landmark) => ({
       landmark,
-      x: toArt(landmark.x),
-      y: toArt(landmark.y),
+      x: landmark.x,
+      y: landmark.y,
       phase: landmark.id * 1.7,
       hopAt: 2 + Math.random() * 14,
       hopStart: -9,
+      sunk: false,
+      alpha: 1,
+      pokedAt: -9,
+      taps: 0,
+      tappedAt: -9,
+      scootAt: -9,
+      scootDir: 1,
+      spinAt: -9,
+      fastUntil: -9,
     }));
-    this.#clouds = [
-      { x: 30, y: 40, vx: 2.4, canvas: makeCloudShadow(72, 30, 1) },
-      { x: 190, y: 120, vx: 1.7, canvas: makeCloudShadow(96, 36, 4) },
-      { x: -60, y: 170, vx: 2.1, canvas: makeCloudShadow(60, 26, 7) },
-    ];
+    if (!this.#clouds.length) {
+      this.#clouds = [
+        { x: 30, y: 40, vx: 2.4, canvas: makeCloudShadow(72, 30, 1) },
+        { x: 190, y: 120, vx: 1.7, canvas: makeCloudShadow(96, 36, 4) },
+        { x: -60, y: 170, vx: 2.1, canvas: makeCloudShadow(60, 26, 7) },
+      ];
+    }
+  }
+
+  /** Puts the island of this map on screen, doing nothing in particular. */
+  showMap(mapId: MapId) {
+    this.idle();
+    if (mapId !== this.#mapId || !this.#terrain) this.#build(mapId);
   }
 
   /** Clears the round-specific layers, leaving the island itself running. */
   idle() {
     this.#marks.clear();
+    this.#markOrder.length = 0;
     this.#spot = null;
     this.#pickable = false;
+    this.#crowdRings = false;
     this.#duskTarget = 0;
     this.#finishPending();
     this.#roll = null;
     this.#chest = null;
     this.#lines = null;
     this.#confettiUntil = 0;
+    this.#fountain = null;
+    this.#tension = 0;
+    this.#highlightId = null;
+    this.setPossible(null, false);
+    this.#tapLabelUntil = 0;
     this.#emitHover(null);
   }
 
@@ -171,32 +329,36 @@ class World {
     this.#lines?.finish?.();
   }
 
-  /** Starts showing a round, without playing effects for digs that already happened. */
-  enterGame(digs: Dig[]) {
-    this.idle();
+  /** Starts showing a room, without playing effects for digs that already happened. */
+  enterGame(mapId: MapId, digs: Dig[], candidateIds: number[] | null) {
+    this.showMap(mapId);
     for (const dig of digs) this.#marks.set(dig.account, { dig: { ...dig }, bornAt: -9 });
+    this.#sortMarks();
+    this.setPossible(candidateIds, false);
   }
 
   /** Called whenever the round's state changes. New digs get their entrance here. */
-  sync(state: { digs: Dig[]; me: string | undefined; spot: Point | null; pickable: boolean }) {
+  sync(state: { digs: Dig[]; me: string | undefined; spot: Point | null; pickable: boolean; crowdRings?: boolean }) {
     this.#me = state.me;
     this.#pickable = state.pickable;
-    if (!state.pickable) this.#hoverId = -1;
+    this.#crowdRings = state.crowdRings ?? false;
 
     // Only a real jump gets the pop. A dragged X moves in small steps and just follows the finger.
-    if (state.spot && (!this.#spot || Math.hypot(state.spot.x - this.#spot.x, state.spot.y - this.#spot.y) > 40)) {
+    if (state.spot && (!this.#spot || Math.hypot(state.spot.x - this.#spot.x, state.spot.y - this.#spot.y) > 12)) {
       this.#spotBornAt = this.#time;
     }
     this.#spot = state.spot;
 
+    let added = false;
     for (const dig of state.digs) {
       if (this.#marks.has(dig.account)) continue;
+      added = true;
       this.#marks.set(dig.account, { dig: { ...dig }, bornAt: this.#time });
       const mine = dig.account === state.me;
-      this.#dirtBurst(toArt(dig.x), toArt(dig.y), mine ? 22 : 7);
+      this.#dirtBurst(dig.x, dig.y, mine ? 22 : 7);
       if (mine) {
         this.#swing = this.#time;
-        this.#swingAt = { x: toArt(dig.x), y: toArt(dig.y) };
+        this.#swingAt = { x: dig.x, y: dig.y };
         this.#kick(3);
         buzz(35);
         audio.dig();
@@ -204,6 +366,73 @@ class World {
         audio.botDig();
       }
     }
+    if (added) this.#sortMarks();
+  }
+
+  #sortMarks() {
+    this.#markOrder = [...this.#marks.values()].sort((a, b) => a.dig.y - b.dig.y);
+  }
+
+  /** Darkens land the treasure can't be on, and sits back the landmarks it can't be near. Null clears it. */
+  setPossible(candidateIds: number[] | null, animate = true) {
+    const key = candidateIds ? candidateIds.join(',') : null;
+    if (key === this.#possibleKey && (animate || this.#dissolveAt < 0)) return;
+    this.#possibleKey = key;
+    this.#possibleIds = candidateIds;
+
+    const land = getMap(this.#mapId).land;
+    const keep = candidateIds ? possibleArea(this.#mapId, candidateIds) : null;
+    const to = this.#gloomTo;
+    for (let i = 0; i < to.length; i++) to[i] = keep && land[i] && !keep[i] ? 1 : 0;
+    this.#gloomFrom.set(this.#gloomNow);
+
+    const instant = !animate || this.#calm;
+    for (const actor of this.#actors) {
+      actor.sunk = candidateIds !== null && !candidateIds.includes(actor.landmark.id);
+      if (instant) actor.alpha = actor.sunk ? 0.55 : 1;
+    }
+
+    if (instant) {
+      this.#dissolveAt = -1;
+      this.#paintGloom(1);
+    } else {
+      this.#dissolveAt = this.#time;
+      this.#dissolveClock = DISSOLVE_TICK;
+    }
+  }
+
+  // Each cell flips at its own hashed moment, so the change crumbles across the land.
+  #paintGloom(progress: number) {
+    if (!this.#gloomLayer) {
+      this.#gloomLayer = document.createElement('canvas');
+      this.#gloomLayer.width = W;
+      this.#gloomLayer.height = H;
+      this.#gloomCtx = this.#gloomLayer.getContext('2d')!;
+      this.#gloomImage = this.#gloomCtx.createImageData(W, H);
+      this.#gloomPixels = new Uint32Array(this.#gloomImage.data.buffer);
+    }
+    const order = dissolveHash();
+    const threshold = progress * 256;
+    const from = this.#gloomFrom;
+    const to = this.#gloomTo;
+    const now = this.#gloomNow;
+    const pixels = this.#gloomPixels!;
+    for (let i = 0; i < now.length; i++) {
+      const dark = order[i] < threshold ? to[i] : from[i];
+      now[i] = dark;
+      pixels[i] = dark ? GLOOM_PIXEL : 0;
+    }
+    this.#gloomCtx!.putImageData(this.#gloomImage!, 0, 0);
+  }
+
+  /** 0 is normal. In the final seconds it rings the spots still possible, and at 1 the ground thumps. */
+  setTension(amount: number) {
+    this.#tension = amount;
+  }
+
+  /** A gold ring on one landmark, for the Deed Market. */
+  highlight(landmarkId: number | null) {
+    this.#highlightId = landmarkId;
   }
 
   setDusk(fraction: number) {
@@ -224,7 +453,7 @@ class World {
   dropChest(point: Point): Promise<void> {
     return new Promise((resolve) => {
       this.#roll = null;
-      this.#chest = { x: toArt(point.x), y: toArt(point.y), bornAt: this.#time, landed: false, open: false, finish: resolve };
+      this.#chest = { x: point.x, y: point.y, bornAt: this.#time, landed: false, open: false, finish: resolve };
     });
   }
 
@@ -236,7 +465,7 @@ class World {
 
   /** Puts a finished round straight into its end state, for when you open one later. */
   showFinal(treasure: Point, winner: string | null) {
-    this.#chest = { x: toArt(treasure.x), y: toArt(treasure.y), bornAt: -9, landed: true, open: true, finish: null };
+    this.#chest = { x: treasure.x, y: treasure.y, bornAt: -9, landed: true, open: true, finish: null };
     this.#lines = { startedAt: -9, winner, finish: null };
   }
 
@@ -244,6 +473,18 @@ class World {
     this.#confettiUntil = this.#time + (this.#calm ? 0 : 3.5);
     if (!this.#chest) return;
     for (let i = 0; i < 30; i++) this.#coinBurst(this.#chest.x, this.#chest.y - 6);
+  }
+
+  /** The jackpot paying out: the biggest thing the island can do. */
+  jackpotBurst() {
+    const x = this.#chest ? this.#chest.x : W / 2;
+    const y = (this.#chest ? this.#chest.y : H / 2) - 8;
+    buzz([60, 40, 120]);
+    this.#kick(9);
+    for (let i = 0; i < (this.#calm ? 20 : 60); i++) this.#coinBurst(x, y, 1.7);
+    if (this.#calm) return;
+    this.#fountain = { x, y, until: this.#time + 1.6, clock: 0 };
+    this.#confettiUntil = this.#time + 4;
   }
 
   flash() {
@@ -261,37 +502,113 @@ class World {
   pointerLeave() {
     this.#pointer = null;
     this.#hoverId = -1;
+    this.#tapLabelUntil = 0;
     this.#emitHover(null);
   }
 
   pointerClick(x: number, y: number) {
-    this.onPick?.({ x: (Math.floor(x) + 0.5) * UNIT, y: (Math.floor(y) + 0.5) * UNIT });
+    const actor = this.#actorAt(x, y, 11);
+    this.#pick(x, y);
+    if (actor) this.onLandmark?.(actor.landmark.id);
   }
 
-  /** A finger tap: names and wakes the nearest landmark, and picks the spot if digging is open. */
+  /** A click while no spot can be picked: whatever is under it gets a surprise. */
+  pokeAt(x: number, y: number) {
+    const actor = this.#actorAt(x, y, 11);
+    if (!actor) return;
+    this.#poke(actor, x);
+    this.onLandmark?.(actor.landmark.id);
+  }
+
+  /** A finger tap: picks the spot if digging is open, and pokes the nearest landmark if not. */
   touchTap(x: number, y: number) {
-    let nearest: Actor | null = null;
-    let bestDistance = 14;
-    for (const actor of this.#actors) {
-      const d = Math.hypot(actor.x - x, actor.y - 6 - y);
-      if (d < bestDistance) {
-        nearest = actor;
-        bestDistance = d;
-      }
-    }
-    if (nearest) {
-      if (!this.#calm) nearest.hopStart = this.#time;
-      this.#emitHover({ text: KIND_LABEL[nearest.landmark.kind], x: nearest.x, y: nearest.y - sprite(SPRITE_FOR[nearest.landmark.kind]).h - 2 });
-      this.#tapLabelUntil = this.#time + 1.4;
-    } else {
+    const actor = this.#actorAt(x, y, 14);
+    if (!actor) {
+      this.#tapLabelUntil = 0;
       this.#emitHover(null);
+    } else if (this.#pickable) {
+      if (!this.#calm) actor.hopStart = this.#time;
+      this.#say(actor, kindLabel(actor.landmark.kind));
+    } else {
+      this.#poke(actor, x);
     }
-    this.pointerClick(x, y);
+    if (this.#pickable) this.#pick(x, y);
+    if (actor) this.onLandmark?.(actor.landmark.id);
   }
 
   dragSpot(x: number, y: number) {
     this.#emitHover(null);
-    this.onPick?.({ x: (Math.floor(x) + 0.5) * UNIT, y: (Math.floor(y) + 0.5) * UNIT }, true);
+    this.#pick(x, y, true);
+  }
+
+  #pick(x: number, y: number, quiet?: boolean) {
+    const point = { x: clamp(Math.floor(x), 0, W - 1), y: clamp(Math.floor(y), 0, H - 1) };
+    if (quiet) this.onPick?.(point, true);
+    else this.onPick?.(point);
+  }
+
+  #actorAt(x: number, y: number, reach: number): Actor | null {
+    let nearest: Actor | null = null;
+    let best = reach;
+    for (const actor of this.#actors) {
+      const d = Math.hypot(actor.x - x, actor.y - 6 - y);
+      if (d < best) {
+        nearest = actor;
+        best = d;
+      }
+    }
+    return nearest;
+  }
+
+  #say(actor: Actor, text: string) {
+    this.#emitHover({ text, x: actor.x, y: actor.y - sprite(actor.landmark.kind).h - 2 });
+    this.#tapLabelUntil = this.#time + 1.4;
+  }
+
+  #poke(actor: Actor, fromX: number) {
+    const t = this.#time;
+    const { kind } = actor.landmark;
+    actor.taps = t - actor.tappedAt < TAP_STREAK ? actor.taps + 1 : 1;
+    actor.tappedAt = t;
+
+    const spins = (kind === 'scarecrow' || kind === 'snowman') && actor.taps >= 3;
+    if (spins) actor.taps = 0;
+
+    buzz(10);
+    audio.critter(VOICE[kind] ?? 440);
+    this.#say(actor, spins ? DIZZY_LINE : TOY_LINES[kind]);
+    if (this.#calm) return;
+
+    actor.hopStart = t;
+    actor.pokedAt = t;
+    if (spins) actor.spinAt = t;
+    if (kind === 'duck' || kind === 'penguin') this.#scoot(actor, fromX);
+    else if (kind === 'windmill') actor.fastUntil = t + 3;
+    else if (kind === 'campfire') this.#sparks(actor.x, actor.y - 8);
+  }
+
+  // Runs from the finger, unless that way is the sea.
+  #scoot(actor: Actor, fromX: number) {
+    const land = getMap(this.#mapId).land;
+    const open = (dir: number) => {
+      const x = actor.x + dir * SCOOT_REACH;
+      return x >= 0 && x < W && land[actor.y * W + x] === 1;
+    };
+    let dir = fromX <= actor.x ? 1 : -1;
+    if (!open(dir)) dir = -dir;
+    if (!open(dir)) return;
+    actor.scootDir = dir;
+    actor.scootAt = this.#time;
+  }
+
+  #sparks(x: number, y: number) {
+    const colors = [PALETTE.y, PALETTE.o, PALETTE.r];
+    for (let i = 0; i < 18; i++) {
+      this.#particles.push({
+        x: x - 2 + Math.random() * 4, y, vx: (Math.random() - 0.5) * 34, vy: -22 - Math.random() * 42,
+        life: 0, max: 0.5 + Math.random() * 0.5, color: colors[i % 3], gravity: 60,
+      });
+    }
   }
 
   #kick(amount: number) {
@@ -310,12 +627,12 @@ class World {
     }
   }
 
-  #coinBurst(x: number, y: number) {
+  #coinBurst(x: number, y: number, power = 1) {
     const angle = -Math.PI * (0.15 + Math.random() * 0.7);
-    const speed = 50 + Math.random() * 80;
+    const speed = (50 + Math.random() * 80) * power;
     this.#particles.push({
       x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      life: 0, max: 1 + Math.random() * 0.7, color: PALETTE.y, gravity: 200, coin: true, floor: y + 8 + Math.random() * 8,
+      life: 0, max: (1 + Math.random() * 0.7) * Math.sqrt(power), color: PALETTE.y, gravity: 200, coin: true, floor: y + 8 + Math.random() * 8 * power * power,
     });
   }
 
@@ -343,6 +660,13 @@ class World {
 
     this.#shake = Math.max(0, this.#shake - dt * 14);
 
+    if (this.#tension >= 1 && Math.floor(t) !== this.#tensionBeat) {
+      this.#tensionBeat = Math.floor(t);
+      this.#kick(1);
+    }
+
+    this.#updateDissolve(dt);
+
     if (this.#tapLabelUntil && t > this.#tapLabelUntil) {
       this.#tapLabelUntil = 0;
       this.#emitHover(null);
@@ -355,6 +679,12 @@ class World {
       this.#updateHover();
     }
 
+    const fade = Math.min(1, dt * 4);
+    for (const actor of this.#actors) {
+      const goal = actor.sunk ? 0.55 : 1;
+      if (actor.alpha !== goal) actor.alpha = Math.abs(goal - actor.alpha) < 0.01 ? goal : actor.alpha + (goal - actor.alpha) * fade;
+    }
+
     if (!this.#calm) {
       for (const actor of this.#actors) {
         if (t >= actor.hopAt) {
@@ -365,7 +695,21 @@ class World {
       this.#updateAmbient(dt);
     }
 
-    for (const p of this.#particles) {
+    const fountain = this.#fountain;
+    if (fountain) {
+      fountain.clock += dt;
+      while (fountain.clock > 0.016) {
+        fountain.clock -= 0.016;
+        this.#coinBurst(fountain.x, fountain.y, 1.7);
+      }
+      if (t > fountain.until) this.#fountain = null;
+    }
+
+    // In place: this list is rewritten every frame, and a fresh array each time adds up on a phone.
+    const particles = this.#particles;
+    let kept = 0;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
       p.life += dt;
       p.vy += p.gravity * dt;
       p.x += p.vx * dt;
@@ -375,8 +719,9 @@ class World {
         p.vy *= -0.4;
         p.vx *= 0.6;
       }
+      if (p.life < p.max) particles[kept++] = p;
     }
-    this.#particles = this.#particles.filter((p) => p.life < p.max);
+    particles.length = kept;
 
     if (t < this.#confettiUntil) {
       this.#confettiClock += dt;
@@ -394,6 +739,16 @@ class World {
     this.#updateLines();
   }
 
+  #updateDissolve(dt: number) {
+    if (this.#dissolveAt < 0) return;
+    this.#dissolveClock += dt;
+    if (this.#dissolveClock < DISSOLVE_TICK) return;
+    this.#dissolveClock = 0;
+    const progress = Math.min(1, (this.#time - this.#dissolveAt) / DISSOLVE_TIME);
+    this.#paintGloom(progress);
+    if (progress >= 1) this.#dissolveAt = -1;
+  }
+
   #updateAmbient(dt: number) {
     const t = this.#time;
     for (const cloud of this.#clouds) {
@@ -406,18 +761,23 @@ class World {
       const fromLeft = Math.random() < 0.5;
       this.#gulls.push({ x: fromLeft ? -8 : W + 8, y: 6 + Math.random() * 60, vx: (fromLeft ? 1 : -1) * (22 + Math.random() * 14), phase: Math.random() * 6 });
     }
-    for (const gull of this.#gulls) gull.x += gull.vx * dt;
-    this.#gulls = this.#gulls.filter((g) => g.x > -12 && g.x < W + 12);
+    let keptGulls = 0;
+    for (const gull of this.#gulls) {
+      gull.x += gull.vx * dt;
+      if (gull.x > -12 && gull.x < W + 12) this.#gulls[keptGulls++] = gull;
+    }
+    this.#gulls.length = keptGulls;
 
     this.#smokeClock += dt;
     if (this.#smokeClock > 0.32) {
       this.#smokeClock = 0;
       for (const actor of this.#actors) {
-        if (actor.landmark.kind !== 'campfire' && actor.landmark.kind !== 'hut') continue;
+        const { kind } = actor.landmark;
+        if (kind !== 'campfire' && kind !== 'hut' && kind !== 'cabin') continue;
         if (Math.random() > 0.55) continue;
-        const fire = actor.landmark.kind === 'campfire';
+        const fire = kind === 'campfire';
         this.#particles.push({
-          x: actor.x + (fire ? 0 : 4), y: actor.y - (fire ? 11 : 15), vx: 2 + Math.random() * 3, vy: -7 - Math.random() * 5,
+          x: actor.x + (fire ? 0 : kind === 'hut' ? 4 : 3), y: actor.y - (fire ? 11 : kind === 'hut' ? 15 : 18), vx: 2 + Math.random() * 3, vy: -7 - Math.random() * 5,
           life: 0, max: 1.3, color: fire ? PALETTE.d : PALETTE.c, gravity: 0,
         });
       }
@@ -426,28 +786,24 @@ class World {
 
   #updateHover() {
     const { x, y } = this.#pointer!;
-    let best: Actor | null = null;
-    let bestDistance = 11;
-    for (const actor of this.#actors) {
-      const d = Math.hypot(actor.x - x, actor.y - 6 - y);
-      if (d < bestDistance) {
-        best = actor;
-        bestDistance = d;
-      }
-    }
+    const best = this.#actorAt(x, y, 11);
 
     let digHover: Mark | null = null;
-    for (const mark of this.#marks.values()) {
-      if (Math.hypot(toArt(mark.dig.x) - x, toArt(mark.dig.y) - y) < 5) digHover = mark;
+    for (const mark of this.#markOrder) {
+      if (Math.hypot(mark.dig.x - x, mark.dig.y - y) < 5) digHover = mark;
     }
 
-    if (digHover) {
-      const { dig } = digHover;
-      this.#emitHover({ text: `${dig.account === this.#me ? 'You' : dig.account} ×${dig.bonus}`, x: toArt(dig.x), y: toArt(dig.y) - 8 });
-    } else if (best) {
-      this.#emitHover({ text: KIND_LABEL[best.landmark.kind], x: best.x, y: best.y - sprite(SPRITE_FOR[best.landmark.kind]).h - 2 });
-    } else {
-      this.#emitHover(null);
+    // A poke's line stays up for its moment, even with the mouse still sitting on the landmark.
+    if (!this.#tapLabelUntil) {
+      if (digHover) {
+        const { dig } = digHover;
+        const who = dig.account === this.#me ? 'You' : dig.account;
+        this.#emitHover({ text: `${who} ${bonus(dig.bonusBps)}${dig.crowded ? ' crowded' : ''}`, x: dig.x, y: dig.y - 8 });
+      } else if (best) {
+        this.#emitHover({ text: kindLabel(best.landmark.kind), x: best.x, y: best.y - sprite(best.landmark.kind).h - 2 });
+      } else {
+        this.#emitHover(null);
+      }
     }
 
     const id = best ? best.landmark.id : -1;
@@ -545,14 +901,19 @@ class World {
 
   // The page is the same sea as the canvas, so it has to change with the sky or a seam shows.
   #applyPageSky() {
+    if (this.#mapId === this.#skyMap && Math.abs(this.#dusk - this.#skyDusk) < 0.002 && Math.abs(this.#dim - this.#skyDim) < 0.002) return;
+    this.#skyMap = this.#mapId;
+    this.#skyDusk = this.#dusk;
+    this.#skyDim = this.#dim;
+    const theme = themeOf(this.#mapId);
     const sky = this.#skyColor();
-    const mix = (base: number[]) => `rgb(${base.map((c, i) => Math.round((c * sky[i]) / 255)).join(' ')})`;
-    const sea = mix(SEA);
+    const mix = (base: readonly number[]) => `rgb(${base.map((c, i) => Math.round((c * sky[i]) / 255)).join(' ')})`;
+    const sea = mix(theme.sea);
     if (sea === this.#seaApplied) return;
     this.#seaApplied = sea;
     const root = document.documentElement.style;
     root.setProperty('--sea', sea);
-    root.setProperty('--deep', mix(DEEP));
+    root.setProperty('--deep', mix(theme.deep));
     // On a phone this colours the browser's own bar, so the sea reaches the top of the screen.
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', sea);
   }
@@ -570,6 +931,8 @@ class World {
     ctx.drawImage(this.#terrain!.land, 0, 0);
 
     this.#drawCloudShadows(ctx);
+    // Under the sky effects, which multiply over whatever is here, so #dim still works on top.
+    if (this.#gloomLayer && (this.#possibleIds || this.#dissolveAt >= 0)) ctx.drawImage(this.#gloomLayer, 0, 0);
 
     this.#drawLines(ctx);
     this.#drawScene(ctx, t);
@@ -578,7 +941,9 @@ class World {
 
     this.#drawSky(ctx);
     this.#drawLights(ctx, t);
+    this.#drawTension(ctx, t);
     this.#drawRoll(ctx, t);
+    this.#drawHighlight(ctx, t);
     this.#drawSpot(ctx, t);
     this.#drawCursor(ctx, t);
     ctx.restore();
@@ -604,33 +969,65 @@ class World {
 
   #drawScene(ctx: CanvasRenderingContext2D, t: number) {
     // The actors are already sorted back to front by where their feet are.
-    for (const actor of this.#actors) this.#drawActor(ctx, actor, t);
+    for (const actor of this.#actors) {
+      ctx.globalAlpha = actor.alpha;
+      this.#drawActor(ctx, actor, t);
+    }
+    ctx.globalAlpha = 1;
+
+    if (this.#crowdRings && this.#pickable) this.#drawCrowdRings(ctx);
 
     // Digs and the chest go on top of everything: a player must always be able to see them.
-    const marks = [...this.#marks.values()].sort((a, b) => a.dig.y - b.dig.y);
+    const marks = this.#markOrder;
     for (const mark of marks) if (mark.dig.account !== this.#me) this.#drawMark(ctx, mark, t);
     for (const mark of marks) if (mark.dig.account === this.#me) this.#drawMark(ctx, mark, t);
     if (this.#chest) this.#drawChest(ctx, this.#chest, t);
   }
 
+  #drawCrowdRings(ctx: CanvasRenderingContext2D) {
+    const radius = RULES.crowdRadius;
+    // Two-tone, because one colour vanishes on either snow or the darkened land.
+    const image = ringImage(radius, PALETTE.k, PALETTE.w);
+    ctx.globalAlpha = 0.6;
+    for (const { dig } of this.#markOrder) ctx.drawImage(image, dig.x - radius, dig.y - radius);
+    ctx.globalAlpha = 1;
+  }
+
   #drawActor(ctx: CanvasRenderingContext2D, actor: Actor, t: number) {
     const { kind, flip, category } = actor.landmark;
-    let name = SPRITE_FOR[kind];
-    if (kind === 'campfire') name = (['campfire', 'campfire2', 'campfire3'] as const)[Math.floor(t * 7 + actor.phase) % 3];
+    const animal = category === 'animal';
+    let name: SpriteName = kind;
+    if (kind === 'campfire') name = CAMPFIRE[Math.floor(t * 7 + actor.phase) % 3];
     const s = sprite(name);
-    const flipThis = flip && category === 'animal';
-    const image = flipThis ? s.flipped : s.canvas;
-    const x = actor.x - Math.floor(s.w / 2);
-    let y = actor.y - s.h;
+    let flipped = flip && animal;
 
-    const hopAge = t - actor.hopStart;
-    const hopping = category === 'animal' && hopAge >= 0 && hopAge < 0.34;
-    const lift = hopping ? Math.round(Math.sin((hopAge / 0.34) * Math.PI) * 5) : 0;
+    let cx = actor.x;
+    let waddle = 0;
+    const scootAge = t - actor.scootAt;
+    if (scootAge < SCOOT_TIME) {
+      const out = scootAge < SCOOT_OUT;
+      const reach = out ? 1 - (1 - scootAge / SCOOT_OUT) ** 2 : 1 - (scootAge - SCOOT_OUT) / (SCOOT_TIME - SCOOT_OUT);
+      cx += Math.round(actor.scootDir * SCOOT_REACH * reach);
+      waddle = Math.round(Math.abs(Math.sin(scootAge * (out ? 26 : 13))) * 2);
+      // The art faces right.
+      flipped = out ? actor.scootDir < 0 : actor.scootDir > 0;
+    }
+
+    const spinAge = t - actor.spinAt;
+    if (spinAge < SPIN_TIME) flipped = Math.floor(spinAge * 10) % 2 === 1;
+
+    const image = flipped ? s.flipped : s.canvas;
+    const x = cx - Math.floor(s.w / 2);
+
+    const hopAge = t - (animal ? actor.hopStart : actor.pokedAt);
+    const hopping = hopAge >= 0 && hopAge < 0.34;
+    const lift = Math.max(waddle, hopping ? Math.round(Math.sin((hopAge / 0.34) * Math.PI) * (animal ? 5 : 3)) : 0);
+    let y = actor.y - s.h - lift;
 
     // Soft ground shadow, which shrinks as the sprite leaves the ground.
     ctx.fillStyle = 'rgba(20, 27, 60, 0.22)';
     const shadowW = s.w - 2 - lift;
-    ctx.fillRect(actor.x - Math.floor(shadowW / 2), actor.y - 1, shadowW, 2);
+    ctx.fillRect(cx - Math.floor(shadowW / 2), actor.y - 1, shadowW, 2);
 
     if (category === 'tree') {
       // Trees lean in the breeze: the top half slides sideways, the trunk stays put.
@@ -641,11 +1038,10 @@ class World {
       return;
     }
 
-    if (category === 'animal') {
+    if (animal) {
       // Animals breathe: everything above the legs lifts one pixel, then settles.
       const split = s.h - 4;
       const breathe = Math.sin(t * 2.4 + actor.phase) > 0.55 ? 1 : 0;
-      y -= lift;
       ctx.drawImage(image, 0, 0, s.w, split, x, y - breathe, s.w, split);
       ctx.drawImage(image, 0, split, s.w, s.h - split, x, y + split, s.w, s.h - split);
       return;
@@ -655,17 +1051,17 @@ class World {
     ctx.drawImage(image, x, y);
 
     if (kind === 'windmill') {
-      const blades = sprite(Math.floor(t * 6 + actor.phase) % 2 === 0 ? 'bladesPlus' : 'bladesCross');
-      ctx.drawImage(blades.canvas, actor.x - 8, actor.y - s.h - 2);
+      const rate = t < actor.fastUntil ? 30 : 6;
+      const blades = sprite(Math.floor(t * rate + actor.phase) % 2 === 0 ? 'bladesPlus' : 'bladesCross');
+      ctx.drawImage(blades.canvas, cx - 8, y - 2);
     }
   }
 
   #drawMark(ctx: CanvasRenderingContext2D, mark: Mark, t: number) {
     const { dig } = mark;
     const mine = dig.account === this.#me;
-    const x = toArt(dig.x);
-    const y = toArt(dig.y);
-    const color = mine ? PALETTE.p : dig.bonus >= 2 ? PALETTE.y : dig.bonus >= 1.5 ? PALETTE.w : PALETTE.l;
+    const { x, y } = dig;
+    const color = mine ? PALETTE.p : dig.bonusBps >= 25000 ? PALETTE.y : dig.bonusBps >= 15000 ? PALETTE.w : PALETTE.l;
     const s = xMark(mine ? 4 : 2, color);
 
     const age = t - mark.bornAt;
@@ -717,10 +1113,10 @@ class World {
       const winner = dig.account === lines.winner;
       const mine = dig.account === this.#me;
       if (winner) continue;
-      this.#pixelLine(ctx, toArt(dig.x), toArt(dig.y), chest.x, chest.y - 3, reach, march, mine ? PALETTE.p : PALETTE.k, false);
+      this.#pixelLine(ctx, dig.x, dig.y, chest.x, chest.y - 3, reach, march, mine ? PALETTE.p : PALETTE.k, false);
     }
     const win = lines.winner ? this.#marks.get(lines.winner) : null;
-    if (win) this.#pixelLine(ctx, toArt(win.dig.x), toArt(win.dig.y), chest.x, chest.y - 3, reach, march, PALETTE.y, true);
+    if (win) this.#pixelLine(ctx, win.dig.x, win.dig.y, chest.x, chest.y - 3, reach, march, PALETTE.y, true);
   }
 
   #pixelLine(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, reach: number, march: number, color: string, thick: boolean) {
@@ -793,8 +1189,12 @@ class World {
         this.#glow(ctx, actor.x, actor.y - 16, 6 + Math.round(flash * 4), `rgba(255, 230, 130, ${0.14 * strength * (0.4 + flash * 0.6)})`);
       } else if (kind === 'hut') {
         ctx.fillStyle = `rgba(255, 200, 80, ${0.7 * strength})`;
-        ctx.fillRect(actor.x - 7, actor.y - 5, 2, 3);
-        ctx.fillRect(actor.x + 5, actor.y - 5, 2, 3);
+        ctx.fillRect(actor.x - 6, actor.y - 5, 2, 2);
+        ctx.fillRect(actor.x + 4, actor.y - 5, 2, 2);
+      } else if (kind === 'cabin') {
+        this.#glow(ctx, actor.x - 4, actor.y - 4, 3, `rgba(255, 200, 80, ${0.3 * strength})`);
+      } else if (kind === 'tent' || kind === 'igloo') {
+        this.#glow(ctx, actor.x, actor.y - 3, 5, `rgba(255, 170, 70, ${0.2 * strength})`);
       }
     }
     ctx.restore();
@@ -811,21 +1211,30 @@ class World {
   }
 
   #ring(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, color: string) {
-    ctx.fillStyle = color;
-    let x = radius;
-    let y = 0;
-    let err = 1 - radius;
-    while (x >= y) {
-      for (const [dx, dy] of [[x, y], [y, x], [-x, y], [-y, x], [x, -y], [y, -x], [-x, -y], [-y, -x]]) {
-        ctx.fillRect(cx + dx, cy + dy, 1, 1);
-      }
-      y++;
-      if (err < 0) err += 2 * y + 1;
-      else {
-        x--;
-        err += 2 * (y - x) + 1;
-      }
+    ctx.drawImage(ringImage(radius, color), cx - radius, cy - radius);
+  }
+
+  // The rings run outward from each spot still possible, faster as time runs out.
+  #drawTension(ctx: CanvasRenderingContext2D, t: number) {
+    if (this.#tension <= 0 || !this.#possibleIds || this.#roll) return;
+    const speed = 1 + this.#tension * 1.5;
+    for (const id of this.#possibleIds) {
+      const landmark = this.#landmarks[id];
+      if (!landmark) continue;
+      const wave = this.#calm ? 0.3 : (t * speed + id * 0.37) % 1;
+      ctx.globalAlpha = 1 - wave * 0.75;
+      this.#ring(ctx, landmark.x, landmark.y - 6, 9 + Math.round(wave * 7), PALETTE.y);
     }
+    ctx.globalAlpha = 1;
+  }
+
+  #drawHighlight(ctx: CanvasRenderingContext2D, t: number) {
+    if (this.#highlightId === null) return;
+    const landmark = this.#landmarks[this.#highlightId];
+    if (!landmark) return;
+    const radius = 13 + (this.#calm ? 0 : Math.round(Math.sin(t * 6)));
+    this.#ring(ctx, landmark.x, landmark.y - 6, radius, PALETTE.y);
+    this.#ring(ctx, landmark.x, landmark.y - 6, radius + 1, PALETTE.Y);
   }
 
   // While rolling, the sky is dimmed and only the spots still in play stand out.
@@ -833,13 +1242,13 @@ class World {
     const roll = this.#roll;
     if (!roll) return;
     for (let i = 0; i < roll.candidates.length; i++) {
-      const landmark = MAP.landmarks[roll.candidates[i]];
-      const x = toArt(landmark.x);
-      const y = toArt(landmark.y);
+      const landmark = this.#landmarks[roll.candidates[i]];
+      const { x, y } = landmark;
       const active = roll.order[roll.at] === landmark.id;
       if (active) {
-        const s = sprite(SPRITE_FOR[landmark.kind]);
-        ctx.drawImage(s.canvas, x - Math.floor(s.w / 2), y - s.h - 1);
+        const s = sprite(landmark.kind);
+        const flipped = landmark.flip && landmark.category === 'animal';
+        ctx.drawImage(flipped ? s.flipped : s.canvas, x - Math.floor(s.w / 2), y - s.h - 1);
       }
       this.#ring(ctx, x, y - 6, active ? 14 + (roll.landedAt >= 0 ? Math.round(Math.sin(t * 16)) : 0) : 11, active ? PALETTE.y : PALETTE.w);
       if (active) this.#ring(ctx, x, y - 6, 15, PALETTE.y);
@@ -848,8 +1257,7 @@ class World {
 
   #drawSpot(ctx: CanvasRenderingContext2D, t: number) {
     if (!this.#spot) return;
-    const x = toArt(this.#spot.x);
-    const y = toArt(this.#spot.y);
+    const { x, y } = this.#spot;
     const age = t - this.#spotBornAt;
     const pop = age < 0.14 && !this.#calm ? Math.round((1 - age / 0.14) * 5) : 0;
     this.#ring(ctx, x, y, 8 + pop + (this.#calm ? 0 : Math.round(Math.sin(t * 6))), PALETTE.w);
