@@ -2,6 +2,7 @@
 // Reading needs no account and no signing code. Everything that signs is loaded on first use.
 import { currentBonus, isCrowded, isOpen, secondsLeft } from '../game/engine';
 import type { Deed, HostRecord, Season } from '../game/economy';
+import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Dig, Game, NewGameInput, Point } from '../game/types';
 import { ChainClock } from '../near/clock';
@@ -14,7 +15,7 @@ import type { Outcome } from '../near/outcome';
 import { clocksOf, digsOf, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
 import type { ChainRoom, FinishedSummary, LiveState } from '../near/rooms';
 import { RpcError, view, viewAccessKey, viewAccount } from '../near/rpc';
-import { loadGuest, loadSession, saveGuest, saveSession, walletKey } from '../near/session';
+import { guestWasChosen, loadGuest, loadSession, rememberGuestChoice, saveGuest, saveSession, walletKey } from '../near/session';
 import type { GuestSession, Session } from '../near/session';
 import type { Call, KeySender } from '../near/signer';
 import type { AccountPrompt, GameBackend, Identity, PlaytestControls, Prices } from './types';
@@ -28,6 +29,8 @@ const SETTLE_RETRY_MS = 1500;
 const SETTLE_TRIES = 40;
 const FINISHED_KEPT = 40;
 const GUEST_COINS_WAIT_MS = 8000;
+const FIRST_READ_TRIES = 5;
+const FIRST_READ_GAP_MS = 800;
 /** How long a move of ours outranks a frame that doesn't show it yet, since reads lag a move by up to 2 s or so. */
 const LOCAL_MOVE_MS = 15_000;
 /** Past this overdue, anyone can nudge the contract, so coins stay refundable even if the backend is gone. */
@@ -40,6 +43,26 @@ const milliToYocto = (milli: number) => (BigInt(milli) * YOCTO_PER_MILLI).toStri
 
 type Timing = Pick<ChainRoom, 'created_ms' | 'start_at_ms' | 'started_ms' | 'ends_at_ms' | 'duration_sec' | 'deadline_ms' | 'reveal_deadline_ms' | 'next_due_ms' | 'next_step' | 'locked'>;
 type LocalPlayer = { add: boolean; at: number };
+
+type ProofEvent = { event: string; tx_hash?: string; data: any };
+
+function proofLinks(events: ProofEvent[]): { label: string; hash: string }[] {
+  const label = (e: ProofEvent): string | null => {
+    switch (e.event) {
+      case 'room_created': return 'Room created';
+      case 'started': return 'Round started';
+      case 'locked': return `Step ${e.data.step} locked`;
+      case 'revealed': return `Step ${e.data.step} revealed`;
+      case 'finished': return 'Settled';
+      case 'refunded': return 'Refunded';
+      default: return null;
+    }
+  };
+  return events.flatMap((e) => {
+    const text = label(e);
+    return text && e.tx_hash ? [{ label: text, hash: e.tx_hash }] : [];
+  });
+}
 
 async function getJson<T>(path: string, timeoutMs = 3000): Promise<T> {
   const res = await fetch(path, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/json' } });
@@ -90,6 +113,7 @@ class NearBackend implements GameBackend {
   #deedsAsked = 0;
   #pokedAt = new Map<string, number>();
   #accountChoice: Promise<void> | null = null;
+  #firstRead: Promise<void> = Promise.resolve();
   #guestWasChosen = false;
 
   constructor() {
@@ -256,12 +280,10 @@ class NearBackend implements GameBackend {
       if (!isOpen(game) || !game.players.includes(this.account)) continue;
       const timing = this.#timing.get(game.id);
       if (!timing) continue;
-      const due = [
-        timing.start_at_ms,
-        timing.deadline_ms,
-        timing.ends_at_ms && game.digs.length < 2 ? timing.ends_at_ms : null,
-        timing.reveal_deadline_ms,
-      ].filter((t): t is number => t !== null && t !== undefined);
+      const due = (game.stage === 'waiting'
+        ? [timing.start_at_ms, timing.deadline_ms]
+        : [game.digs.length < RULES.minDigs ? timing.ends_at_ms : null, timing.reveal_deadline_ms]
+      ).filter((t): t is number => t !== null && t !== undefined);
       if (!due.length || now - Math.min(...due) < POKE_AFTER_MS) continue;
       const last = this.#pokedAt.get(game.id) ?? 0;
       if (Date.now() - last < POKE_GAP_MS) continue;
@@ -293,13 +315,11 @@ class NearBackend implements GameBackend {
   async #fetchRoom(id: string): Promise<ChainRoom | null> {
     try {
       return await view<ChainRoom>('get_room', { id: Number(id) });
-    } catch (e) {
-      if (e instanceof RpcError && !/No such room/i.test(e.message)) {
-        // Not a clear "no": could be the network. The proof endpoint may still know it.
-      }
+    } catch {
+      // Deleted from the contract's ring, or the network's having a moment. The indexer may still know it.
     }
     try {
-      const proof = await getJson<{ events: { event: string; data: any }[] }>(`/api/games/${id}/proof`);
+      const proof = await getJson<{ events: ProofEvent[] }>(`/api/games/${id}/proof`);
       return roomFromEvents(proof.events);
     } catch {
       return null;
@@ -379,8 +399,16 @@ class NearBackend implements GameBackend {
     return run;
   }
 
+  /** The contract's own record where it still has one. The indexer adds transaction links, and the whole room once it's gone. */
   async proofOf(id: string): Promise<ChainRoom | null> {
-    return this.#fetchRoom(id);
+    const [room, proof] = await Promise.all([
+      view<ChainRoom>('get_room', { id: Number(id) }).catch(() => null),
+      getJson<{ events: ProofEvent[] }>(`/api/games/${id}/proof`).catch(() => null),
+    ]);
+    const events = proof?.events ?? [];
+    const whole = room ?? roomFromEvents(events);
+    if (whole) whole.txs = proofLinks(events);
+    return whole;
   }
 
   // Records read lazily, by what's on screen.
@@ -436,9 +464,9 @@ class NearBackend implements GameBackend {
     void this.#readBalances();
   }
 
-  async #readBalances() {
+  async #readBalances(): Promise<boolean> {
     const session = this.#session;
-    if (!session) return;
+    if (!session) return true;
     try {
       const record = await view<{ balance: string } | null>('get_account', { id: session.accountId });
       if (this.#session === session) this.#balance = record ? toMilli(record.balance) : 0;
@@ -446,8 +474,17 @@ class NearBackend implements GameBackend {
         const account = await viewAccount(session.accountId);
         if (this.#session === session) this.#wallet = account ? toMilli(account.amount) : 0;
       }
+      return true;
     } catch {
-      // The next read is never far off.
+      return false;
+    }
+  }
+
+  /** A failed read must not read as "you have nothing", or the next click tells them they're short of coins. */
+  async #readBalancesPatiently() {
+    for (let attempt = 0; attempt < FIRST_READ_TRIES; attempt++) {
+      if (await this.#readBalances()) return;
+      await new Promise((resolve) => setTimeout(resolve, FIRST_READ_GAP_MS));
     }
   }
 
@@ -460,13 +497,13 @@ class NearBackend implements GameBackend {
     this.#wallet = 0;
     saveSession(session);
     this.identity = session ? { kind: session.kind, accountId: session.accountId } : { kind: 'none' };
-    if (session) this.refreshBalances();
+    this.#firstRead = session ? this.#readBalancesPatiently() : Promise.resolve();
   }
 
   #restoreSession() {
+    this.#guestWasChosen = guestWasChosen();
     const saved = loadSession();
     if (!saved) return;
-    this.#guestWasChosen = saved.kind === 'guest';
     this.#setSession(saved);
     if (saved.kind === 'guest') void this.#checkGuestKey(saved);
   }
@@ -488,7 +525,8 @@ class NearBackend implements GameBackend {
   }
 
   ensureAccount(): Promise<void> {
-    if (this.#session) return Promise.resolve();
+    // Waits for the first balance read too: right after a reload, "0" would look like being short of coins.
+    if (this.#session) return this.#firstRead;
     if (this.#accountChoice) return this.#accountChoice;
     // They already chose a guest once. A swept guest gets a new one without being asked again.
     if (this.#guestWasChosen) {
@@ -518,6 +556,7 @@ class NearBackend implements GameBackend {
 
   async #startGuest(): Promise<void> {
     this.#guestWasChosen = true;
+    rememberGuestChoice();
     const stored = loadGuest();
     if (stored && (await viewAccessKey(stored.accountId, stored.publicKey).catch(() => null))) {
       this.#setSession(stored);

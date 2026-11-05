@@ -2,7 +2,8 @@
 import { CONTRACT, READ_URLS, SEND_URL } from './config';
 
 export class RpcError extends Error {
-  constructor(message: string, readonly code: string, readonly data?: unknown) {
+  /** `settled` means the network answered and meant it. Anything else, another endpoint may do better. */
+  constructor(message: string, readonly code: string, readonly data?: unknown, readonly settled = false) {
     super(message);
   }
 }
@@ -22,19 +23,30 @@ async function post(url: string, method: string, params: unknown, timeoutMs: num
   const body = await res.json();
   if (body.error) {
     const data = body.error.data;
-    throw new RpcError(typeof data === 'string' ? data : (body.error.message ?? 'RPC error'), body.error.cause?.name ?? body.error.name ?? 'RPC_ERROR', data);
+    const code = body.error.cause?.name ?? body.error.name ?? 'RPC_ERROR';
+    // Rate limits and free-plan cut-offs from any provider arrive here too, in their own shapes.
+    const settled = body.error.name === 'HANDLER_ERROR' && code !== 'TIMEOUT_ERROR' && code !== 'INTERNAL_ERROR';
+    throw new RpcError(typeof data === 'string' ? data : (body.error.message ?? 'RPC error'), code, data, settled);
   }
   return body.result;
 }
 
+/** After a refusal, the next few calls go to the other endpoint. Knocking again only prolongs the limit. */
+const COOL_DOWN_MS = 10_000;
+let primaryCoolUntil = 0;
+
+const isRefusal = (e: unknown) => e instanceof TypeError || (e instanceof RpcError && e.code === 'BUSY');
+
 /** Tries each read endpoint in turn. An answer that means something (like "no such key") is final. */
 async function read(method: string, params: unknown, timeoutMs = 3000): Promise<any> {
+  const urls = Date.now() < primaryCoolUntil ? [...READ_URLS].reverse() : READ_URLS;
   let last: unknown;
-  for (const url of READ_URLS) {
+  for (const url of urls) {
     try {
       return await post(url, method, params, timeoutMs);
     } catch (e) {
-      if (e instanceof RpcError && e.code !== 'BUSY' && e.code !== 'INTERNAL_ERROR') throw e;
+      if (e instanceof RpcError && e.settled) throw e;
+      if (url === SEND_URL && isRefusal(e)) primaryCoolUntil = Date.now() + COOL_DOWN_MS;
       last = e;
     }
   }
@@ -94,8 +106,8 @@ export async function sendTx(signedBase64: string, signal: AbortSignal): Promise
   try {
     return await post(SEND_URL, 'send_tx', { signed_tx_base64: signedBase64, wait_until: 'EXECUTED_OPTIMISTIC' }, 30_000, signal);
   } catch (e) {
-    const refused = e instanceof TypeError || (e instanceof RpcError && e.code === 'BUSY');
-    if (!refused || signal.aborted) throw e;
+    if (!isRefusal(e) || signal.aborted) throw e;
+    primaryCoolUntil = Date.now() + COOL_DOWN_MS;
     return post(BACKUP_SEND_URL, 'send_tx', { signed_tx_base64: signedBase64, wait_until: 'NONE' }, 2500, signal);
   }
 }

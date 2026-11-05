@@ -44,7 +44,7 @@
   {#if over}
     <span class="result">
       {#if result?.winner}
-        <span class="winner">{#if result.winner !== me}<span class="wordy">Won by </span>{/if}{winner}{#if isBot(result.winner)}<span class="bot">bot</span>{/if}</span>
+        <span class="winner">{#if result.winner !== me}<span class="wordy">{'Won by '}</span>{/if}{winner}{#if isBot(result.winner)}<span class="bot">bot</span>{/if}</span>
         {#if result.split.prize}<span class="prize">{near(result.split.prize)}</span>{/if}
       {:else}
         <span class="refunded">Refunded</span>

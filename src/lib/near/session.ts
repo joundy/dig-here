@@ -5,6 +5,7 @@ export type Session = GuestSession | WalletSession;
 
 const SESSION_KEY = 'dig-here-near-session';
 const GUEST_KEY = 'dig-here-near-guest';
+const CHOICE_KEY = 'dig-here-near-choice';
 
 function loadJson<T>(key: string): T | null {
   try {
@@ -30,6 +31,10 @@ export const saveSession = (session: Session | null) => saveJson(SESSION_KEY, se
 /** Kept apart from the session, so connecting a wallet and later leaving it returns to the same guest. */
 export const loadGuest = () => loadJson<GuestSession>(GUEST_KEY);
 export const saveGuest = (guest: GuestSession | null) => saveJson(GUEST_KEY, guest);
+
+/** They said guest once. A swept guest then gets a new one without being asked again, even after a reload. */
+export const guestWasChosen = () => loadJson<boolean>(CHOICE_KEY) === true;
+export const rememberGuestChoice = () => saveJson(CHOICE_KEY, true);
 
 /** The function-call key the wallet plugin stored at sign-in. Using it means digs never ask the wallet. */
 export function walletKey(accountId: string): { secretKey: string } | null {
