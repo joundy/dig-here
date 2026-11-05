@@ -32,13 +32,188 @@ A host opens a room and sets the entry fee, timer, map, their share of the pot (
 - **Season:** points scaled by the pot, with prizes for the top 3.
 - **Hosts:** each room locks a small bond, and hosts have a public record, so spam rooms sink down the board.
 
-## How NEAR is used
+## Fairness: why nobody can rig a round
 
-- **Every rule and coin is in the contract** (`contract/`, Rust): rooms, clues, scoring, payouts, NFTs and seasons.
-- **Randomness has two sources, and neither side can know a result alone.** Before a room exists we commit to a hash chain. For each roll, the contract first records the block's random seed, then in a later block we reveal the next link, and the contract rolls from both. A validator can't predict the result because it lacks the link. We can only refuse to reveal, which publicly refunds everyone.
-- **Anyone can verify a round.** "Verify this round" on the results screen redoes the links, seeds, layout, clues, treasure, ranking and pot split in your browser with the same rules, which `contract/tests/vectors.json` holds identical between TypeScript and Rust.
-- **Players don't feel the chain.** A guest gets a real testnet account in about 2 seconds, signed by a function-call key in their browser, with no popups. Wallet users approve one top-up, then play silently. Winnings go to a game balance so the next round is instant.
-- **The backend can't change an outcome** (`server/`). It triggers due steps, reveals links, serves live state, runs test-only bots and guest accounts, and indexes history. If it dies, coins stay safe and refundable, and the game can still be read directly from chain.
+**There's no hidden answer to steal.** The treasure doesn't exist until the timer ends, so a host, a player or we can't know where it is, because it isn't anywhere yet. The host only sets the fee, timer, map and their cut, and never picks a location or writes a hint.
+
+**Nobody controls the dice alone.** Every clue and the treasure come from two sources: a seed from the NEAR block, and a secret we committed to before the room existed. Each is useless without the other.
+
+**You don't have to trust us.** The contract does every roll in public, and "Verify this round" lets you redo the whole round in your browser.
+
+### Who could cheat, and what stops them
+
+| Who | What they might try | What actually happens |
+|---|---|---|
+| **Host** | Pick the spot, or play with inside knowledge | They choose no location, and know nothing other players don't. They can play their own room on equal terms |
+| **Player** | Copy a good dig | Allowed, but they get a lower bonus, and digging within 6 pixels of an earlier dig scores ×0.85 |
+| **Player** | Use a contract to read the seed, then act on it | The block seed alone isn't enough, because the result also needs our secret, which isn't public yet |
+| **Validator** | Predict the block's seed, and skip a transaction they dislike | They can predict the seed, as NEAR's docs warn, but they don't have our secret, so they can't work out the result |
+| **Us (oracle)** | Choose a result | Our secret was fixed by a hash before the room existed, and the block seed doesn't exist until later, so we can't steer a roll |
+| **Us (oracle)** | Dig with the next clue in hand | Digs are refused between a lock and its reveal, usually for about 2 seconds, so nobody holding the secret can use it |
+| **Us (oracle)** | Refuse to reveal a result we dislike | **This is possible.** It's public, and everyone gets a full refund. See [Known limits](#known-limits) |
+| **Backend down** | Coins stuck | Anyone can call `poke`, and a missing reveal refunds everyone after 120 seconds. The backend isn't needed for that |
+
+## How the randomness works
+
+### The two seeds
+
+```mermaid
+flowchart LR
+    S["Our secret, s"] -->|"SHA-256, 4 times"| T["Commitment (tip)<br/>public before the room exists"]
+    B["Block seed<br/>env::random_seed()"] --> L["Lock<br/>stored in an earlier block"]
+    T -.->|"each link must hash back to it"| R
+    L --> R["Reveal<br/>next link, in a later block"]
+    D["Digs so far (hash)"] --> L
+    R --> O["roll_seed = SHA-256 of all of them"]
+    O --> N["Number stream"]
+    N --> C["Clue or treasure"]
+```
+
+### One roll, step by step
+
+Each round has 4 rolls: clue 2, clue 3, clue 4 and the treasure.
+
+```mermaid
+sequenceDiagram
+    participant O as Oracle (our backend)
+    participant C as Contract
+    participant V as Validators
+    Note over O,C: Before the room exists
+    O->>C: add_commitments(tips)
+    Note over C: create_room takes the next tip, so we can't swap it
+    Note over C: Later: a clue is due
+    O->>C: poke(room), which anyone may call
+    V-->>C: this block's random seed
+    Note over C: LOCK: stores the block seed and a hash of the digs. Digging pauses
+    O->>C: reveal(room, link), in a later block
+    Note over C: Checks SHA-256(link) = the previous value
+    Note over C: ROLL: computes the seed, rolls, digging reopens
+    Note over C: No reveal within 120 seconds of being due: anyone can trigger a full refund
+```
+
+**The order is what makes this safe.** The block seed is fixed first, while our link is still secret, so the validator is blind when its block is made. Our link comes second, but it was fixed by the hash long before, so we can't choose it. All we can do is refuse, and that's public.
+
+### The exact formulas
+
+```
+tip        = H(H(H(H(s))))                              H = SHA-256
+reveals    = step 1 H(H(H(s))), step 2 H(H(s)), step 3 H(s), step 4 s
+
+roll_seed  = H("dig-here-v1" || room_id || step || lock_seed || link || digs_hash)
+layout     = H("dig-here-layout-v1" || room_id || block_seed || tip)
+
+stream     = H(seed || 0), H(seed || 1), ... read as 32-bit numbers
+below(n)   = take the next number under the largest multiple of n, then mod n
+```
+
+- **`below(n)` has no modulo bias:** numbers that would favour some results are thrown away.
+- **`digs_hash` is taken at the lock,** so a dig placed afterwards can't affect that roll.
+- **The landmark layout** uses the block seed and the tip only. It's public before anyone joins and decides nothing by itself, so it doesn't need the two-step process.
+- **Each room uses its own commitment** and each link works once, so a reveal can't be replayed or reused.
+
+Byte-level details are in [`contract/tests/README.md`](contract/tests/README.md).
+
+### How a clue picks the treasure's spot
+
+Nothing is chosen ahead of time. Each roll picks only from what still fits, and then forgets the pick:
+
+1. **Clue 1, YOLO:** no roll. All 40 landmarks are possible.
+2. **Clue 2:** picks a landmark at random and announces its category. Only that category stays possible.
+3. **Clue 3:** picks again among those, and announces its kind.
+4. **Clue 4:** picks again, and announces a detail, like "close to water".
+5. **Treasure:** picks one remaining landmark, then a spot on land within 13 pixels of it.
+
+## Prove it yourself
+
+Press **Verify this round** on any finished round. Your browser redoes the round with the same rules code and shows each check, line by line:
+
+| Check | What it proves |
+|---|---|
+| Every link hashes back to the tip | Our secret was fixed before the room existed |
+| Each `roll_seed` recalculates | Nothing else went into the roll |
+| Layout, clues and treasure come out the same | The contract used the seeds honestly |
+| Scores, ranking and pot split come out the same | Nobody's score or payout was altered |
+| Every transaction was sent to our contract, and matches | The round really happened on chain |
+
+**Where the data comes from:** a recent round is read straight from the contract through public RPC, with our backend not involved. Older rounds are deleted from the contract to free storage, so our backend supplies them, and your browser checks each one against the chain by transaction. If a line can't be checked, it shows amber and the headline won't claim a full pass. A forged round goes red, and tests cover forged winners, changed digs, swapped links, missing results and transactions from the wrong contract.
+
+**What it can't prove alone:** the block seed the contract saw isn't the `random_value` shown in a block's header, so your browser can't compare the two. For that one value you rely on NEAR running the public contract correctly, and the screen says so.
+
+**Same rules twice:** the rules exist in TypeScript and in Rust. [`contract/tests/vectors.json`](contract/tests/vectors.json) holds both to identical answers, across hundreds of cases.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Browser["Player's browser"]
+        UI["Game (Svelte)"]
+        WALLET["NEAR wallet, and a limited<br/>key for popup-free digs"]
+        VERIFY["Verify this round"]
+    end
+    subgraph NEAR["NEAR testnet"]
+        CONTRACT["Contract: v1.dighere.testnet<br/>rules, coins, rolls, NFTs, seasons"]
+    end
+    subgraph Backend["Our backend (one container)"]
+        ORACLE["Oracle: pokes and reveals"]
+        LIVE["Live state: one reader,<br/>pushes to everyone"]
+        BOTS["Bots, testnet only"]
+        INDEX["Indexer: history and proofs"]
+    end
+    WALLET -->|"signed transactions"| CONTRACT
+    ORACLE -->|"commit, poke, reveal"| CONTRACT
+    BOTS -->|"play like anyone else"| CONTRACT
+    CONTRACT -->|"state"| LIVE
+    CONTRACT -->|"events"| INDEX
+    LIVE -->|"live updates (SSE)"| UI
+    INDEX -->|"old rounds"| VERIFY
+    CONTRACT -.->|"direct read if the backend is down"| UI
+    CONTRACT -.->|"direct read and transaction checks"| VERIFY
+```
+
+| Part | Decides | Can't do |
+|---|---|---|
+| **Contract** | Every rule, roll and coin | Change after launch: it has no owner or admin methods |
+| **Oracle** | Only *when* due steps are sent | Choose a result, or touch coins. It can refuse to reveal, which refunds everyone |
+| **Live state** | Nothing | It only saves reads. Browsers fall back to the chain if it's down |
+| **Indexer** | Nothing | It keeps history. Verify rechecks what it says |
+| **Bots** | Their own digs, using only public clues | See anything a player can't. They can't win season prizes, and won't exist in production |
+
+## Game flow
+
+### A room's life
+
+```mermaid
+stateDiagram-v2
+    [*] --> Waiting: host creates a room, bond locked
+    Waiting --> Live: host starts, or countdown ends, or room fills
+    Waiting --> Refunded: 15 minutes below the minimum
+    Live --> Finished: treasure rolled and paid
+    Live --> Refunded: under 2 digs at the end
+    Live --> Refunded: oracle misses a reveal
+    Finished --> [*]
+    Refunded --> [*]
+```
+
+### A round for a player
+
+1. **Connect** a testnet wallet. One approval adds a limited key, which can play but can't withdraw or buy NFTs.
+2. **Join:** one approval attaches the fee and a small top-up. Later rounds pay from your game balance with no popup. You can leave before the start and get your fee back.
+3. **Clue 1, YOLO, ×2.5:** dig blind for the biggest bonus, or wait.
+4. **Clues 2 to 4, ×1.5, ×1.25, ×1:** each narrows the possible spots. A dig's bonus follows the clues actually revealed, so a late clue never costs you. If you've dug, you see "You'd win on 2 of 4 spots right now" change live.
+5. **Time's up:** the treasure is rolled, and the highest score wins the pot.
+6. **Paid:** winnings land in your game balance straight away, ready for the next round or to withdraw.
+
+### Where coins can't get stuck
+
+| Situation | What happens |
+|---|---|
+| Room never fills | Everyone is refunded at the 15-minute deadline. The host loses 10% of the bond |
+| Host disappears | The deadline handles it, and anyone can trigger it |
+| Under 2 digs | Everyone is refunded |
+| Oracle doesn't reveal, or the backend dies | Anyone can trigger a full refund 120 seconds after the roll was due |
+| Joined but never dug | Your fee stays in the pot, and you get a warning before the end |
+
+Winnings are credited to balances inside the contract, not pushed out, so one bad account can't block a payout. Withdrawals deduct first and restore the coins if the transfer fails.
 
 ## Try it
 
@@ -66,7 +241,10 @@ The contract builds in Docker: `docker/near cargo near build non-reproducible-wa
 ## Known limits
 
 - **Testnet only.** Bots and guest accounts are test-only and won't exist in production. Going to mainnet needs the items below first.
-- **Randomness:** we hold the secret side, so refusing to reveal is a free way to cancel a round. It's public and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal. Reveals currently don't wait for the lock to be final.
+- **Randomness:**
+  - We see a roll's result before revealing it, so refusing to reveal is a free way to cancel a round we dislike. It's public, counted by the contract (`missed_reveals`) and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal.
+  - Reveals don't currently wait for the lock to be final, so in theory a validator could drop the lock's block after seeing the link. `ORACLE_REVEAL_FINAL=1` closes this, for about 2 seconds more per roll.
+  - A validator working together with us would know both seeds.
 - **A stolen browser key** can't withdraw or buy NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap.
 - **Scripts:** clues and landmarks are public, so a script can work out the exact spots that still fit.
 - **Multiple wallets:** one person can dig from several, and farm seasons, though every dig costs a fee. Rules alone can't prevent this.
@@ -81,7 +259,7 @@ Full findings: `docs/research/security-review.md`.
 - `src/lib/game/`: the rules in whole-number maths. `random.ts` is the number stream and hashes.
 - `src/lib/backend/near.svelte.ts`: the game's connection to the chain. `dummy.svelte.ts` is the fake chain.
 - `src/lib/world/`: the pixel-art islands. `src/lib/audio/`: the original chiptune, synthesized in the browser. `src/components/`: the screens.
-- `docs/plans/`: the design. `docs/research/`: measurements behind it.
+- `docs/plans/`: the design. `docs/research/`: measurements behind it, including the security review.
 
 ## Built with
 
