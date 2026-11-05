@@ -72,8 +72,6 @@ export type ChainRoom = {
   layout_seed?: string;
   rolls?: ChainRoll[];
   result?: ChainResult | null;
-  /** Only when rebuilt from indexed events: the transactions behind the round, for explorer links. */
-  txs?: { label: string; hash: string }[];
 };
 export type ChainSeason = { number: number; ends_at_ms: number; pool: number; top: { account: string; points: number }[]; last_winners: { account: string; prize: number }[] };
 export type LiveState = {
@@ -101,6 +99,9 @@ export type FinishedSummary = {
   treasure: { x: number; y: number; landmark_id: number } | null;
   winner: string | null;
 };
+
+/** Older rooms could store controls and bidi overrides, which make a name read as something it isn't. */
+export const displayName = (name: string) => name.replace(/[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu, '');
 
 export function landmarksOf(map: MapId, raw: ChainRoom['landmarks']): Landmark[] {
   if (!raw) return [];
@@ -170,7 +171,7 @@ export function gameOf(room: ChainRoom, now: number): Game {
   const clocks = clocksOf(room, now);
   return {
     id: String(room.room_id),
-    name: room.name,
+    name: displayName(room.name),
     host: room.host,
     mapId: room.map,
     fee: room.fee,
@@ -200,7 +201,7 @@ export function gameOf(room: ChainRoom, now: number): Game {
 export function gameFromSummary(row: FinishedSummary): Game {
   return {
     id: String(row.room_id),
-    name: row.name,
+    name: displayName(row.name),
     host: row.host,
     mapId: row.map,
     fee: row.fee,

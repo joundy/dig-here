@@ -1,5 +1,6 @@
-// "Verify this round": every roll redone in the player's browser, with the same rules code that ran the
-// screens and that the shared test vectors hold the contract to. Nothing here trusts our backend.
+// "Verify this round", the part that needs no network: every roll redone in the player's browser, with the
+// same rules code that ran the screens and that the shared test vectors hold the contract to. This only says
+// the numbers it's given fit together. Whether they're real is verifyChain.ts's job.
 import { rollNextClue } from './game/clues';
 import { clueText } from './game/copy';
 import { isCrowded, rankDigs, rollTreasure, scoreDig, splitPot } from './game/engine';
@@ -10,7 +11,9 @@ import type { Clue, Dig, Game, Landmark } from './game/types';
 import type { ChainRoom, ChainRoll } from './near/rooms';
 import { landmarksOf } from './near/rooms';
 
-export type CheckState = 'pass' | 'fail' | 'note';
+/** `unchecked` is amber: we couldn't find out. It never counts as a pass, and it isn't an accusation either. */
+export type CheckState = 'pass' | 'fail' | 'note' | 'unchecked';
+export type OverallState = 'pass' | 'partial' | 'fail';
 export type Check = {
   state: CheckState;
   /** A plain sentence saying what was checked. */
@@ -23,6 +26,15 @@ export type CheckGroup = { title: string; checks: Check[] };
 const short = (hex: string | null | undefined) => (hex ? `${hex.slice(0, 10)}…` : 'nothing');
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const STEP_NAME = ['', 'clue 2', 'clue 3', 'clue 4', 'the treasure'];
+/** How long after a roll is due its reveal may land: contract/src/rules.rs. */
+const REVEAL_WINDOW_MS = 120_000;
+const STEPS = [1, 2, 3, 4];
+
+/** When a step falls due, as the contract works it out: clues by the schedule, the treasure at the end. */
+function dueMs(room: ChainRoom, step: number): number {
+  const started = room.started_ms ?? 0;
+  return step < 4 ? started + RULES.clueSchedule[step].startsAt * room.duration_sec * 10 : started + room.duration_sec * 1000;
+}
 
 function pass(ok: boolean, title: string, detail?: string): Check {
   return { state: ok ? 'pass' : 'fail', title, detail };
@@ -50,7 +62,7 @@ function layoutChecks(room: ChainRoom, landmarks: Landmark[]): Check[] {
     {
       state: 'note',
       title: 'The commitment was fixed before anyone could join',
-      detail: `It's number ${room.tip_index} from the contract's pool, and the layout above depends on it, so it can't have been swapped once the room existed.`,
+      detail: `The contract says it's number ${room.tip_index} from its pool. The layout above depends on it, so it can't have been swapped once the room existed.`,
     },
   ];
 }
@@ -74,11 +86,17 @@ function chainChecks(room: ChainRoom): Check[] {
   return checks;
 }
 
+/**
+ * How many digs the lock covered, or null if no honest count gives its hash. A dig in the lock's own block may
+ * fall either side of it, so the hash picks out which. Anything earlier must be in, and the treasure's lock
+ * comes after digging has closed, so it must cover every dig.
+ */
 function digsAtLock(room: ChainRoom, roll: ChainRoll) {
-  // A dig in the lock's own block may fall either side of it, so the hash picks out which it was.
-  const digs = room.digs.filter((d) => roll.lock_ms === null || d.dug_at_ms <= roll.lock_ms);
-  for (let count = digs.length; count >= 0; count--) {
-    const prefix = digs.slice(0, count).map((d) => ({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, dugAtMs: d.dug_at_ms }));
+  const lockMs = roll.lock_ms ?? -Infinity;
+  const most = room.digs.filter((d) => d.dug_at_ms <= lockMs).length;
+  const least = roll.step === 4 ? room.digs.length : room.digs.filter((d) => d.dug_at_ms < lockMs).length;
+  for (let count = most; count >= least; count--) {
+    const prefix = room.digs.slice(0, count).map((d) => ({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, dugAtMs: d.dug_at_ms }));
     if (toHex(digsHash(prefix)) === roll.digs_hash) return count;
   }
   return null;
@@ -92,7 +110,7 @@ function rollChecks(room: ChainRoom): Check[] {
     const lockTitle = `The digs locked in for ${name} hash to what the contract stored`;
     checks.push(safely(lockTitle, () => {
       const count = digsAtLock(room, roll);
-      return pass(count !== null, lockTitle, count === null ? `No run of digs gives ${short(roll.digs_hash)}.` : `${count} ${count === 1 ? 'dig' : 'digs'} had happened by the lock.`);
+      return pass(count !== null, lockTitle, count === null ? `The digs made by then don't give ${short(roll.digs_hash)}.` : `${count} ${count === 1 ? 'dig' : 'digs'} had happened by the lock.`);
     }));
     const seedTitle = `The roll for ${name} comes from the lock seed, the secret and those digs`;
     checks.push(safely(seedTitle, () => {
@@ -138,17 +156,76 @@ function asDig(room: ChainRoom, d: ChainRoom['digs'][number]): Dig {
 function digChecks(room: ChainRoom): Check[] {
   const digs = room.digs.map((d) => asDig(room, d));
   const bad: string[] = [];
+  const revealed = (room.rolls ?? []).filter((r) => r.step < 4 && r.reveal_ms !== null);
   digs.forEach((d, i) => {
+    const at = room.digs[i].dug_at_ms;
     if (!room.players.includes(d.account)) bad.push(`${d.account} dug without joining`);
+    if (digs.slice(0, i).some((earlier) => earlier.account === d.account)) bad.push(`${d.account} dug twice`);
     if (RULES.clueSchedule[d.clueIndex]?.bonusBps !== d.bonusBps) bad.push(`${d.account} got the wrong bonus`);
+    // A dig's bonus follows clues actually out, and a reveal in the dig's own block may fall either side of it.
+    const least = revealed.filter((r) => r.reveal_ms! < at).length;
+    const most = revealed.filter((r) => r.reveal_ms! <= at).length;
+    if (d.clueIndex < least || d.clueIndex > most) bad.push(`${d.account}'s dig claims clue ${d.clueIndex + 1}, but ${most + 1} ${most === 0 ? 'was' : 'were'} out by then`);
     if (isCrowded(digs.slice(0, i), d) !== d.crowded) bad.push(`${d.account}'s crowding is wrong`);
-    if (room.ends_at_ms !== null && room.digs[i].dug_at_ms >= room.ends_at_ms) bad.push(`${d.account} dug after the end`);
+    if (room.ends_at_ms !== null && at >= room.ends_at_ms) bad.push(`${d.account} dug after the end`);
+    if (room.started_ms === null || at < room.started_ms) bad.push(`${d.account} dug before the start`);
+    if (i > 0 && at < room.digs[i - 1].dug_at_ms) bad.push(`${d.account}'s dig is out of order`);
   });
-  return [pass(bad.length === 0, 'Every dig was by a player, in time, with the right bonus and crowding', bad.length ? bad.join('; ') : `${digs.length} ${digs.length === 1 ? 'dig' : 'digs'} checked.`)];
+  return [pass(bad.length === 0, 'Every dig was by a player, once, in time, with the right clue, bonus and crowding', bad.length ? bad.join('; ') : `${digs.length} ${digs.length === 1 ? 'dig' : 'digs'} checked.`)];
+}
+
+/** What a round of this kind can't be without. A missing piece is a red line, not a shorter list. */
+function completeChecks(room: ChainRoom): Check[] {
+  const title = 'The round is all here';
+  const gaps: string[] = [];
+  const need = (ok: unknown, what: string) => { if (!ok) gaps.push(what); };
+  const result = room.result;
+  need(room.tip && room.block_seed && room.layout_seed, 'the seeds');
+  need(room.landmarks?.length, 'the landmarks');
+  if (room.status === 'finished') {
+    need(result, 'the result');
+    need(result?.treasure, 'the treasure');
+    need(result?.winner, 'the winner');
+    need(result?.split, 'the pot split');
+    need(result?.ranking.length === room.digs.length, 'a ranking row for every dig');
+    need(room.started_ms !== null && room.ends_at_ms !== null, 'the start and end times');
+    need(room.digs.length >= RULES.minDigs, `at least ${RULES.minDigs} digs`);
+    need(room.clues.length === RULES.clueSchedule.length, 'all four clues');
+    for (const step of STEPS) {
+      const rolls = (room.rolls ?? []).filter((r) => r.step === step);
+      const roll = rolls[0];
+      need(rolls.length === 1 && roll.lock_seed && roll.digs_hash && roll.lock_ms !== null && roll.lock_height !== null && roll.link && roll.reveal_ms !== null && roll.reveal_height !== null && roll.roll_seed, `step ${step}'s lock and reveal`);
+      if (step < 4) need(roll?.clue, `clue ${step + 1}`);
+    }
+    need((room.rolls ?? []).every((r, i) => r.step === i + 1), 'the steps in order');
+  } else if (room.status === 'refunded') {
+    need(result, 'the result');
+    need(result?.refund_reason, 'a reason for the refund');
+  } else {
+    return [{ state: 'fail', title, detail: "This round hasn't ended, so there's nothing final to check yet." }];
+  }
+  return [pass(gaps.length === 0, title, gaps.length ? `Missing: ${gaps.join(', ')}.` : undefined)];
+}
+
+/** Times the contract would have enforced. Skipped for a room that never started, which has none. */
+function timingChecks(room: ChainRoom): Check[] {
+  if (room.started_ms === null) return [];
+  const title = "The clock was kept: each step locked once it was due and revealed before its deadline";
+  const bad: string[] = [];
+  if (room.ends_at_ms !== room.started_ms + room.duration_sec * 1000) bad.push("the end time doesn't match the round's length");
+  for (const roll of room.rolls ?? []) {
+    const due = dueMs(room, roll.step);
+    if (roll.due_ms !== due) bad.push(`step ${roll.step} says it was due at ${roll.due_ms}, the rules say ${due}`);
+    if (roll.lock_ms !== null && roll.lock_ms < due) bad.push(`step ${roll.step} locked before it was due`);
+    if (roll.reveal_ms !== null && roll.lock_ms !== null && roll.reveal_ms < roll.lock_ms) bad.push(`step ${roll.step} was revealed before its lock`);
+    if (roll.reveal_ms !== null && roll.reveal_ms > due + REVEAL_WINDOW_MS) bad.push(`step ${roll.step} was revealed after its deadline`);
+  }
+  return [pass(bad.length === 0, title, bad.length ? `${bad.join('; ')}.` : undefined)];
 }
 
 function endChecks(room: ChainRoom, game: Game, landmarks: Landmark[]): Check[] {
   const result = room.result;
+  // The absence itself is a red line in `completeChecks`.
   if (!result?.treasure) return [];
   const roll = room.rolls?.find((r) => r.step === 4);
   const checks: Check[] = [];
@@ -163,7 +240,7 @@ function endChecks(room: ChainRoom, game: Game, landmarks: Landmark[]): Check[] 
   const ranked = rankDigs(room.digs.map((d) => scoreDig(asDig(room, d), point)));
   const rankOk = ranked.length === result.ranking.length && ranked.every((d, i) => {
     const row = result.ranking[i];
-    return row.account === d.account && row.distance === d.distance && row.closeness === d.closeness && row.score === d.score;
+    return row.account === d.account && row.x === d.x && row.y === d.y && row.distance === d.distance && row.closeness === d.closeness && row.score === d.score;
   });
   checks.push(pass(rankOk, 'Every score and the ranking add up', rankOk ? `${ranked[0]?.account} came first.` : 'The ranking differs when rescored.'));
   checks.push(pass(result.winner === ranked[0]?.account, 'The winner is the top score', `${result.winner}.`));
@@ -194,13 +271,27 @@ function refundChecks(room: ChainRoom): Check[] {
   const result = room.result;
   if (!result?.refund_reason) return [];
   const digs = room.digs.length;
-  const ok = result.refund_reason === 'too-few-digs' ? digs < RULES.minDigs
-    : result.refund_reason === 'expired' ? room.started_ms === null
-    : true;
-  const said = result.refund_reason === 'too-few-digs' ? `Only ${digs} ${digs === 1 ? 'dig' : 'digs'}, and a round needs ${RULES.minDigs}.`
-    : result.refund_reason === 'expired' ? "The room never reached its minimum before its deadline."
-    : 'A roll was never revealed in time, so everyone was paid back and the host lost nothing.';
-  return [pass(ok, 'The refund had a valid reason', said), { state: 'note', title: 'No treasure was ever rolled', detail: 'Everyone who joined got their entry fee back.' }];
+  const ended = result.ended_ms;
+  let ok = false;
+  let said = 'That reason is one the contract never gives.';
+  if (result.refund_reason === 'too-few-digs') {
+    ok = room.started_ms !== null && room.ends_at_ms !== null && digs < RULES.minDigs && ended >= room.ends_at_ms;
+    said = `${digs} ${digs === 1 ? 'dig' : 'digs'} by the end, and a round needs ${RULES.minDigs}.`;
+  } else if (result.refund_reason === 'expired') {
+    ok = room.started_ms === null && ended >= room.deadline_ms && room.players.length < room.min_players;
+    said = `${room.players.length} of the ${room.min_players} players needed had joined when its deadline passed.`;
+  } else if (result.refund_reason === 'missed-reveal') {
+    const next = STEPS.find((step) => !room.rolls?.some((r) => r.step === step && r.reveal_ms !== null));
+    ok = room.started_ms !== null && next !== undefined && ended >= dueMs(room, next) + REVEAL_WINDOW_MS;
+    said = next === undefined
+      ? 'Every roll was revealed, so this reason is false.'
+      : `The roll for ${STEP_NAME[next]} was never revealed by its deadline, so everyone was paid back and the host lost nothing.`;
+  }
+  const clean = !result.treasure && !result.winner;
+  return [
+    pass(ok, 'The refund had a valid reason', said),
+    pass(clean, 'No treasure was rolled and nobody won', clean ? 'Everyone who joined gets their entry fee back.' : 'A refunded round names a treasure or a winner.'),
+  ];
 }
 
 /** Every check that needs no network. Each one stands alone, so one bad value can't hide the rest. */
@@ -208,16 +299,21 @@ export function verifyRound(room: ChainRoom): CheckGroup[] {
   const landmarks = landmarksOf(room.map, room.landmarks);
   const game = replayGame(room, landmarks);
   const groups: CheckGroup[] = [
+    { title: 'Whole round', checks: completeChecks(room) },
     { title: 'Map', checks: layoutChecks(room, landmarks) },
     { title: 'Secrets', checks: chainChecks(room) },
     { title: 'Rolls', checks: rollChecks(room) },
     { title: 'Clues', checks: clueChecks(room, game) },
+    { title: 'Timing', checks: timingChecks(room) },
     { title: 'Digs', checks: digChecks(room) },
     { title: room.status === 'refunded' ? 'Refund' : 'Treasure and pot', checks: room.status === 'refunded' ? refundChecks(room) : endChecks(room, game, landmarks) },
   ];
   return groups.filter((g) => g.checks.length);
 }
 
-export function overallState(groups: CheckGroup[]): 'pass' | 'fail' {
-  return groups.some((g) => g.checks.some((c) => c.state === 'fail')) ? 'fail' : 'pass';
+/** Green only with something passed and nothing failed or left unknown: no checks at all is not a pass. */
+export function overallState(groups: CheckGroup[]): OverallState {
+  const checks = groups.flatMap((g) => g.checks);
+  if (checks.some((c) => c.state === 'fail') || !checks.some((c) => c.state === 'pass')) return 'fail';
+  return checks.some((c) => c.state === 'unchecked') ? 'partial' : 'pass';
 }

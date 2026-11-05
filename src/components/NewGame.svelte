@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { backend } from '../lib/backend';
+  import { botLimitNote, defaultsWithin } from '../lib/near/choices';
   import { audio } from '../lib/audio/audio.svelte';
   import { clock, near, percent } from '../lib/format';
   import { splitPot } from '../lib/game/engine';
@@ -17,9 +19,11 @@
 
   let name = $state('');
   const feeChoices = backend.prices.feeChoices;
-  let feeNear = $state(feeChoices ? feeChoices[1] / 1000 : 1);
+  const USUAL_FEE = feeChoices ? feeChoices[1] : 1000;
+  const USUAL_CUT = 5;
+  let feeNear = $state(USUAL_FEE / 1000);
   let durationSec = $state<number>(180);
-  let cutPercent = $state(5);
+  let cutPercent = $state(USUAL_CUT);
   let mapChoice = $state<MapId | 'surprise'>('tropical');
   let minPlayers = $state(2);
   let maxPlayers = $state(10);
@@ -31,6 +35,18 @@
   const players = $derived(Math.min(maxPlayers, Math.max(minPlayers, EXAMPLE_PLAYERS)));
   const example = $derived(splitPot(feeMilli * players, cutPercent * 100));
   const penalty = $derived(percent(RULES.expiredBondPenaltyBps));
+  const botNote = $derived(botLimitNote(backend.botLimits, feeMilli, cutPercent * 100));
+
+  // The limits arrive a moment after the form opens. Move only what's still at its usual choice.
+  $effect(() => {
+    const limits = backend.botLimits;
+    if (!limits) return;
+    untrack(() => {
+      const within = defaultsWithin(limits, feeChoices, USUAL_FEE, USUAL_CUT);
+      if (feeMilli === USUAL_FEE) feeNear = within.fee / 1000;
+      if (cutPercent === USUAL_CUT) cutPercent = within.cutPercent;
+    });
+  });
 
   // Whatever room was open last leaves its map behind, so this always sets one. Surprise keeps
   // the last preview rather than giving the secret away. Phones hide the board, so skip the work.
@@ -173,6 +189,8 @@
     <span>You keep {cutPercent}% of the pot</span>
     <input type="range" bind:value={cutPercent} min="0" max={RULES.maxHostCutBps / 100} step="1" />
   </label>
+
+  {#if botNote}<p class="hint bots" role="status">{botNote}</p>{/if}
 
   <div class="example">
     <p>With {players} players the pot is {near(feeMilli * players)}:</p>

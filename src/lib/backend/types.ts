@@ -1,6 +1,6 @@
 import type { Deed, HostRecord, Season } from '../game/economy';
 import type { Game, NewGameInput, Point } from '../game/types';
-import type { ChainRoom } from '../near/rooms';
+import type { RoundProof } from '../verifyChain';
 
 /** How the player is known. `none` means watching: nothing has asked for an account yet. */
 export type Identity =
@@ -20,6 +20,9 @@ export type Prices = {
   /** Quick amounts in the wallet dialog, in milliNEAR. */
   walletAmounts: readonly number[];
 };
+
+/** The rooms bots will fill, in the units the contract uses. Above these, a host waits for real players. */
+export type BotLimits = { maxFee: number; maxHostCutBps: number };
 
 /** The dummy's test controls. Null on a real backend, which hides them. */
 export interface PlaytestControls {
@@ -47,6 +50,8 @@ export interface GameBackend {
   readonly jackpot: number;
   readonly season: Season;
   readonly prices: Prices;
+  /** Null when there are no bots, or nobody has said what they'll join. */
+  readonly botLimits: BotLimits | null;
   /** The first read of the world has come back. */
   readonly ready: boolean;
   /** Seconds before the end at which the dig button closes, on the visible clock. */
@@ -64,8 +69,8 @@ export interface GameBackend {
   ensureAccount(): Promise<void>;
   /** Fetches a room's details, if they aren't here yet. Resolves whether or not it exists. */
   loadGame(id: string): Promise<void>;
-  /** Everything needed to recheck a round, or null if this backend has no proofs. */
-  proofOf(id: string): Promise<ChainRoom | null>;
+  /** Everything needed to recheck a round, or null if nobody has it. Throws if nodes can't be reached to say. */
+  proofOf(id: string): Promise<RoundProof | null>;
   refreshBalances(): void;
   connectWallet(): Promise<void>;
   /** Leaves the wallet and goes back to watching, or to the guest this browser had. */
@@ -92,6 +97,8 @@ export interface GameBackend {
   leave(gameId: string): Promise<void>;
   /** Host only, once the minimum is reached. */
   start(gameId: string): Promise<void>;
+  /** A roll is locked and its clue is seconds away, and until it lands the contract turns digs away. */
+  clueArriving(gameId: string): boolean;
   /** `seenClue` is how many clues the player could see, so a new clue can't quietly cost them bonus. */
   dig(gameId: string, spot: Point, seenClue: number): Promise<void>;
   /** The first owner pays the project the mint price. */

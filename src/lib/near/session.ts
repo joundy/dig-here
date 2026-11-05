@@ -1,4 +1,5 @@
-// Who this browser plays as. A guest's key lives here, and it can't take coins out of the game.
+// Who this browser plays as. A guest's key lives here. It can't withdraw, but whoever holds it can spend the
+// guest's game balance through the game (security review, finding 1), so it's no safer than the page it's on.
 export type GuestSession = { kind: 'guest'; accountId: string; secretKey: string; publicKey: string };
 export type WalletSession = { kind: 'wallet'; accountId: string };
 export type Session = GuestSession | WalletSession;

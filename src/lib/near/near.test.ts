@@ -352,3 +352,109 @@ describe('base58', () => {
     expect(toHex(sha256(new Uint8Array(0)))).toHaveLength(64);
   });
 });
+
+describe('reading while an endpoint refuses', () => {
+  type Rpc = typeof import('./rpc');
+  const answer = () => new Response(JSON.stringify({ jsonrpc: '2.0', result: { result: [...new TextEncoder().encode('7')] } }));
+
+  /** A fresh module each time, since how long it stays away from a refusing endpoint lives in the module. */
+  async function freshRpc(respond: (url: string) => Response | Promise<Response>) {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url);
+      return respond(url);
+    }));
+    vi.resetModules();
+    return { rpc: (await import('./rpc')) as Rpc, calls };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  // What a browser sees from a 429 with no CORS header: not a status, just a TypeError.
+  const blockedByCors = (url: string) => {
+    if (url.includes('fastnear')) throw new TypeError('Failed to fetch');
+    return answer();
+  };
+
+  it('fails over without telling anyone, and leaves the refusing endpoint alone for a while', async () => {
+    const { rpc, calls } = await freshRpc(blockedByCors);
+    expect(await rpc.view('get_now_ms')).toBe(7);
+    expect(await rpc.view('get_now_ms')).toBe(7);
+    expect(await rpc.view('get_now_ms')).toBe(7);
+    expect(calls.filter((u) => u.includes('fastnear'))).toHaveLength(1);
+    expect(calls.filter((u) => u.includes('drpc'))).toHaveLength(3);
+  });
+
+  it('treats a plain 429 the same way', async () => {
+    const { rpc, calls } = await freshRpc((url) => (url.includes('fastnear') ? new Response('', { status: 429 }) : answer()));
+    expect(await rpc.view('get_now_ms')).toBe(7);
+    await rpc.view('get_now_ms');
+    expect(calls.filter((u) => u.includes('fastnear'))).toHaveLength(1);
+  });
+
+  it("doesn't send to the refusing endpoint again either, while it's cooling down", async () => {
+    const { rpc, calls } = await freshRpc(blockedByCors);
+    await rpc.view('get_now_ms');
+    calls.length = 0;
+    await rpc.sendTx('c2lnbmVk', new AbortController().signal);
+    expect(calls).toEqual(['https://near-testnet.drpc.org']);
+  });
+
+  it('never asks more than a few things at once, however many are wanted', async () => {
+    let open = 0;
+    let most = 0;
+    const { rpc } = await freshRpc(async () => {
+      most = Math.max(most, ++open);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      open--;
+      return answer();
+    });
+    await Promise.all(Array.from({ length: 30 }, () => rpc.view('get_now_ms')));
+    expect(most).toBeLessThanOrEqual(4);
+  });
+});
+
+describe('looking up old things', () => {
+  const unknown = (name: string) => new Response(JSON.stringify({ jsonrpc: '2.0', error: { name: 'HANDLER_ERROR', cause: { name }, message: 'Server error', data: 'unknown' } }));
+  const found = { transaction: { hash: 'h' }, receipts_outcome: [] };
+  const ok = (result: unknown) => new Response(JSON.stringify({ jsonrpc: '2.0', result }));
+
+  async function reader(respond: (url: string) => Response) {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url);
+      return respond(url);
+    }));
+    vi.resetModules();
+    return { read: (await import('./rpc')).chainReader(async () => {}), calls };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('goes to an archival node once an ordinary one has forgotten, and stays there', async () => {
+    const { read, calls } = await reader((url) => (url.includes('archival') ? ok(found) : unknown('UNKNOWN_TRANSACTION')));
+    expect(await read.tx('h', 's')).toEqual({ found });
+    expect(await read.tx('h2', 's')).toEqual({ found });
+    expect(calls).toEqual([expect.stringContaining('test.rpc.fastnear'), expect.stringContaining('archival-rpc.testnet.fastnear'), expect.stringContaining('archival-rpc.testnet.fastnear')]);
+  });
+
+  it('says a transaction never was only on an archival node\'s word', async () => {
+    const { read } = await reader(() => unknown('UNKNOWN_TRANSACTION'));
+    expect(await read.tx('h', 's')).toEqual({ gone: true });
+  });
+
+  it('says only that it could not check, when ordinary nodes have forgotten and archival ones refuse', async () => {
+    const { read } = await reader((url) => {
+      if (url.includes('archival')) throw new TypeError('Failed to fetch');
+      return unknown('UNKNOWN_TRANSACTION');
+    });
+    expect(await read.tx('h', 's')).toEqual({ unreachable: true });
+  });
+
+  it('treats a missing block the same way', async () => {
+    const { read } = await reader(() => unknown('UNKNOWN_BLOCK'));
+    expect(await read.block(5)).toBe('gone');
+    const blocked = await reader(() => { throw new TypeError('Failed to fetch'); });
+    expect(await blocked.read.block(5)).toBeNull();
+  });
+});

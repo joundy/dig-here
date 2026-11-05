@@ -6,6 +6,12 @@ export const GUEST_SUFFIX = '.guests.dighere.testnet';
 // FastNEAR first. dRPC ends every free request at about 2 s, so it only backs up reads, never sends.
 export const SEND_URL = 'https://test.rpc.fastnear.com';
 export const READ_URLS = [SEND_URL, 'https://near-testnet.drpc.org'];
+export const READ_HOSTS = READ_URLS.map((url) => new URL(url).host);
+
+// Ordinary nodes had already forgotten a 5-day-old transaction on 2026-11-05. These two served one from 2021,
+// and allow browsers. near.org takes over 3 s and rations hard, so it's the last resort.
+export const ARCHIVE_URLS = ['https://archival-rpc.testnet.fastnear.com', 'https://archival-rpc.testnet.near.org'];
+export const ARCHIVE_HOSTS = ARCHIVE_URLS.map((url) => new URL(url).host);
 
 const EXPLORER = 'https://testnet.nearblocks.io';
 export const explorer = {
@@ -30,8 +36,8 @@ export const GAS_TGAS = {
   create_room: 60,
 } as const;
 
-/** The methods a browser key may call, the same list a guest's key allows. */
-export const GAME_METHODS = ['join', 'leave', 'start', 'dig', 'create_room', 'mint_nft', 'list_nft', 'buy_nft', 'poke'];
+/** The methods a browser key may call. `buy_nft` needs 1 yocto, which a function-call key can't attach. */
+export const GAME_METHODS = ['join', 'leave', 'start', 'dig', 'create_room', 'mint_nft', 'list_nft', 'poke'];
 
 /** The visible dig window closes this long before the contract's own end, because a dig takes 1.4 to 2.6 s to run. */
 export const DIG_CLOSE_MS = 2500;

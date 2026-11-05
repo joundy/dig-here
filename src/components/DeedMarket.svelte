@@ -118,7 +118,11 @@
 
   function buy(row: Row, price: number) {
     void act(row.id, async () => {
-      if (!(await canPay(price))) return false;
+      await backend.ensureAccount();
+      // They may have just become a guest, and the row now offers the wallet instead. A wallet's own approval
+      // tops up whatever's missing, so only the playtest has to have the coins first.
+      if (backend.identity.kind === 'guest') return false;
+      if (backend.identity.kind !== 'wallet' && !(await canPay(price))) return false;
       await backend.buyDeed(row.id, price);
     }, `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
   }
@@ -237,6 +241,9 @@
             <button class="btn small" disabled={busyId === row.id} onclick={() => mint(row)}>
               {busyId === row.id ? 'Minting…' : `Mint for ${near(mintPrice)}`}
             </button>
+          {:else if deed.price !== null && guest}
+            <p class="selling">{near(deed.price)}</p>
+            <button class="plain" onclick={connectInstead}>Connect a wallet to buy this</button>
           {:else if deed.price !== null}
             <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, deed.price!)}>
               {busyId === row.id ? 'Signing…' : `Buy for ${near(deed.price)}`}

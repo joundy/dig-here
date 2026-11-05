@@ -125,6 +125,8 @@ class DummyBackend implements GameBackend, PlaytestControls {
   async ensureAccount() {}
   async loadGame() {}
   async proofOf() { return null; }
+  readonly botLimits = null;
+  clueArriving() { return false; }
   refreshBalances() {}
   async connectWallet() {}
   async disconnectWallet() {}

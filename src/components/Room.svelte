@@ -6,6 +6,7 @@
   import { cubicOut } from 'svelte/easing';
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
+  import { CLUE_REFUSAL, digButton } from '../lib/digButton';
   import { bonus, near, percent } from '../lib/format';
   import { clueText } from '../lib/game/copy';
   import { currentBonus, isCrowded, isOpen, potOf, secondsLeft, splitPot } from '../lib/game/engine';
@@ -240,11 +241,19 @@
   }
 
   const tooLate = $derived(game?.stage === 'live' && secondsLeft(game) <= backend.lastDigSec);
+  /** Between a roll's lock and its reveal the contract turns digs away. Usually 2 to 4 seconds. */
+  const clueComing = $derived(!!game && game.stage === 'live' && backend.clueArriving(game.id));
+  const digAction = $derived(digButton({ busy, tooLate, clueComing, bonus: game ? bonus(currentBonus(game)) : '' }));
+
+  // The sentence that sent them to wait has done its job once the clue lands.
+  $effect(() => {
+    if (!clueComing && CLUE_REFUSAL.test(untrack(() => error))) error = '';
+  });
   /** On a real chain the round's last roll takes a few seconds after the clock runs out. */
   const rolling = $derived(game?.stage === 'live' && secondsLeft(game) <= 0);
 
   async function dig() {
-    if (!game || !spot || busy || tooLate) return;
+    if (!game || !spot || digAction.disabled) return;
     // The count at the moment of the tap: a clue landing while this is on its way must turn it down.
     const seenClue = game.clues.length;
     const signer = me;
@@ -304,9 +313,7 @@
               {#if spot && ui.coarse && !crowded}<p class="note">Drag the X to fine-tune it.</p>{/if}
             </div>
             {#if spot}
-              <button class="btn" onclick={dig} disabled={busy || tooLate}>
-                {busy ? 'Digging…' : tooLate ? 'Too late!' : `Dig here at ${bonus(currentBonus(game))}`}
-              </button>
+              <button class="btn" onclick={dig} disabled={digAction.disabled}>{digAction.label}</button>
             {:else}
               <p class="prompt">{ui.coarse ? 'Tap the map to choose your spot.' : 'Choose your spot on the map.'} You get one dig.</p>
             {/if}

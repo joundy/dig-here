@@ -6,24 +6,29 @@ import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Dig, Game, NewGameInput, Point } from '../game/types';
 import { ChainClock } from '../near/clock';
+import { botLimitsFrom, buyDeposit } from '../near/choices';
 import { FEE_CHOICES, GAS_TGAS } from '../near/config';
+import { CLUE_REFUSAL } from '../digButton';
 import { isMissingKey, isOutOfAllowance, plainError } from '../near/errors';
 import { LiveFeed } from '../near/feed';
 import type { StateBody } from '../near/feed';
 import { balanceFromEvents, readOutcome } from '../near/outcome';
 import type { Outcome } from '../near/outcome';
-import { clocksOf, digsOf, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
+import { clocksOf, digsOf, displayName, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
 import type { ChainRoom, FinishedSummary, LiveState } from '../near/rooms';
-import { RpcError, view, viewAccessKey, viewAccount } from '../near/rpc';
+import { isGoneRoom, RpcError, view, viewAccessKey, viewAccount } from '../near/rpc';
 import { guestWasChosen, loadGuest, loadSession, rememberGuestChoice, saveGuest, saveSession, walletKey } from '../near/session';
 import type { GuestSession, Session } from '../near/session';
 import type { Call, KeySender } from '../near/signer';
-import type { AccountPrompt, GameBackend, Identity, PlaytestControls, Prices } from './types';
+import type { ProofEvent, RoundProof, TxLink } from '../verifyChain';
+import type { AccountPrompt, BotLimits, GameBackend, Identity, PlaytestControls, Prices } from './types';
 
 const TICK_MS = 250;
 const BALANCE_MS = 30_000;
 const HOST_RECORD_MS = 120_000;
 const DEEDS_MS = 20_000;
+/** Asked for again on every redraw, a refused read would otherwise come back round at once. */
+const RETRY_READ_MS = 15_000;
 const CHAIN_TIME_MS = 20_000;
 const SETTLE_RETRY_MS = 1500;
 const SETTLE_TRIES = 40;
@@ -37,6 +42,10 @@ const LOCAL_MOVE_MS = 15_000;
 const POKE_AFTER_MS = 20_000;
 const POKE_GAP_MS = 15_000;
 
+/** Long enough for the reveal that normally follows within 4 s, if no frame has told us otherwise by then. */
+const CLUE_HINT_MS = 6000;
+const HEALTH_MS = 60_000;
+
 const YOCTO_PER_MILLI = 10n ** 21n;
 const toMilli = (yocto: string | bigint) => Number(BigInt(yocto) / YOCTO_PER_MILLI);
 const milliToYocto = (milli: number) => (BigInt(milli) * YOCTO_PER_MILLI).toString();
@@ -44,9 +53,7 @@ const milliToYocto = (milli: number) => (BigInt(milli) * YOCTO_PER_MILLI).toStri
 type Timing = Pick<ChainRoom, 'created_ms' | 'start_at_ms' | 'started_ms' | 'ends_at_ms' | 'duration_sec' | 'deadline_ms' | 'reveal_deadline_ms' | 'next_due_ms' | 'next_step' | 'locked'>;
 type LocalPlayer = { add: boolean; at: number };
 
-type ProofEvent = { event: string; tx_hash?: string; data: any };
-
-function proofLinks(events: ProofEvent[]): { label: string; hash: string }[] {
+function proofLinks(events: ProofEvent[]): TxLink[] {
   const label = (e: ProofEvent): string | null => {
     switch (e.event) {
       case 'room_created': return 'Room created';
@@ -90,6 +97,10 @@ class NearBackend implements GameBackend {
   #wallet = $state(0);
   #hosts = $state<Record<string, HostRecord>>({});
   #deeds = $state<Record<string, Deed>>({});
+  /** Rooms with a roll locked and not yet revealed, when the contract turns digs away. */
+  #clueArriving = $state<Record<string, boolean>>({});
+  #botLimits = $state<BotLimits | null>(null);
+  #healthAsked = 0;
 
   readonly lastDigSec = 0;
   readonly testnet = true;
@@ -208,6 +219,7 @@ class NearBackend implements GameBackend {
 
   #upsert(room: ChainRoom, now: number) {
     const id = String(room.room_id);
+    this.#clueArriving[id] = room.status === 'live' && room.locked;
     const existing = this.#find(id);
     if (existing && this.#roomVersions.get(id) === room.version && isOpen(existing)) return;
     this.#timing.set(id, room);
@@ -225,7 +237,7 @@ class NearBackend implements GameBackend {
     }
     // Field by field, so a new dig doesn't redraw what only depends on the clue, and the like.
     existing.stage = room.status;
-    existing.name = room.name;
+    existing.name = displayName(room.name);
     const players = this.#playersWithLocal(id, room.players);
     if (players.join() !== existing.players.join()) existing.players = players;
     if (room.clues.length !== existing.clues.length) existing.clues = room.clues;
@@ -352,6 +364,7 @@ class NearBackend implements GameBackend {
     game.stage = room.status;
     this.#chainDigs.delete(id);
     this.#pendingDigs.delete(id);
+    delete this.#clueArriving[id];
     if (wasOpen) {
       // Newest first in the finished tab, which keeps the array's order.
       this.games.splice(this.games.indexOf(game), 1);
@@ -399,16 +412,22 @@ class NearBackend implements GameBackend {
     return run;
   }
 
-  /** The contract's own record where it still has one. The indexer adds transaction links, and the whole room once it's gone. */
-  async proofOf(id: string): Promise<ChainRoom | null> {
-    const [room, proof] = await Promise.all([
-      view<ChainRoom>('get_room', { id: Number(id) }).catch(() => null),
-      getJson<{ events: ProofEvent[] }>(`/api/games/${id}/proof`).catch(() => null),
-    ]);
-    const events = proof?.events ?? [];
-    const whole = room ?? roomFromEvents(events);
-    if (whole) whole.txs = proofLinks(events);
-    return whole;
+  /**
+   * The contract's own record where it still has one, straight from a public node. Our server's proof only
+   * stands in once the contract says the room is gone, and then every line of it gets looked up on the chain.
+   * Failing to reach a node isn't the contract saying that, so it never falls back to our server.
+   */
+  async proofOf(id: string): Promise<RoundProof | null> {
+    const fromServer = getJson<{ events: ProofEvent[] }>(`/api/games/${id}/proof`).then((p) => p.events).catch((): ProofEvent[] => []);
+    try {
+      const room = await view<ChainRoom>('get_room', { id: Number(id) });
+      return { source: 'contract', room, links: proofLinks(await fromServer) };
+    } catch (e) {
+      if (!isGoneRoom(e)) throw e;
+    }
+    const events = await fromServer;
+    const room = roomFromEvents(events);
+    return room && { source: 'events', room, events, links: proofLinks(events) };
   }
 
   // Records read lazily, by what's on screen.
@@ -427,7 +446,7 @@ class NearBackend implements GameBackend {
       const record = await view<HostRecord & { open_rooms: number }>('get_host', { id: account });
       this.#hosts[account] = { finished: record.finished, expired: record.expired };
     } catch {
-      this.#hostsAsked.delete(account);
+      this.#hostsAsked.set(account, Date.now() - HOST_RECORD_MS + RETRY_READ_MS);
     }
   }
 
@@ -444,12 +463,32 @@ class NearBackend implements GameBackend {
       const rows = await view<{ token_id: string; owner: string | null; price: number | null; earned: number; landings: number }[]>('get_nfts', { from: 0, limit: 36 });
       for (const row of rows) this.#deeds[row.token_id] = { owner: row.owner, price: row.price, earned: row.earned, landings: row.landings };
     } catch {
-      this.#deedsAsked = 0;
+      this.#deedsAsked = Date.now() - DEEDS_MS + RETRY_READ_MS;
     }
   }
 
   seasonRanking() {
     return this.#top;
+  }
+
+  clueArriving(gameId: string): boolean {
+    return this.#clueArriving[gameId] === true;
+  }
+
+  get botLimits(): BotLimits | null {
+    if (Date.now() - this.#healthAsked > HEALTH_MS) {
+      this.#healthAsked = Date.now();
+      queueMicrotask(() => void this.#loadBotLimits());
+    }
+    return this.#botLimits;
+  }
+
+  async #loadBotLimits() {
+    try {
+      this.#botLimits = botLimitsFrom(await getJson<Record<string, unknown>>('/api/health'));
+    } catch {
+      // Without the backend there are no bots to wait for, so no line is the right answer.
+    }
   }
 
   walletOf(account: string) {
@@ -793,6 +832,7 @@ class NearBackend implements GameBackend {
     const game = this.#find(gameId);
     if (!game) throw new GameError('That game no longer exists.');
     if (secondsLeft(game) <= 0) throw new GameError("Time's up for digging.");
+    if (this.clueArriving(gameId)) throw new GameError('A new clue is arriving. Try again in a moment.');
     const me = this.account;
     const pending: Dig = {
       account: me,
@@ -824,8 +864,18 @@ class NearBackend implements GameBackend {
       this.#pendingDigs.delete(gameId);
       const live = this.#find(gameId);
       if (live) live.digs = this.#digsWithPending(gameId);
+      // Our last frame was a moment behind the chain. Close the button now rather than at the next one.
+      if (CLUE_REFUSAL.test(message)) this.#expectClue(gameId);
       throw e;
     }
+  }
+
+  #expectClue(gameId: string) {
+    this.#clueArriving[gameId] = true;
+    void this.#feed.refresh();
+    setTimeout(() => {
+      if (!this.#timing.get(gameId)?.locked) this.#clueArriving[gameId] = false;
+    }, CLUE_HINT_MS);
   }
 
   async mintDeed(id: string): Promise<void> {
@@ -834,9 +884,20 @@ class NearBackend implements GameBackend {
     await this.#loadDeeds();
   }
 
+  /**
+   * Buying needs a yocto, which only a wallet can attach, so it never goes through a key this browser holds.
+   * The same approval carries whatever the game balance is short of. Anything over stays in the balance.
+   */
   async buyDeed(id: string, seenPrice: number): Promise<void> {
-    await this.#needAccount();
-    await this.#call({ method: 'buy_nft', args: { token_id: id, seen_price: seenPrice }, gasTgas: GAS_TGAS.buy_nft });
+    const session = await this.#walletOnly('Connect a wallet to buy this.');
+    try {
+      const raw = await this.#walletCall(session.accountId, { method: 'buy_nft', args: { token_id: id, seen_price: seenPrice }, gasTgas: GAS_TGAS.buy_nft }, buyDeposit(seenPrice, this.#balance));
+      this.#finishCall(session, raw);
+    } catch (e) {
+      if (e instanceof GameError) throw e;
+      throw new GameError(plainError(errorText(e)));
+    }
+    this.refreshBalances();
     await this.#loadDeeds();
   }
 
