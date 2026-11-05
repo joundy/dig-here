@@ -374,6 +374,16 @@ describe('the backend', () => {
     expect(backend.deedOf('snowy:seal')).toMatchObject({ owner: 'b.testnet', price: null });
   });
 
+  it("doesn't let a slow read from a node overwrite a frame that landed while it was on its way", async () => {
+    const backend = await load(null);
+    void backend.deedsReady;
+    await Promise.resolve();
+    sources[0].emit({ ...frame(null, 1), market: { contract: MARKET, version: 'a', nfts: [nft('a.testnet')], listings: [listing('a.testnet')] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin')).toMatchObject({ owner: 'a.testnet', price: 1000 });
+    expect(backend.deedsError).toBe('');
+  });
+
   it('shows owners with no prices, and says so, when only the market is out of reach', async () => {
     views[`${CHAIN}.get_nfts`] = [nft('a.testnet')];
     const backend = await load(null);

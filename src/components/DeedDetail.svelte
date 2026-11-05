@@ -314,7 +314,7 @@
       {:else}
         <ol>
           {#each history as event (`${event.kind}${event.at}`)}
-            <li class={event.kind}>
+            <li class="ev-{event.kind}">
               <span class="what">
                 <b>{EVENT_WORDS[event.kind]}</b>
                 {#if event.kind === 'sold' || event.kind === 'sent'}
@@ -642,10 +642,10 @@
     line-height: 1.15;
     background: var(--deep);
   }
-  .activity li.sold {
+  .activity li.ev-sold {
     box-shadow: inset 3px 0 0 var(--sun);
   }
-  .activity li.landed {
+  .activity li.ev-landed {
     box-shadow: inset 3px 0 0 var(--set);
   }
   .activity b {

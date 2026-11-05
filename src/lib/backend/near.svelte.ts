@@ -512,15 +512,19 @@ class NearBackend implements GameBackend {
 
   /** Straight from the two contracts. A market that can't be read shows owners with no prices, and says so. */
   async #loadDeeds(): Promise<void> {
+    const began = Date.now();
     try {
       const [nfts, listings] = await Promise.all([
         view<NftRow[] | null>('get_nfts', { from: 0, limit: 36 }),
         marketView<ListingRow[] | null>('get_listings', { from: 0, limit: 36 }).catch(() => null),
       ]);
+      // A frame that landed meanwhile is as new or newer, and its version wouldn't get it applied a second time.
+      if (this.#marketSeen >= began) return;
       this.#applyDeeds(nfts ?? [], listings ?? []);
       this.#deedsReady = true;
       this.deedsError = listings ? '' : "Can't read the market's prices right now, so nothing shows as for sale. Coins are safe.";
     } catch {
+      if (this.#marketSeen >= began) return;
       this.#deedsAsked = Date.now() - DEEDS_MS + RETRY_READ_MS;
       this.deedsError = this.#deedsReady
         ? "Can't reach the market right now, so this may be a little out of date."
