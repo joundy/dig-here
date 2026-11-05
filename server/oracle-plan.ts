@@ -40,3 +40,8 @@ export function nextStep(room: any, nowMs: number, finalHeight: number | null = 
   if (room.next_due_ms !== null && nowMs + POKE_LEAD_MS >= room.next_due_ms) return { type: 'poke' };
   return null;
 }
+
+/** A season has no clock of its own on chain: until someone calls `close_season` it just sits there unpaid. */
+export function seasonDue(season: { ends_at_ms: number }, nowMs: number): boolean {
+  return nowMs >= season.ends_at_ms;
+}

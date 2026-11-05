@@ -3,7 +3,7 @@ import type { Config } from './config.ts';
 import type { Funding } from './funding.ts';
 import type { Frame, LiveState } from './live.ts';
 import { errorText, log, sleep } from './log.ts';
-import { nextStep, pokeDue } from './oracle-plan.ts';
+import { nextStep, pokeDue, seasonDue } from './oracle-plan.ts';
 import { finalBlock, viewAccount, viewFunction } from './rpc.ts';
 import type { NearAccount } from './signer.ts';
 import { near, toNear } from './units.ts';
@@ -20,6 +20,9 @@ const SCHEDULE_WINDOW_MS = 1500;
 const POKE_TGAS = 30;
 const REVEAL_TGAS = 30;
 const POOL_TGAS = 30;
+// Measured at 2.9 Tgas with three winners, and the contract's README asks for 30.
+const CLOSE_SEASON_TGAS = 30;
+const CLOSE_SEASON_RETRY_MS = 30_000;
 const LOW_BALANCE = near('0.5');
 const TOP_UP = near('1');
 // Both calls are harmless to repeat, and a clue that waits costs every player in the room.
@@ -50,6 +53,7 @@ export class Oracle {
   #uploading = false;
   #started = Date.now();
   #lastFundCheck = 0;
+  #seasonTried = 0;
 
   constructor(config: Config, oracle: NearAccount, runner: NearAccount, state: LiveState, funding: Funding) {
     this.#config = config;
@@ -69,6 +73,7 @@ export class Oracle {
     void this.#keepPoolFull(live.commitments_left);
     void this.#keepFunded();
     this.#noteClock(frame);
+    void this.#closeSeason(live);
     if (!live.rooms.length) return;
     for (const room of live.rooms) {
       this.#schedule(room);
@@ -80,6 +85,18 @@ export class Oracle {
       .then((height) => {
         for (const room of live.rooms) this.#act(room, live.now_ms, height);
       });
+  }
+
+  /** Anyone may close a season, but nobody else is going to. Repeating one is harmless, since the end time moves on. */
+  async #closeSeason(live: any): Promise<void> {
+    if (!seasonDue(live.season, live.now_ms) || Date.now() - this.#seasonTried < CLOSE_SEASON_RETRY_MS) return;
+    this.#seasonTried = Date.now();
+    try {
+      const r = await this.#runner.call(this.#config.contract, 'close_season', {}, CLOSE_SEASON_TGAS, 0n);
+      log('oracle', r.ok ? `closed season ${live.season.number}` : `closing season ${live.season.number} refused: ${r.failure}`, { hash: r.hash });
+    } catch (e) {
+      log('oracle', `closing season ${live.season.number} failed: ${errorText(e)}`);
+    }
   }
 
   /** The lowest age seen is the best estimate of how far a fresh view trails real chain time. */

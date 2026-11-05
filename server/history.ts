@@ -3,6 +3,14 @@ import { sendJson, type App } from './http.ts';
 import type { Indexer } from './indexer.ts';
 
 const MAX_LIMIT = 100;
+/** NEAR's own longest account name, and our longest token id is far shorter. */
+const MAX_NAME = 64;
+
+/** A page marker, which is only ever a positive whole number. Anything else means from the start. */
+function beforeOf(url: URL): number {
+  const n = Number(url.searchParams.get('before'));
+  return Number.isSafeInteger(n) && n > 0 ? n : Number.MAX_SAFE_INTEGER;
+}
 
 const eventRow = (r: any) => ({
   event: r.event,
@@ -110,9 +118,10 @@ export function activityRow(r: any) {
 
 /** `seq` only says when the indexer stored a row, and it reads transactions in no fixed order, so time comes from the block. */
 function activity(db: Db, url: URL, filter: string, ...params: Array<string | number>) {
-  const before = Number(url.searchParams.get('before'));
-  const page = before > 0 ? 'AND (block_height, seq) < (SELECT block_height, seq FROM events WHERE seq = ?)' : '';
-  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} ${page} ${filter} ORDER BY block_height DESC, seq DESC LIMIT ?`).all(...(before > 0 ? [before] : []), ...params, limitOf(url, 30));
+  const before = beforeOf(url);
+  const paged = before < Number.MAX_SAFE_INTEGER;
+  const page = paged ? 'AND (block_height, seq) < (SELECT block_height, seq FROM events WHERE seq = ?)' : '';
+  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} ${page} ${filter} ORDER BY block_height DESC, seq DESC LIMIT ?`).all(...(paged ? [before] : []), ...params, limitOf(url, 30));
   return rows.map(activityRow);
 }
 
@@ -135,8 +144,7 @@ function limitOf(url: URL, fallback: number): number {
 
 export function addHistoryRoutes(app: App, db: Db, indexer: Indexer): void {
   app.route('GET', /^\/api\/finished-games$/, (req, res, _p, url) => {
-    const before = Number(url.searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
-    const rows = db.prepare('SELECT room_id FROM games WHERE room_id < ? ORDER BY room_id DESC LIMIT ?').all(before, limitOf(url, 30)) as Array<{ room_id: number }>;
+    const rows = db.prepare('SELECT room_id FROM games WHERE room_id < ? ORDER BY room_id DESC LIMIT ?').all(beforeOf(url), limitOf(url, 30)) as Array<{ room_id: number }>;
     sendJson(req, res, 200, { games: rows.map((r) => gameSummary(db, r.room_id)).filter(Boolean), indexed_to: indexer.height });
   });
 
@@ -157,8 +165,8 @@ export function addHistoryRoutes(app: App, db: Db, indexer: Indexer): void {
 
   app.route('GET', /^\/api\/players\/([^/]+)\/history$/, (req, res, params, url) => {
     const account = params[0];
-    const before = Number(url.searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
-    const rows = db.prepare('SELECT room_id FROM player_games WHERE account = ? AND room_id < ? ORDER BY room_id DESC LIMIT ?').all(account, before, limitOf(url, 30)) as Array<{ room_id: number }>;
+    if (account.length > MAX_NAME) return sendJson(req, res, 400, { error: 'That is not an account name.' });
+    const rows = db.prepare('SELECT room_id FROM player_games WHERE account = ? AND room_id < ? ORDER BY room_id DESC LIMIT ?').all(account, beforeOf(url), limitOf(url, 30)) as Array<{ room_id: number }>;
     sendJson(req, res, 200, {
       account,
       games: rows.map((r) => playerGame(db, account, r.room_id)).filter(Boolean),
@@ -172,6 +180,7 @@ export function addHistoryRoutes(app: App, db: Db, indexer: Indexer): void {
   });
 
   app.route('GET', /^\/api\/nfts\/([^/]+)\/activity$/, (req, res, params, url) => {
+    if (params[0].length > MAX_NAME) return sendJson(req, res, 400, { error: 'That is not an NFT.' });
     sendJson(req, res, 200, { activity: activity(db, url, `AND ${TOKEN_OF} = ?`, params[0]), indexed_to: indexer.height });
   });
 }

@@ -9,6 +9,19 @@ type Route = { method: string; pattern: RegExp; handler: Handler };
 
 const GZIP_FROM_BYTES = 512;
 
+/**
+ * On every response. `same-origin-allow-popups` because a wallet's sign-in window answers through `window.opener`.
+ * HID, USB and Bluetooth stay allowed for the Ledger wallet.
+ */
+export const BASE_HEADERS: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'cross-origin-opener-policy': 'same-origin-allow-popups',
+  'strict-transport-security': 'max-age=31536000',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+};
+
 export function clientIp(req: IncomingMessage, trustCf: boolean): string {
   const forwarded = req.headers['cf-connecting-ip'];
   if (trustCf && typeof forwarded === 'string' && forwarded) return forwarded;
@@ -78,6 +91,7 @@ export class App {
   }
 
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    for (const [name, value] of Object.entries(BASE_HEADERS)) res.setHeader(name, value);
     let url: URL;
     try {
       url = new URL(req.url ?? '/', 'http://local');

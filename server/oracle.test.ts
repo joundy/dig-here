@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { chainFor, findChain, secretFor } from './commitments.ts';
-import { nextStep, POKE_LEAD_MS, pokeDue } from './oracle-plan.ts';
+import { nextStep, POKE_LEAD_MS, pokeDue, seasonDue } from './oracle-plan.ts';
 
 const sha = (hex: string) => createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
 
@@ -63,4 +63,10 @@ test('pokeDue gives the next time a room needs a poke', () => {
 test('an overdue reveal or a round without enough digs gets refunded', () => {
   assert.deepEqual(nextStep(live({ locked: true, lock_height: 500 }), 900_000, 600), { type: 'poke' });
   assert.deepEqual(nextStep(live({ digs: [{}] }), 1_000_000, null), { type: 'poke' });
+});
+
+test('a season is due for closing from its end time on, and not before', () => {
+  assert.equal(seasonDue({ ends_at_ms: 1000 }, 999), false);
+  assert.equal(seasonDue({ ends_at_ms: 1000 }, 1000), true);
+  assert.equal(seasonDue({ ends_at_ms: 1000 }, 5000), true);
 });

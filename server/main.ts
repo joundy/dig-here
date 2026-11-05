@@ -70,7 +70,18 @@ addHistoryRoutes(app, db, indexer);
 app.fallback(staticHandler(config.distDir));
 
 // Listening first means a second copy dies on the busy port before its oracle can fight the first.
-await app.listen(config.port);
+const server = await app.listen(config.port);
+// A deploy stops this process with SIGTERM. Open streams would otherwise hold it until the proxy gives up on it.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => {
+    log('main', `${signal}, shutting down`);
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+    server.closeAllConnections();
+  });
+}
 log('main', `listening on ${config.port}`, { contract: config.contract, oracle: config.oracleEnabled, bots: config.botsEnabled });
 
 void state.run();
