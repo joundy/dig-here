@@ -9,3 +9,8 @@ config/deploy.yml
 
 # Rust build output
 target/
+
+# Backend state and logs
+server/data/
+*.sqlite
+*.sqlite-*

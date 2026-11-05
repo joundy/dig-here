@@ -11,7 +11,9 @@
     "test": "vitest run",
     "gen-map-data": "node scripts/run.mjs scripts/gen-map-data.ts",
     "gen-vectors": "node scripts/run.mjs scripts/gen-vectors.ts",
-    "sim": "vitest run src/lib/game/sim.test.ts --reporter=verbose"
+    "sim": "vitest run src/lib/game/sim.test.ts --reporter=verbose",
+    "server": "node --disable-warning=ExperimentalWarning server/main.ts",
+    "test:server": "node --disable-warning=ExperimentalWarning --test server/*.test.ts"
   },
   "devDependencies": {
     "@fontsource/jersey-10": "^5.3.0",
@@ -23,5 +25,10 @@
     "typescript": "^6.0.3",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"
+  },
+  "dependencies": {
+    "@hot-labs/near-connect": "0.11.4",
+    "function-call-key-plugin": "2.2.0",
+    "near-api-js": "^7.4.0"
   }
 }
