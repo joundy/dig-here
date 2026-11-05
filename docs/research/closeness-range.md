@@ -55,7 +55,7 @@ Closeness falls more slowly, so the bonus counts for more against accuracy, and 
 - It stays inside the balance test in `sim.test.ts`, every clue between 0.25 and 2.2 times even, up to 12 players.
 - It stops short of 112 and 128, where in a room of 8 the closest dig no longer wins half the time, and a last-clue dig falls further behind.
 
-**The cost:** in big rooms the last clue is a weak choice, at 0.43 times even with 12 players and 0.16 with 20. In a room of 20 the first clue's 2.5× bonus is worth more than patience. Rooms that big haven't happened yet, and this is worth another look if they do.
+**The cost:** in big rooms the last clue is a weak choice, at 0.43 times even with 12 players and 0.16 with 20. In a room of 20 the first clue's 2.5× bonus is worth more than patience. Rooms that big haven't happened yet. The host form now stops at 12 players for this reason, with the contract's limit left at 30: see `docs/research/user-audit.md`.
 
 Small rooms still often score 0, because 2 or 3 digs can simply all be far away: 43.9% at 2 players. The closest dig still wins those, as it always did.
 

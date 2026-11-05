@@ -215,7 +215,8 @@
     color: var(--foam);
   }
   .how {
-    padding: 0.2rem 0;
+    padding: 0.5rem 0;
+    margin: -0.3rem 0;
     font: inherit;
     color: var(--sun);
     text-decoration: underline;

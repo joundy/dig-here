@@ -29,13 +29,18 @@
   const identity = $derived(backend.identity);
   const onChain = $derived(identity.kind === 'wallet');
 
+  /** `close` fires a moment after closing, by when a quick failure may have already cleared `busy`. */
+  let steppingAside = false;
+
   // The native dialog brings focus into itself, keeps it there, and hands it back when it closes. It steps aside
   // while the wallet is asking, because the wallet's own windows sit under anything modal, where nobody could click them.
   $effect(() => {
     const el = dialog;
     if (!el) return;
-    if (busy) el.close();
-    else if (!el.open) el.showModal();
+    if (busy) {
+      if (el.open) steppingAside = true;
+      el.close();
+    } else if (!el.open) el.showModal();
     return () => el.close();
   });
 
@@ -57,6 +62,11 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     error = note = '';
+    if (milli <= 0) {
+      error = 'Enter an amount above 0.';
+      audio.error();
+      return;
+    }
     // Plain words now, rather than a wallet window or a contract refusal a moment later.
     if (mode === 'deposit' && onChain && backend.walletKnown && milli > wallet - GAS_ROOM) {
       error = `Your wallet has ${near(wallet)}, and needs a little left over for gas. Try a smaller amount.`;
@@ -124,7 +134,7 @@
   bind:this={dialog}
   aria-labelledby="wallet-title"
   oncancel={(e) => { e.preventDefault(); if (!busy) close(); }}
-  onclose={() => { if (!busy) close(); }}
+  onclose={() => { if (steppingAside) steppingAside = false; else if (!busy) close(); }}
   onclick={(e) => { if (e.target === dialog && !busy) close(); }}
 >
   <div class="panel body">

@@ -274,6 +274,12 @@
   }
   :global(.stage.compact.game) h1 {
     font-size: 2rem;
+    /* A long name mustn't take the map's room on a phone. */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   :global(.stage.compact.game) .facts {
     gap: 0 0.5rem;

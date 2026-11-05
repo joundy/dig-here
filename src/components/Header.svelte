@@ -86,6 +86,8 @@
     padding: calc(0.5rem + env(safe-area-inset-top)) clamp(0.75rem, 1.5vw, 1.25rem) 0.5rem;
   }
   .brand {
+    padding: 0.4rem 0;
+    margin: -0.4rem 0;
     font-family: var(--display);
     font-size: 2.8rem;
     line-height: 1;

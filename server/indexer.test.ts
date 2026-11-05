@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { AddressInfo } from 'node:net';
 import { openDb } from './db.ts';
 import { App } from './http.ts';
 import { addHistoryRoutes, deedActivity, roomEvents } from './history.ts';
@@ -222,4 +223,23 @@ test('the etag moves with the market too', () => {
   const base = { version: 3, now_ms: 1, commitments_left: 5, missed_reveals: 0, jackpot: 0, season: { number: 1 } };
   assert.notEqual(etagOf(base, 'a'), etagOf(base, 'b'));
   assert.equal(etagOf(base, 'a'), etagOf({ ...base, now_ms: 9 }, 'a'));
+});
+
+test('history routes shrug off odd paging and refuse names too long to be accounts', async () => {
+  const db = openDb(':memory:');
+  const app = new App();
+  addHistoryRoutes(app, db, { height: 7 } as any);
+  const server = await app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    for (const path of ['/api/finished-games?before=abc&limit=-3', '/api/finished-games?before=1e99', '/api/market-activity?before=abc', '/api/nfts/desert:cactus/activity?limit=abc', '/api/players/me.testnet/history?before=-1']) {
+      assert.equal((await fetch(base + path)).status, 200, path);
+    }
+    assert.equal((await fetch(`${base}/api/players/${'x'.repeat(65)}/history`)).status, 400);
+    assert.equal((await fetch(`${base}/api/nfts/${'x'.repeat(65)}/activity`)).status, 400);
+    assert.equal((await fetch(`${base}/api/games/abc/proof`)).status, 404);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
 });

@@ -15,11 +15,11 @@
   });
 </script>
 
-<div class="jackpot" class:compact aria-label="Jackpot {near(backend.jackpot)}">
+<div class="jackpot" class:compact aria-label={backend.ready ? `Jackpot ${near(backend.jackpot)}` : 'Jackpot'}>
   <span class="coin"><Sprite name="coin" scale={compact ? 3 : 5} /></span>
   <span class="words">
     <span class="label">Jackpot</span>
-    <span class="number">{near(Math.round(shown.current))}</span>
+    <span class="number">{backend.ready ? near(Math.round(shown.current)) : '…'}</span>
   </span>
 </div>
 
