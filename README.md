@@ -22,13 +22,13 @@ A host opens a room and sets the entry fee, timer, map, their share of the pot (
 | 3. Kind | "Near a horse" | ×1.25 |
 | 4. Detail | "Near a horse, close to water" | ×1 |
 
-**You get one dig. Score = closeness × bonus × crowding.** Digging within 6 pixels of an earlier dig multiplies your score by 0.85. When the timer ends the treasure is rolled, and the best score wins the pot. Ties go to whoever dug first. With fewer than 2 digs, everyone is refunded.
+**You get one dig. Score = closeness × bonus × crowding.** Closeness runs from 1000 on the treasure's own pixel down to 0 at 96 pixels away (48 for rooms before 175, which keep the rule they started under). Digging within 6 pixels of an earlier dig multiplies your score by 0.85. When the timer ends the treasure is rolled, and the best score wins the pot. Ties go to whoever dug first. With fewer than 2 digs, everyone is refunded.
 
 **The pot:** host cut (0–20%), jackpot 3%, NFT owner 2%, season pool 1%, and the winner gets the rest.
 
 **Around the rounds:**
 - **Jackpot:** dig on the treasure's exact pixel to win it. A win pays at most 100× that round's pot.
-- **NFTs:** one NEP-171 token for each kind of landmark on each map, 36 in all. The first owner mints it, and the money goes to the project (0.5 NEAR on testnet, planned 20 NEAR in production). The owner earns 2% of the pot when the treasure lands by that kind, and can list it at any price.
+- **NFTs:** one NEP-171 token for each kind of landmark on each map, 36 in all. The first owner mints it, and the money goes to the project (0.5 NEAR on testnet, planned 20 NEAR in production). The owner earns 2% of the pot when the treasure lands by that kind. Selling goes through a separate market contract, `market.dighere.testnet`, with no owner and no fee: the seller approves the market on the NFT at their price (NEP-178), the buyer pays that price from their wallet, not the game balance, and the seller is paid straight to their wallet. A listing ends if its NFT moves any other way.
 - **Season:** points scaled by the pot, with prizes for the top 3.
 - **Hosts:** each room locks a small bond, and hosts have a public record, so spam rooms sink down the board.
 
@@ -196,7 +196,7 @@ stateDiagram-v2
 
 ### A round for a player
 
-1. **Connect** a testnet wallet. One approval adds a limited key, which can play but can't withdraw or buy NFTs.
+1. **Connect** a testnet wallet. One approval adds a limited key, which can play but can't withdraw or touch NFTs.
 2. **Join:** one approval attaches the fee and a small top-up. Later rounds pay from your game balance with no popup. You can leave before the start and get your fee back.
 3. **Clue 1, YOLO, ×2.5:** dig blind for the biggest bonus, or wait.
 4. **Clues 2 to 4, ×1.5, ×1.25, ×1:** each narrows the possible spots. A dig's bonus follows the clues actually revealed, so a late clue never costs you. If you've dug, you see "You'd win on 2 of 4 spots right now" change live.
@@ -219,14 +219,14 @@ Winnings are credited to balances inside the contract, not pushed out, so one ba
 
 1. Get a testnet wallet. [Meteor Wallet](https://wallet.meteorwallet.app) runs in your browser. Choose testnet and create an account ending in `.testnet`. Then paste its name into the [NEAR faucet](https://docs.near.org/getting-started/faucet) for free test coins. The game shows these same steps under **No testnet wallet yet?**
 2. Open https://dig.joundy.dev. See a short how-to-play. Tap through or skip it. You can watch any round and open **Verify this round** without a wallet.
-3. Press **Quick Play**, then **Connect NEAR wallet**, and approve the sign-in. This adds a limited key to your account, which can play but can't withdraw or buy NFTs.
+3. Press **Quick Play**, then **Connect NEAR wallet**, and approve the sign-in. This adds a limited key to your account, which can play but can't withdraw or touch NFTs.
 4. Choose how many coins to add, and approve that once. It pays this game's fee, and the rest stays in your game balance. The next games and every dig then need no popup.
 5. Wait a few seconds. See labelled bots join and the round start on clue 1, YOLO, at ×2.5.
 6. Tap the map, then press **Dig here**. See your X land at once, then "You'd win on N of N spots right now".
 7. Watch clues arrive, the bonus fall, and your winning spots change.
 8. When the timer ends, see the spots flash, the chest drop, the scores, and the pot split.
 9. Press **Verify this round**. See each check recalculated in your browser.
-10. Go to **NFTs**, open **Mint**, and mint one. Then list it under **My NFTs**. Buying from another player, sending an NFT and withdrawing each ask your wallet once.
+10. Go to **NFTs**, open **Mint**, pick one and mint it. Then open it under **Mine** and list it. Minting, listing, changing a price, taking it off the market, buying, sending and withdrawing each ask your wallet once. A buyer pays from their wallet and the seller is paid to theirs.
 
 ## Run it locally
 
@@ -246,7 +246,7 @@ The contract builds in Docker: `docker/near cargo near build non-reproducible-wa
   - We see a roll's result before revealing it, so refusing to reveal is a free way to cancel a round we dislike. It's public, counted by the contract (`missed_reveals`) and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal.
   - Reveals don't currently wait for the lock to be final, so in theory a validator could drop the lock's block after seeing the link. `ORACLE_REVEAL_FINAL=1` closes this, for about 2 seconds more per roll.
   - A validator working together with us would know both seeds.
-- **A stolen browser key** can't withdraw or buy NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap.
+- **A stolen browser key** can't withdraw or touch NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap.
 - **Scripts:** clues and landmarks are public, so a script can work out the exact spots that still fit.
 - **Multiple wallets:** one person can dig from several, and farm seasons, though every dig costs a fee. Rules alone can't prevent this.
 - **The contract deployer still holds a full-access key.** It should be removed before any real use.
