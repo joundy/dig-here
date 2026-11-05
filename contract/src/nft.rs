@@ -16,7 +16,7 @@ use near_contract_standards::non_fungible_token::metadata::{
 use near_contract_standards::non_fungible_token::{Token, TokenId};
 use near_sdk::json_types::U128;
 use near_sdk::serde::Serialize;
-use near_sdk::{env, near, require, AccountId, Promise, PromiseOrValue};
+use near_sdk::{env, near, require, AccountId, NearToken, Promise, PromiseOrValue};
 use std::collections::HashMap;
 
 /// Exists from a kind's first landing or listing. There are only 36 kinds, so this can't grow further.
@@ -149,8 +149,12 @@ impl Contract {
 
     /// `seen_price` is the price the buyer agreed to, so an owner raising it while the purchase is on its
     /// way can't cost them more than they expected. Pays the owner's game balance.
+    ///
+    /// Needs a yocto, which a function-call key can't attach. Otherwise a stolen browser key could buy a thief's
+    /// NFT listed at the victim's whole balance, which turns the balance into the thief's withdrawable coins.
     #[payable]
     pub fn buy_nft(&mut self, token_id: TokenId, seen_price: u64) {
+        require!(env::attached_deposit().as_yoctonear() >= 1, "Attach at least 1 yoctoNEAR to buy, from a wallet.");
         self.take_attached();
         let buyer = env::predecessor_account_id();
         let index = self.deed_index_of(&token_id);
@@ -165,9 +169,15 @@ impl Contract {
         self.credit_milli(&seller, price, "nft_sale");
         deed.price = None;
         self.deeds.insert(&index, &deed);
-        self.tokens.internal_transfer(&seller, &buyer, &token_id, None, None);
+        let (_, approvals) = self.tokens.internal_transfer(&seller, &buyer, &token_id, None, None);
         emit("nft_sold", &SoldEvent { token_id: &token_id, seller: &seller, buyer: &buyer, price });
         self.flush_balance_events();
+        // The sale cleared the seller's approvals, so what they paid to store them goes back, as `nft_transfer` does.
+        // Same sum as the library's own, whose helper isn't public.
+        let bytes: u128 = approvals.iter().flatten().map(|(id, _)| id.as_str().len() as u128 + 4 + 8).sum();
+        if bytes > 0 {
+            Promise::new(seller).transfer(NearToken::from_yoctonear(bytes * env::storage_byte_cost().as_yoctonear())).detach();
+        }
     }
 }
 

@@ -590,7 +590,7 @@ async fn nft_mint_list_buy_and_listing_cancelled_by_transfer() -> Result<()> {
     let bid = 100 * YOCTO_PER_MILLI;
     let stale = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 99}), bid).await?;
     assert!(failure(&stale).contains("price just changed"));
-    let own = call(&alice, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 0).await?;
+    let own = call(&alice, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 1).await?;
     assert!(failure(&own).contains("already own"));
     let seller_before = w.balance_milli(&alice).await?;
     let bought = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), bid + YOCTO_PER_MILLI * 2).await?;
@@ -1149,7 +1149,7 @@ async fn gas_and_storage_with_full_rooms() -> Result<()> {
     report.call(&w, "mint_nft", &players[0], "mint_nft", json!({"token_id": "snowy:penguin"}), 0).await?;
     report.call(&w, "mint_nft (second by the same owner)", &players[0], "mint_nft", json!({"token_id": "snowy:seal"}), 0).await?;
     report.call(&w, "list_nft", &players[0], "list_nft", json!({"token_id": "snowy:penguin", "price": 10}), 0).await?;
-    report.call(&w, "buy_nft", &players[1], "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 10}), 0).await?;
+    report.call(&w, "buy_nft", &players[1], "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 10}), 1).await?;
     report.call(&w, "list_nft (to cancel)", &players[1], "list_nft", json!({"token_id": "snowy:penguin", "price": 10}), 0).await?;
     report.call(&w, "nft_transfer (listing cancelled)", &players[1], "nft_transfer", json!({"receiver_id": players[2].id(), "token_id": "snowy:penguin"}), 1).await?;
 
@@ -1405,4 +1405,246 @@ impl Report {
     fn finish(self) {
         println!("NOTES {}", self.rows.len());
     }
+}
+
+/// Exactly what a guest's key allowed until `buy_nft` came off the list. Keys already handed out still say this.
+const OLD_GUEST_METHODS: [&str; 9] = ["join", "leave", "start", "dig", "create_room", "mint_nft", "list_nft", "buy_nft", "poke"];
+
+#[tokio::test]
+async fn a_stolen_browser_key_cannot_buy_a_rigged_nft() -> Result<()> {
+    let mut w = world().await?;
+    w.add_tips(1).await?;
+    let thief = w.player("thief").await?;
+    let guest = w.player("guest").await?;
+    let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
+    call(&w.root, &w.game, "deposit_for", json!({"account_id": guest.id()}), near(1).as_yoctonear()).await?.into_result()?;
+    call(&thief, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
+    let victim_has = w.balance_yocto(&guest).await?;
+    let asking = (victim_has / YOCTO_PER_MILLI) as u64;
+    call(&thief, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": asking}), 0).await?.into_result()?;
+
+    let key = SecretKey::from_random(KeyType::ED25519);
+    let methods = OLD_GUEST_METHODS.join(",");
+    guest
+        .batch(guest.id())
+        .add_key(key.public_key(), AccessKey::function_call_access(w.game.id(), &methods.split(',').collect::<Vec<_>>(), Some(near(1))))
+        .transact()
+        .await?
+        .into_result()?;
+    let stolen = Account::from_secret_key(guest.id().clone(), key, &w.worker);
+
+    let with_nothing = stolen
+        .call(w.game.id(), "buy_nft")
+        .args_json(json!({"token_id": "snowy:penguin", "seen_price": asking}))
+        .gas(Gas::from_tgas(30))
+        .transact()
+        .await?;
+    assert!(failure(&with_nothing).contains("Attach at least 1 yoctoNEAR to buy"));
+    assert_eq!(w.balance_yocto(&guest).await?, victim_has, "the balance must not move");
+
+    let with_a_yocto = stolen
+        .call(w.game.id(), "buy_nft")
+        .args_json(json!({"token_id": "snowy:penguin", "seen_price": asking}))
+        .deposit(NearToken::from_yoctonear(1))
+        .gas(Gas::from_tgas(30))
+        .transact()
+        .await;
+    assert!(format!("{with_a_yocto:?}").contains("Deposit") || with_a_yocto.is_err(), "the node refuses a deposit from a function-call key: {with_a_yocto:?}");
+    assert_eq!(w.balance_yocto(&guest).await?, victim_has, "the balance must not move");
+
+    // The person holding the account's real key still can, and only needs one yocto beyond their balance.
+    let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
+    assert_eq!(token["owner_id"], thief.id().as_str());
+    let real = call(&guest, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": asking}), 1).await?;
+    assert!(real.is_success(), "{:?}", real.failures());
+    assert_solvent(&w).await
+}
+
+const CLUE_ARRIVING: &str = "A new clue is arriving. Try again in a moment.";
+
+#[tokio::test]
+async fn digs_wait_out_a_lock_and_a_withheld_reveal_still_refunds() -> Result<()> {
+    let mut w = world().await?;
+    w.add_tips(3).await?;
+    let host = w.player("host").await?;
+    let players = vec![w.player("a").await?, w.player("b").await?, w.player("c").await?, w.player("d").await?];
+    let fee = 10;
+    let spots = land_spots("tropical", 4);
+    let dig_in = |room: u64, who: usize, seen: u8| {
+        let (x, y) = spots[who];
+        call(&players[who], &w.game, "dig", json!({"room_id": room, "x": x, "y": y, "seen_clue": seen}), 0)
+    };
+
+    // The normal path: refused while locked, and open again on the new clue the moment it's revealed.
+    let room = w.make_room(&host, "tropical", fee, 60, 2, 30, 0).await?;
+    w.join_all(room, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": room }), 0).await?.into_result()?;
+    let view = w.room(room).await?;
+    let (_, links) = links_of(view["tip_index"].as_u64().unwrap());
+    let due = view["next_due_ms"].as_u64().unwrap();
+    w.warp_to(due).await?;
+    dig_in(room, 0, 1).await?.into_result()?;
+    assert_eq!(w.poke(room).await?, "locked");
+    let refused = dig_in(room, 1, 1).await?;
+    assert!(failure(&refused).contains(CLUE_ARRIVING), "{}", failure(&refused));
+    let also = dig_in(room, 1, 2).await?;
+    assert!(failure(&also).contains(CLUE_ARRIVING), "guessing the next count gets no further: {}", failure(&also));
+    assert_eq!(w.room(room).await?["digs"].as_array().unwrap().len(), 1);
+    w.reveal(room, &links[0]).await?.into_result()?;
+    let stale = dig_in(room, 1, 1).await?;
+    assert!(failure(&stale).contains("A new clue just arrived"));
+    dig_in(room, 1, 2).await?.into_result()?;
+
+    // Nobody can hold a roll open past the round: three locks at most, and each one ends at its reveal.
+    w.run_steps(room, 3).await?;
+    dig_in(room, 2, 4).await?.into_result()?;
+    let ends = w.room(room).await?["ends_at_ms"].as_u64().unwrap();
+    w.warp_to(ends).await?;
+    assert_eq!(w.poke(room).await?, "locked");
+    let closed = dig_in(room, 3, 4).await?;
+    assert!(failure(&closed).contains("This game has ended"), "the treasure lock comes after digging closed: {}", failure(&closed));
+    w.reveal(room, &links[3]).await?.into_result()?;
+    assert_eq!(w.room(room).await?["status"], "finished");
+
+    // The reveal never comes, with enough digs: nothing frees it but the deadline, and any stranger can refund.
+    let room = w.make_room(&host, "tropical", fee, 60, 2, 30, 0).await?;
+    w.join_all(room, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": room }), 0).await?.into_result()?;
+    w.dig_all(room, "tropical", &players[..2], 1).await?;
+    let due = w.room(room).await?["next_due_ms"].as_u64().unwrap();
+    w.warp_to(due).await?;
+    assert_eq!(w.poke(room).await?, "locked");
+    let before = w.balance_milli(&players[2]).await?;
+    w.warp_to(due + 120_000).await?;
+    let stranger = w.player("stranger").await?;
+    let poked = call(&stranger, &w.game, "poke", json!({ "room_id": room }), 0).await?;
+    assert_eq!(event(&events(&poked), "refunded")["data"]["reason"], "missed-reveal");
+    assert_eq!(w.balance_milli(&players[2]).await? - before, fee as u128);
+
+    // The reveal never comes, and the lock kept everyone from digging: the round's end refunds it, sooner than the deadline.
+    let room = w.make_room(&host, "tropical", fee, 60, 2, 30, 0).await?;
+    w.join_all(room, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": room }), 0).await?.into_result()?;
+    let view = w.room(room).await?;
+    w.warp_to(view["next_due_ms"].as_u64().unwrap()).await?;
+    assert_eq!(w.poke(room).await?, "locked");
+    let ends = view["ends_at_ms"].as_u64().unwrap();
+    w.warp_to(ends).await?;
+    let poked = call(&stranger, &w.game, "poke", json!({ "room_id": room }), 0).await?;
+    assert_eq!(event(&events(&poked), "refunded")["data"]["reason"], "too-few-digs");
+
+    let totals: Value = w.game.view("get_totals").await?.json()?;
+    assert_eq!(totals["held"], 0);
+    assert_solvent(&w).await
+}
+
+#[tokio::test]
+async fn buying_returns_the_sellers_approval_deposit() -> Result<()> {
+    let mut w = world().await?;
+    w.add_tips(1).await?;
+    let alice = w.player("alice").await?;
+    let bob = w.player("bob").await?;
+    let market = w.player("market").await?;
+    let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
+    call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
+    call(&alice, &w.game, "nft_approve", json!({"token_id": "snowy:penguin", "account_id": market.id()}), near(1).as_yoctonear() / 100).await?.into_result()?;
+    call(&alice, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?.into_result()?;
+
+    // Alice's own calls are still getting their spare gas back for a few blocks, which would swamp the number.
+    w.worker.fast_forward(5).await?;
+    let wallet_before = alice.view_account().await?.balance.as_yoctonear();
+    let bought = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 102 * YOCTO_PER_MILLI).await?;
+    assert!(bought.is_success(), "{:?}", bought.failures());
+    let gained = alice.view_account().await?.balance.as_yoctonear() - wallet_before;
+    // One approval's bytes at the storage price: the account name's length plus 4 for its map entry and 8 for the id.
+    let approval_bytes = market.id().as_str().len() as u128 + 4 + 8;
+    assert_eq!(gained, approval_bytes * 10_000_000_000_000_000_000);
+    assert_solvent(&w).await
+}
+
+/// Needs the wasm that's live on testnet at `target/near-old/dig_here.wasm`, whose hash has to equal the account's
+/// `code_hash`, so what's proven is the upgrade that will really happen. Run it with `--ignored` before any in-place deploy.
+#[tokio::test]
+#[ignore]
+async fn upgrading_in_place_keeps_every_balance_room_and_nft() -> Result<()> {
+    let old = wasm("target/near-old/dig_here.wasm");
+    let new = wasm("target/near/dig_here.wasm");
+    assert_ne!(old, new, "this upgrade changes nothing");
+    let mut w = world_with(&old).await?;
+    w.add_tips(6).await?;
+    let host = w.player("host").await?;
+    let alice = w.player("alice").await?;
+    let players = vec![alice.clone(), w.player("b").await?, w.player("c").await?];
+    let fee = 10;
+    let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
+    let market = w.player("market").await?;
+
+    // Everything a live contract can be holding, from before the upgrade: a finished round, a waiting room with a
+    // running countdown, a live room with its roll locked and unrevealed, and a listed NFT with an approval.
+    call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
+    call(&alice, &w.game, "nft_approve", json!({"token_id": "snowy:penguin", "account_id": market.id()}), near(1).as_yoctonear() / 100).await?.into_result()?;
+    call(&alice, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?.into_result()?;
+    let finished = w.make_room(&host, "snowy", fee, 60, 2, 30, 0).await?;
+    w.join_all(finished, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": finished }), 0).await?.into_result()?;
+    w.dig_all(finished, "snowy", &players, 1).await?;
+    w.run_steps(finished, 4).await?;
+
+    let waiting = w.make_room(&host, "desert", fee, 60, 2, 30, 120).await?;
+    w.join_all(waiting, fee, &players).await?;
+    let locked = w.make_room(&host, "tropical", fee, 60, 2, 30, 0).await?;
+    w.join_all(locked, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": locked }), 0).await?.into_result()?;
+    let spots = land_spots("tropical", 3);
+    call(&players[0], &w.game, "dig", json!({"room_id": locked, "x": spots[0].0, "y": spots[0].1, "seen_clue": 1}), 0).await?.into_result()?;
+    let view = w.room(locked).await?;
+    let (_, links) = links_of(view["tip_index"].as_u64().unwrap());
+    w.warp_to(view["next_due_ms"].as_u64().unwrap()).await?;
+    assert_eq!(w.poke(locked).await?, "locked");
+
+    async fn snapshot(w: &World, rooms: &[u64], who: &[&Account]) -> Result<Value> {
+        let mut out = serde_json::Map::new();
+        for method in ["get_config", "get_totals", "get_season", "get_jackpot", "commitments_left", "commitments_next_index", "missed_reveals", "get_recent_finished"] {
+            out.insert(method.into(), w.game.view(method).await?.json::<Value>()?);
+        }
+        out.insert("nfts".into(), w.game.view("get_nfts").args_json(json!({"from": 0, "limit": 36})).await?.json::<Value>()?);
+        out.insert("token".into(), w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json::<Value>()?);
+        for id in rooms {
+            out.insert(format!("room {id}"), w.room(*id).await?);
+        }
+        for account in who {
+            out.insert(format!("account {}", account.id()), w.game.view("get_account").args_json(json!({"id": account.id()})).await?.json::<Value>()?);
+            out.insert(format!("host {}", account.id()), w.game.view("get_host").args_json(json!({"id": account.id()})).await?.json::<Value>()?);
+        }
+        Ok(Value::Object(out))
+    }
+
+    let everyone = [&host, &players[0], &players[1], &players[2], &w.treasury];
+    let before = snapshot(&w, &[finished, waiting, locked], &everyone).await?;
+    let holding = w.game.view_account().await?.balance.as_yoctonear();
+
+    // Same account, same state, no init call: only the code changes.
+    let upgraded = w.game.as_account().deploy(&new).await?;
+    assert!(upgraded.is_success(), "{:?}", upgraded.details);
+    w.game = upgraded.into_result()?;
+
+    assert_eq!(snapshot(&w, &[finished, waiting, locked], &everyone).await?, before, "reading every record the new code can reach");
+    let after = w.game.view_account().await?;
+    println!("upgrade: storage now {} bytes, balance {} -> {}", after.storage_usage, holding, after.balance.as_yoctonear());
+
+    // And they all still run on the new code: the old lock now holds digs back, its reveal works, and settlement pays.
+    let refused = call(&players[1], &w.game, "dig", json!({"room_id": locked, "x": spots[1].0, "y": spots[1].1, "seen_clue": 1}), 0).await?;
+    assert!(failure(&refused).contains(CLUE_ARRIVING));
+    w.reveal(locked, &links[0]).await?.into_result()?;
+    call(&players[1], &w.game, "dig", json!({"room_id": locked, "x": spots[1].0, "y": spots[1].1, "seen_clue": 2}), 0).await?.into_result()?;
+    let prize_holder = w.balance_yocto(&players[1]).await?;
+    w.run_steps(locked, 4).await?;
+    let room = w.room(locked).await?;
+    assert_eq!(room["status"], "finished");
+    assert!(w.balance_yocto(&players[1]).await? >= prize_holder);
+
+    assert_eq!(w.room(waiting).await?["status"], "waiting");
+    let bought = call(&host, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 1).await?;
+    assert!(bought.is_success(), "{:?}", bought.failures());
+    assert_solvent(&w).await
 }

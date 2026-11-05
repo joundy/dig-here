@@ -66,7 +66,7 @@ fn secret(n: u8) -> [u8; 32] {
 fn add_tip(c: &mut Contract, chain: &mut Chain, n: u8) -> Vec<[u8; 32]> {
     let (tip, links) = hash_chain(secret(n));
     chain.call("oracle.testnet", 0);
-    c.add_commitments(vec![to_hex(&tip)]);
+    c.add_commitments(vec![to_hex(&tip)], None);
     links
 }
 
@@ -90,7 +90,7 @@ fn rounds_through_the_contract() {
         c.next_room_id = case["room_id"].as_u64().unwrap();
         let tip = case["tip"].as_str().unwrap().to_string();
         chain.call("oracle.testnet", 0);
-        c.add_commitments(vec![tip]);
+        c.add_commitments(vec![tip], None);
 
         chain.seed = from_hex32(case["block_seed"].as_str().unwrap()).unwrap();
         chain.call("host.testnet", NEAR);
@@ -335,4 +335,250 @@ fn testnet_bond_fits_the_largest_room() {
 fn hash_helpers_agree() {
     let chain = hash_chain(secret(9));
     assert_eq!(sha256(&chain.1[0]), chain.0);
+}
+
+/// A desert room with three players, started now. `land_spots` looks at desert too.
+fn live_desert_room(c: &mut Contract, chain: &mut Chain, n: u8) -> u64 {
+    add_tip(c, chain, n);
+    chain.call("h.testnet", NEAR);
+    let id = c.create_room("r".to_string(), "desert".to_string(), 10, 60, 0, 2, 30, 0);
+    for p in ["a.testnet", "b.testnet", "c.testnet"] {
+        chain.call(p, NEAR);
+        c.join(id);
+    }
+    chain.call("h.testnet", 0);
+    c.start(id);
+    id
+}
+
+const CLUE_ARRIVING: &str = "A new clue is arriving. Try again in a moment.";
+
+fn lock_first_clue(c: &mut Contract, chain: &mut Chain, id: u64) {
+    chain.now_ms = c.load_room(id).due_ms(1);
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "locked");
+}
+
+#[test]
+#[should_panic(expected = "A new clue is arriving. Try again in a moment.")]
+fn a_dig_is_refused_between_a_lock_and_its_reveal() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    let id = live_desert_room(&mut c, &mut chain, 1);
+    lock_first_clue(&mut c, &mut chain, id);
+    let (x, y) = land_spots(1).next().unwrap();
+    chain.call("a.testnet", 0);
+    c.dig(id, x, y, 1);
+}
+
+#[test]
+fn digging_reopens_on_the_new_clue_as_soon_as_it_is_revealed() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    let links = hash_chain(secret(1)).1;
+    let id = live_desert_room(&mut c, &mut chain, 1);
+    let mut spots = land_spots(3);
+    let (x, y) = spots.next().unwrap();
+
+    // Due, but nobody has locked it: no seed exists yet, so nobody can know the clue and digging stays open.
+    chain.now_ms = c.load_room(id).due_ms(1) + 5_000;
+    chain.call("a.testnet", 0);
+    c.dig(id, x, y, 1);
+    assert_eq!(c.load_room(id).digs[0].clue_index, 0);
+
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "locked");
+    chain.call("anyone.testnet", 0);
+    c.reveal(id, to_hex(&links[0]));
+    let (x, y) = spots.next().unwrap();
+    chain.call("b.testnet", 0);
+    c.dig(id, x, y, 2);
+    assert_eq!(c.load_room(id).digs[1].clue_index, 1);
+}
+
+#[test]
+#[should_panic(expected = "This game has ended")]
+fn the_treasure_lock_keeps_its_own_message_because_digging_closed_first() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    let links = hash_chain(secret(1)).1;
+    let id = live_desert_room(&mut c, &mut chain, 1);
+    let mut spots = land_spots(3);
+    for p in ["a.testnet", "b.testnet"] {
+        let (x, y) = spots.next().unwrap();
+        chain.call(p, 0);
+        c.dig(id, x, y, 1);
+    }
+    for step in 1..=3u8 {
+        chain.now_ms = c.load_room(id).due_ms(step);
+        chain.call("anyone.testnet", 0);
+        assert_eq!(c.poke(id), "locked");
+        chain.call("anyone.testnet", 0);
+        c.reveal(id, to_hex(&links[step as usize - 1]));
+    }
+    chain.now_ms = c.load_room(id).ends_at_ms();
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "locked");
+    let (x, y) = spots.next().unwrap();
+    chain.call("c.testnet", 0);
+    c.dig(id, x, y, 4);
+}
+
+#[test]
+fn a_withheld_reveal_cannot_strand_a_round_that_had_enough_digs() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    let id = live_desert_room(&mut c, &mut chain, 1);
+    let mut spots = land_spots(3);
+    for p in ["a.testnet", "b.testnet"] {
+        let (x, y) = spots.next().unwrap();
+        chain.call(p, 0);
+        c.dig(id, x, y, 1);
+    }
+    lock_first_clue(&mut c, &mut chain, id);
+    let due = c.load_room(id).due_ms(1);
+    let before = balance(&c, "a.testnet");
+    chain.now_ms = due + REVEAL_WINDOW_MS - 1;
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "none");
+    chain.now_ms = due + REVEAL_WINDOW_MS;
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "refunded");
+    assert_eq!(c.load_room(id).outcome.unwrap().refund_reason, Some(RefundReason::MissedReveal));
+    assert_eq!(balance(&c, "a.testnet"), before + yocto_plain(10));
+    assert_eq!(c.held, 0);
+}
+
+#[test]
+fn a_withheld_reveal_cannot_strand_a_round_with_too_few_digs() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    let id = live_desert_room(&mut c, &mut chain, 1);
+    lock_first_clue(&mut c, &mut chain, id);
+    // Nobody could dig during the lock, and the round's end is what frees it, well before the reveal deadline.
+    chain.now_ms = c.load_room(id).ends_at_ms();
+    chain.call("anyone.testnet", 0);
+    assert_eq!(c.poke(id), "refunded");
+    assert_eq!(c.load_room(id).outcome.unwrap().refund_reason, Some(RefundReason::TooFewDigs));
+    assert_eq!(c.held, 0);
+}
+
+fn sell_penguin(c: &mut Contract, chain: &mut Chain) {
+    chain.call("seller.testnet", NEAR);
+    c.mint_nft("snowy:penguin".to_string());
+    chain.call("seller.testnet", 0);
+    c.list_nft("snowy:penguin".to_string(), Some(100));
+    chain.call("buyer.testnet", NEAR);
+    c.deposit();
+}
+
+#[test]
+#[should_panic(expected = "Attach at least 1 yoctoNEAR to buy")]
+fn buying_with_nothing_attached_is_refused_so_a_function_call_key_cannot() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    sell_penguin(&mut c, &mut chain);
+    chain.call("buyer.testnet", 0);
+    c.buy_nft("snowy:penguin".to_string(), 100);
+}
+
+#[test]
+fn buying_with_one_yocto_spends_the_game_balance() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    sell_penguin(&mut c, &mut chain);
+    let before = balance(&c, "buyer.testnet");
+    chain.call("buyer.testnet", 1);
+    c.buy_nft("snowy:penguin".to_string(), 100);
+    assert_eq!(balance(&c, "buyer.testnet"), before + 1 - yocto_plain(100));
+}
+
+#[test]
+fn leaving_a_full_room_gives_back_the_countdown() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    add_tip(&mut c, &mut chain, 1);
+    chain.call("h.testnet", NEAR);
+    let id = c.create_room("r".to_string(), "desert".to_string(), 10, 60, 0, 2, 3, 120);
+    for p in ["a.testnet", "b.testnet", "griefer.testnet"] {
+        chain.call(p, NEAR);
+        c.join(id);
+    }
+    let full = c.load_room(id).start_at_ms.unwrap();
+    assert_eq!(full, chain.now_ms + FULL_ROOM_START_SEC * 1000);
+
+    chain.call("griefer.testnet", 0);
+    c.leave(id);
+    assert_eq!(c.load_room(id).start_at_ms, Some(chain.now_ms + 120_000), "the room isn't full now, so the short timer has to go");
+
+    // Below the minimum there's nothing to count down to, as before.
+    chain.call("b.testnet", 0);
+    c.leave(id);
+    assert_eq!(c.load_room(id).start_at_ms, None);
+}
+
+#[test]
+fn leaving_a_room_that_was_not_full_keeps_its_running_countdown() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    add_tip(&mut c, &mut chain, 1);
+    chain.call("h.testnet", NEAR);
+    let id = c.create_room("r".to_string(), "desert".to_string(), 10, 60, 0, 2, 5, 120);
+    for p in ["a.testnet", "b.testnet", "c.testnet"] {
+        chain.call(p, NEAR);
+        c.join(id);
+    }
+    let running = c.load_room(id).start_at_ms;
+    chain.now_ms += 10_000;
+    chain.call("c.testnet", 0);
+    c.leave(id);
+    assert_eq!(c.load_room(id).start_at_ms, running);
+}
+
+#[test]
+fn commitments_can_name_the_index_they_expect() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    chain.call("oracle.testnet", 0);
+    assert_eq!(c.add_commitments(vec![to_hex(&[1; 32])], Some(0)), 1);
+    chain.call("oracle.testnet", 0);
+    assert_eq!(c.add_commitments(vec![to_hex(&[2; 32])], None), 2, "an older caller naming no index still works");
+    chain.call("oracle.testnet", 0);
+    assert_eq!(c.add_commitments(vec![to_hex(&[3; 32])], Some(2)), 3);
+}
+
+#[test]
+#[should_panic(expected = "The commitment index has moved")]
+fn a_late_upload_cannot_shift_every_later_tip() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    chain.call("oracle.testnet", 0);
+    c.add_commitments(vec![to_hex(&[1; 32])], Some(0));
+    chain.call("oracle.testnet", 0);
+    c.add_commitments(vec![to_hex(&[1; 32])], Some(0));
+}
+
+fn room_named(name: &str) -> u64 {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
+    add_tip(&mut c, &mut chain, 1);
+    chain.call("h.testnet", NEAR);
+    c.create_room(name.to_string(), "desert".to_string(), 10, 60, 0, 2, 3, 0)
+}
+
+#[test]
+#[should_panic(expected = "That name has characters we can't show")]
+fn a_right_to_left_override_cannot_disguise_a_room_name() {
+    room_named("evil\u{202e}moor");
+}
+
+#[test]
+#[should_panic(expected = "That name has characters we can't show")]
+fn control_characters_cannot_disguise_a_room_name() {
+    room_named("a\u{7}b");
+}
+
+#[test]
+fn names_in_any_script_and_emoji_still_work() {
+    room_named("حفرة 🏴‍☠️ Île 洞");
 }

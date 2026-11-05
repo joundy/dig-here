@@ -33,7 +33,7 @@ Date: 2026-11-06. Testnet only. Research behind this: `docs/research/`. Game rul
 ## Money
 
 - The contract stores balances in yoctoNEAR (`u128`). Fees, prices, pots and every split are whole **milliNEAR** (`u64`), exactly as `src/lib/game/economy.ts`, then converted (× 10^21) when credited.
-- **`join` and `create_room`, `mint_nft`, `buy_nft` are payable:** anything attached goes to the game balance, then the cost comes out of the balance. So a wallet tops up once with one approval, and a function-call key then pays silently with nothing attached.
+- **`join` and `create_room`, `mint_nft`, `buy_nft` are payable:** anything attached goes to the game balance, then the cost comes out of the balance. So a wallet tops up once with one approval, and a function-call key then pays silently with nothing attached. `buy_nft` needs at least 1 yocto, so a function-call key can't spend a balance on someone else's NFT.
 - **Winnings and refunds credit the balance.** Never push coins at settlement.
 - **`withdraw(amount)`** needs exactly 1 yocto, deducts first, and restores in a private callback only on failure.
 - **Storage:** a player's first credit pays their record (measure `env::storage_usage()` before and after, take the exact cost). The host bond covers the room. Check `max_players` fits the bond at `create_room`.
@@ -69,7 +69,7 @@ add_commitments(tips)            oracle only
 
 mint_nft(token_id)               payable. First owner, pays mint_price to treasury
 list_nft(token_id, price|null)   owner only
-buy_nft(token_id, seen_price)    payable. Pays the lister
+buy_nft(token_id, seen_price)    payable, at least 1 yocto. Pays the lister
 close_season()                   anyone, after the end time
 NEP-171, NEP-177, NEP-178, NEP-181 for NFTs
 ```
@@ -83,7 +83,7 @@ Views: `get_config`, `get_now_ms`, `get_rooms(from, limit)` (open rooms, no land
 4. Live, a roll is due and not locked: lock it (below).
 5. A roll has passed its reveal deadline, locked or not: refund everyone with `missed-reveal`, return the host's whole bond, increment `missed_reveals`.
 
-Time is `env::block_timestamp_ms()`. Digs are rejected once block time reaches the round's end. A dig's bonus follows **clues actually revealed**, not the clock, so a late clue never costs anyone.
+Time is `env::block_timestamp_ms()`. Digs are rejected once block time reaches the round's end, and while a roll is locked and unrevealed. A dig's bonus follows **clues actually revealed**, not the clock, so a late clue never costs anyone.
 
 ## Randomness (the user's requirement)
 
@@ -100,7 +100,7 @@ Goal: neither a validator nor we can know or choose a result alone, and any play
 roll_seed = SHA256("dig-here-v1" || room_id u64 LE || step u8 || lock_seed || link || digs_hash)
 ```
 
-Validator seed first, ours second. The validator can't know the result when deciding on the lock, because it lacks `link`. We see the result before revealing, but all we can do is refuse, and that visibly refunds the round. **Missed reveals are public.**
+Validator seed first, ours second. The validator can't know the result when deciding on the lock, because it lacks `link`. We see the result before revealing, but all we can do is refuse, and that visibly refunds the round. It's still a free option, because the oracle pays nothing for refusing. `dig` is refused between a lock and its reveal, so nobody can use a clue learned in that gap. **Missed reveals are public.**
 
 Reveal deadline: 120 seconds after the roll was due.
 
@@ -207,7 +207,7 @@ Report honestly at the end: what ran, what didn't, and what a human must try, es
 
 JSON fields are snake_case. Local dev server: `http://localhost:8787`. Vite proxies `/api` to it.
 
-- `GET /api/health`: `{ ok, contract, oracle_pool, root_balance, last_state_ms, bots_enabled }`
+- `GET /api/health`: `{ ok, contract, oracle_pool, root_balance, last_state_ms, bots_enabled, bot_join_limits: { max_fee_milli, max_host_cut_bps } }`. Bots only join a human's room within those limits, and a few such rooms per host per hour.
 - `GET /api/state`: `{ version, fetched_ms, live: <exact contract live_state result> }`, gzip, with ETag.
 - `GET /api/live`: SSE. `event: state` with the same body whenever `version` changes, comment heartbeat every 15 seconds.
 - `POST /api/guest-accounts` `{ public_key }`: `{ account_id, created }`. The same key returns the same account. Errors: `{ error }` with 429 or 503.
@@ -217,6 +217,6 @@ JSON fields are snake_case. Local dev server: `http://localhost:8787`. Vite prox
 
 Bots are **demand-driven**, to save coins and RPC calls: with no browser connected for 5 minutes they stop hosting and digging beyond finishing what's open, and they start within seconds when one connects. A lone juror must see players in a waiting room within about 15 seconds.
 
-The guest function-call key allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `buy_nft`, `poke`.
+The guest function-call key allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `poke`.
 
 Lost sends are real on testnet (see research): a client stops waiting after 8 seconds, checks the hash, and only then re-signs. Close the visible dig window 2.5 seconds before the on-chain end.

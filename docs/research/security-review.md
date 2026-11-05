@@ -34,6 +34,20 @@ The contract's money handling held up. Random play and whole rounds never create
 | 12 | Low | Filling a room for a moment and leaving cancels the countdown | sandbox |
 | 13 | Low | Smaller items, listed at the end of the findings | mixed |
 
+## Fixed since this review (2026-11-05)
+
+Each with a test that failed first. Findings below stay as written, as the record of what was found.
+
+| Finding | What changed | What's left |
+|---|---|---|
+| 1 | `buy_nft` needs a yocto, and came off the guest key list | `join`, `create_room`, `mint_nft` and `list_nft` still spend silently. A stolen key can still join a thief's expensive room. Needs the decision the finding asks for |
+| 2 | Guest slots are reserved before any await, on the retry path too. Funds are a running total, at most 10 guests are made at once, retries are capped at 4 an hour per key, and IPv6 counts by /64 | Turnstile, and lowering the credit |
+| 3 | Bots only join a human's room at a fee up to 50 milliNEAR and a host cut up to 10%, in at most 3 rooms per host per hour | Limits are per account, so many hosts dodge the per-host count. The fee, cut and `botsBudget` still bound the loss |
+| 5 | `dig` is refused between a lock and its reveal | The free option on the treasure, and the long deadline on short rounds |
+| 8 | `/api/live` can't trigger a read. One poller, at most one read a second, plus oracle wakes at most every 500 ms. SSE capped at 500 in total and 20 per address | No general rate limit on other routes |
+| 12 | Leaving a full room runs the countdown again | A griefer filling the room repeatedly can delay a start, up to the deadline |
+| 13 | Commitments can name `first_index`. Malformed URLs and bad escapes get a 400. `buy_nft` returns approval deposits. Double credit is checked before retrying. The sweeper skips runs while the indexer is behind. Room names can't hold controls or bidi overrides | The rest of 13 |
+
 ## High
 
 ### 1. A browser's function-call key can move a whole game balance

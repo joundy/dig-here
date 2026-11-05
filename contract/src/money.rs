@@ -159,7 +159,8 @@ impl Contract {
     }
 
     /// Whatever a payable method was sent goes to the caller's balance first, and its cost comes out of
-    /// the balance. So a wallet tops up once, and a function-call key then pays with nothing attached.
+    /// the balance. So a wallet tops up once, and a function-call key then pays with nothing attached,
+    /// for the methods that allow it. `buy_nft` doesn't.
     pub(crate) fn take_attached(&mut self) {
         let attached = env::attached_deposit().as_yoctonear();
         if attached > 0 {
@@ -194,7 +195,7 @@ impl Contract {
         self.flush_balance_events();
     }
 
-    /// Needs exactly 1 yocto, which a function-call key can't attach, so a browser's key can't move coins out.
+    /// Needs exactly 1 yocto, which a function-call key can't attach, so a browser's key can't call this.
     /// Deducts first, and the callback restores the amount only if the transfer failed.
     #[payable]
     pub fn withdraw(&mut self, amount: U128) -> Promise {

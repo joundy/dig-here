@@ -21,7 +21,7 @@ Failures are panics with a readable sentence in the error, and they return anyth
 
 ## Calling it
 
-Identify players with their predecessor. Payable methods put whatever's attached into the caller's game balance first, then take the cost from the balance. So a wallet can top up once with one approval, and a function-call key then pays silently with nothing attached.
+Identify players with their predecessor. Payable methods put whatever's attached into the caller's game balance first, then take the cost from the balance. So a wallet can top up once with one approval, and a function-call key then pays silently with nothing attached. `buy_nft` is the exception: it needs a yocto, so only a real wallet signature can spend a balance on another player's NFT.
 
 The first credit to an account pays for its record out of that credit, at the exact measured cost. A deposit smaller than that fails.
 
@@ -61,11 +61,11 @@ Only the contract's own account can call it. There's no admin method afterwards.
 
 | Method | Notes |
 |---|---|
-| `create_room({ name, map, fee, duration_sec, host_cut_bps, min_players, max_players, countdown_sec })` payable, returns `room_id` | `map` is `tropical`, `snowy` or `desert`. `name` at most 40 bytes after trimming. `fee` from 1 to 100,000,000,000. `duration_sec` is 60, 180, 300 or 600. `countdown_sec` is 0, 30, 60 or 120. `host_cut_bps` at most 2000. Players from 2 to 30. At most 3 open rooms per host, and **at most 30 open rooms in total**. Takes `host_bond` from the balance. Fails kindly when the commitment pool is empty |
+| `create_room({ name, map, fee, duration_sec, host_cut_bps, min_players, max_players, countdown_sec })` payable, returns `room_id` | `map` is `tropical`, `snowy` or `desert`. `name` at most 40 bytes after trimming. `fee` from 1 to 100,000,000,000. `duration_sec` is 60, 180, 300 or 600. `countdown_sec` is 0, 30, 60 or 120. `host_cut_bps` at most 2000. Players from 2 to 30. `name` can't hold control characters or bidi overrides, so it can't read as something else. At most 3 open rooms per host, and **at most 30 open rooms in total**. Takes `host_bond` from the balance. Fails kindly when the commitment pool is empty |
 | `join({ room_id })` payable | Fails once the round is due to start, even if nobody has called `poke` yet |
-| `leave({ room_id })` | Fee back to the balance. Before the start only |
+| `leave({ room_id })` | Fee back to the balance. Before the start only. Leaving a full room ends the short full-room timer: the countdown runs again from its start, or the timer stops if the room has no countdown or falls below the minimum |
 | `start({ room_id })` | Host only, at the minimum |
-| `dig({ room_id, x, y, seen_clue })` | `x`, `y` are whole pixels on land. `seen_clue` is **how many clues the player could see** (1 at the start), so a dig racing a new clue fails and they can decide again |
+| `dig({ room_id, x, y, seen_clue })` | `x`, `y` are whole pixels on land. `seen_clue` is **how many clues the player could see** (1 at the start), so a dig racing a new clue fails and they can decide again. Refused while a roll is locked and unrevealed, with `A new clue is arriving. Try again in a moment.` See below |
 
 The host isn't a player unless they also join.
 
@@ -75,7 +75,7 @@ The host isn't a player unless they also join.
 |---|---|
 | `poke({ room_id })` anyone, returns a string | Does the first thing due, and nothing otherwise: `"started"`, `"locked"`, `"refunded"` or `"none"`. It never fails on a known room |
 | `reveal({ room_id, link })` anyone | Needs the right preimage, in a later block than the lock, and before the deadline. On step 4 this also settles the room |
-| `add_commitments({ tips })` oracle only, returns the number now in the pool | At most 100 tips a call and 200 waiting. Each is `H(H(H(H(s))))`. A tip's index is its place in upload order, starting at `commitments_next_index()` |
+| `add_commitments({ tips, first_index })` oracle only, returns the number now in the pool | At most 100 tips a call and 200 waiting. Each is `H(H(H(H(s))))`. A tip's index is its place in upload order, starting at `commitments_next_index()`. `first_index` is optional, and when given it must equal that index, so a late copy of an upload fails instead of shifting every later tip |
 
 What `poke` does, in this order:
 
@@ -89,6 +89,15 @@ The spec lists 4 and 5 the other way round, but its "locked or not" only makes s
 
 Steps: 1, 2, 3 reveal clues 2, 3, 4, and 4 rolls the treasure. Clues are due at 30%, 60% and 85% of the round, the treasure at the end. Each reveal deadline is 120 seconds after that roll was due. Bonuses follow clues actually revealed, not the clock.
 
+**No digging between a lock and its reveal.** The oracle holds every link, so once a lock fixes the seed it can compute the next clue. Without this rule it could hold the reveal back and dig on the old clue's bonus, knowing what nobody else knows. So `dig` refuses while a roll is locked and unrevealed:
+
+- It's short. Across 33 clue rolls on testnet (2026-11-05) the gap from lock to reveal was 2.2 s at the median, 2.8 s at the 90th percentile and 5.1 s at worst. A 60-second round has three such gaps. A clue that's due but not yet locked blocks nothing, because no seed exists yet.
+- Nobody can extend it. Each step locks once, so a round has at most three, and anyone can lock a due roll but only the link ends the gap.
+- It can't strand a round. If the reveal never comes, digging stays shut, on purpose: reopening after a timeout would hand the same lead back. `poke` then refunds as usual: `too-few-digs` at the round's end with under 2 digs, otherwise `missed-reveal` at the deadline. Every coin comes back either way, and anyone can call it.
+- The treasure's lock changes nothing. It can't happen before the round's end, so that dig gets `This game has ended` first.
+
+So a withheld clue now costs the holder the whole round rather than buying a lead. It's still a free option on the treasure: reveal on a win, withhold on a loss, and everyone is refunded.
+
 The oracle's reveal order for a commitment with secret `s`: step 1 `H(H(H(s)))`, step 2 `H(H(s))`, step 3 `H(s)`, step 4 `s`. Byte layouts are in `tests/README.md`.
 
 ### NFTs
@@ -99,11 +108,11 @@ Token IDs are `<map>:<kind>`, like `snowy:penguin`: 36 in all, 12 per map, as li
 |---|---|
 | `mint_nft({ token_id })` payable | First owner. Costs exactly `mint_price`. The NFT's storage comes out of that, and the treasury's **game balance** gets the rest |
 | `list_nft({ token_id, price })` | Owner only. `price` is milliNEAR, or `null` to delist |
-| `buy_nft({ token_id, seen_price })` payable | Must match the current price. Pays the seller's game balance |
+| `buy_nft({ token_id, seen_price })` at least 1 yocto | Must match the current price. Pays the seller's game balance, and returns their approvals' storage deposit. Attach 1 yocto to pay from the balance, or more to top it up first. **A function-call key can't call this**, because it can't attach anything: otherwise a stolen key could buy a thief's NFT listed at the victim's whole balance |
 
 Standards: NEP-171 (`nft_transfer`, `nft_transfer_call`, `nft_token`, `nft_resolve_transfer`), NEP-177 (`nft_metadata`), NEP-178 (`nft_approve`, `nft_revoke`, `nft_revoke_all`, `nft_is_approved`) and NEP-181 (`nft_total_supply`, `nft_tokens`, `nft_supply_for_owner`, `nft_tokens_for_owner`), from `near-contract-standards`.
 
-- `nft_transfer` needs exactly 1 yocto, so **a guest's function-call key can't send one**. This is expected. Tested in the sandbox.
+- `nft_transfer` and `buy_nft` need a yocto, so **a guest's function-call key can't call them**. This is expected. Tested in the sandbox.
 - **The receiver must already have a game record**, or the transfer fails with "The receiver needs a Dig Here balance first". `deposit_for` fixes that. Settlements and sales credit an NFT's owner and must never have to create a record.
 - Any transfer ends a listing, including one the owner had made before.
 
@@ -265,7 +274,10 @@ Only through the capped toolbox, from `contract/`:
 ../docker/near cargo near build non-reproducible-wasm --no-abi --features gas-probe --out-dir target/near-probe
 ../docker/near cargo test --lib
 ../docker/near cargo test --test sandbox -- --test-threads=1 --nocapture
+../docker/near cargo test --test sandbox -- --ignored upgrading_in_place
 ```
+
+The last one proves an in-place upgrade. It needs the live code at `target/near-old/dig_here.wasm`, checked against the account's `code_hash`. It builds up state on that code, deploys over it, compares every view, then plays the open rooms on.
 
 `--no-abi` keeps the wasm small. `gas-probe` adds a method that prices the layout roll, and is only for tests.
 
@@ -279,6 +291,8 @@ To redeploy code to the same account, keeping its state, with a change that does
 ../docker/near near contract deploy v1.dighere.testnet use-file target/near/dig_here.wasm \
   without-init-call network-config testnet sign-with-legacy-keychain send
 ```
+
+Live on `v1` since 2026-11-05, block 276329338: code hash `7byeeAYY4bRdGSXTbcDsyXAoMzezpBWu6oeBQjAeUpQB`, sha256 `621bec19...`, from `BpqDsfNS...`. Struct layouts didn't change. Every view matched one block either side of the deploy, and the upgrade cost 0.0028 NEAR.
 
 The commitment pool's next index on `v1` is 1, because the testnet smoke test used index 0 with a throwaway secret. The oracle reads it from `commitments_next_index()`.
 

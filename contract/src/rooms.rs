@@ -201,6 +201,12 @@ impl Room {
     }
 }
 
+/// Line breaks and terminal controls, and the bidi controls that can make a name read as something else. Other
+/// invisible marks stay allowed, because emoji and some scripts need joiners.
+fn misleads_on_screen(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 // Event payloads. Field names here are the public API: README.md documents them.
 
 #[derive(Serialize)]
@@ -614,6 +620,7 @@ impl Contract {
         let name = name.trim().to_string();
         require!(!name.is_empty(), "Give the game a name.");
         require!(name.len() <= MAX_ROOM_NAME_BYTES, "That name is too long.");
+        require!(!name.chars().any(misleads_on_screen), "That name has characters we can't show. Try another.");
         let map_id = map_index(&map).unwrap_or_else(|| env::panic_str("There's no such map."));
         require!(fee > 0, "Set an entry fee above 0.");
         require!(fee <= MAX_FEE_MILLI, "That entry fee is too high.");
@@ -725,11 +732,17 @@ impl Contract {
         require!(now < room.deadline_ms(), "This room has run out of time.");
         let at = room.players.iter().position(|p| p == &account);
         let at = at.unwrap_or_else(|| env::panic_str("You haven't joined this game."));
+        let was_full = room.players.len() >= room.max_players as usize;
         room.players.remove(at);
         self.held -= room.fee;
         self.credit_milli(&account, room.fee, "leave");
         if room.players.len() < room.min_players as usize || room.countdown_sec == 0 {
             room.start_at_ms = None;
+        } else if was_full {
+            // Filling a room shortens its timer, so someone could join and leave to rush a start past everyone
+            // still on their way. What was left of the old countdown isn't stored, so it runs again, which at
+            // worst delays a start by a griefer filling the room each time, up to the deadline the host can beat.
+            room.start_at_ms = Some(now + room.countdown_sec as u64 * 1000);
         }
         emit("left", &PlayerEvent { room_id, account: &account, players: room.players.len(), start_at_ms: room.start_at_ms });
         self.save_room(&mut room);
@@ -757,6 +770,10 @@ impl Contract {
         let player = player.unwrap_or_else(|| env::panic_str("Only players who joined before the start can dig."));
         require!(!room.digs.iter().any(|d| d.player as usize == player), "You already dug in this game.");
         require!(is_land(room.map as usize, x as i32, y as i32), "That spot is water. Pick a spot on land.");
+        // The oracle holds every link, so once a lock fixes the seed it can work out the next clue. Digging here on
+        // the old clue's bonus would be digging with the answer. A withheld reveal keeps digging shut and the room
+        // refunds, so holding back buys nothing. No timeout reopens it, because that would hand the same lead back.
+        require!(room.pending_roll().is_none(), "A new clue is arriving. Try again in a moment.");
         require!(seen_clue as usize == room.clues.len(), "A new clue just arrived. Check it, then dig again.");
 
         let clue_index = (room.clues.len() - 1) as u8;
@@ -886,9 +903,12 @@ impl Contract {
     }
 
     /// Oracle only. Each tip is `H(H(H(H(s))))`, in hex. Its index is its place in the order uploaded,
-    /// which is what the oracle derives `s` from, so it stores nothing else.
-    pub fn add_commitments(&mut self, tips: Vec<String>) -> u64 {
+    /// which is what the oracle derives `s` from, so it stores nothing else. `first_index` is where the
+    /// oracle thinks these go: a lost upload landing late could otherwise put one chain in two rooms,
+    /// and the second room's links would be public once the first ended.
+    pub fn add_commitments(&mut self, tips: Vec<String>, first_index: Option<u64>) -> u64 {
         require!(env::predecessor_account_id() == self.config.oracle, "Only the oracle can add commitments.");
+        require!(first_index.is_none_or(|i| i == self.tip_tail), "The commitment index has moved. Read it again and retry.");
         require!(tips.len() <= MAX_TIPS_PER_CALL, "Too many commitments in one call.");
         require!(self.tip_tail - self.tip_head + tips.len() as u64 <= MAX_TIP_POOL, "The commitment pool is full.");
         let first_index = self.tip_tail;
