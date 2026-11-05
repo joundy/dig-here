@@ -10,6 +10,11 @@ export const RULES = {
 
   minPlayersFloor: 2,
   maxPlayersCap: 30,
+  /**
+   * What the host form offers. Past this a last-clue dig stops being a real choice: 0.43x an even chance at 12
+   * players, 0.25x at 16, 0.03x at 30. `docs/research/user-audit.md` has the numbers. The contract still allows 30.
+   */
+  hostFormMaxPlayers: 12,
   /** Fewer digs than this at the end refunds everyone who joined. */
   minDigs: 2,
 

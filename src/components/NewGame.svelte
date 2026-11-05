@@ -16,8 +16,12 @@
 
   const EXAMPLE_PLAYERS = 10;
   const FLOOR = RULES.minPlayersFloor;
-  const CAP = RULES.maxPlayersCap;
+  const CAP = RULES.hostFormMaxPlayers;
+  const NAME_BYTES = 40;
+  const NAMES = ['Lunch money', 'Sunday dig', 'Finders keepers', 'X marks the spot', 'Beginner\'s luck', 'Low tide', 'Shovel party'];
 
+  // Asking a stranger to name a room is one more thing between them and a game. Theirs wins if they type one.
+  const suggested = NAMES[mathRng(NAMES.length)];
   let name = $state('');
   const feeChoices = backend.prices.feeChoices;
   const USUAL_FEE = feeChoices ? feeChoices[1] : 1000;
@@ -28,7 +32,9 @@
   let mapChoice = $state<MapId | 'surprise'>('tropical');
   let minPlayers = $state(2);
   let maxPlayers = $state(10);
-  let countdownSec = $state<number>(30);
+  /** Off means the host presses Start, which beats any countdown when it's only them and the bots. */
+  let countdownSec = $state<number>(0);
+  let play = $state(true);
   let error = $state('');
   let busy = $state(false);
 
@@ -72,14 +78,22 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     error = '';
+    const roomName = name.trim() || suggested;
+    if (new TextEncoder().encode(roomName).length > NAME_BYTES) {
+      error = "That name is too long. Emoji count double, so try a shorter one.";
+      audio.error();
+      return;
+    }
     busy = true;
     try {
       await backend.ensureAccount();
-      const attach = await attachFor('Hosting bond, back when the room ends', backend.prices.hostBond, feeMilli);
+      const bond = backend.prices.hostBond;
+      const what = play ? 'Hosting bond, back when the room ends, plus your entry fee' : 'Hosting bond, back when the room ends';
+      const attach = await attachFor(what, play ? bond + feeMilli : bond, feeMilli);
       if (attach === null) return;
       const mapId = mapChoice === 'surprise' ? MAP_IDS[mathRng(MAP_IDS.length)] : mapChoice;
       const id = await backend.createGame({
-        name,
+        name: roomName,
         mapId,
         fee: feeMilli,
         durationSec,
@@ -88,6 +102,8 @@
         maxPlayers,
         countdownSec,
       }, attach);
+      // The room exists whatever happens next, and its own page offers Join if this fails.
+      if (play) await backend.join(id).catch(() => undefined);
       location.hash = `#/game/${id}`;
     } catch (e) {
       error = (e as Error).message;
@@ -110,11 +126,12 @@
 {/snippet}
 
 <form onsubmit={submit}>
+  <h1 class="sr-only">Host a game</h1>
   <Parrot text="You set the terms and take a share of the pot." plain="You can't choose where the treasure lands. Nobody can." />
 
   <label class="field">
     <span>Game name</span>
-    <input bind:value={name} maxlength="40" placeholder="Lunch money" />
+    <input bind:value={name} maxlength="40" placeholder={suggested} autocomplete="off" />
   </label>
 
   <fieldset class="field">
@@ -135,12 +152,12 @@
 
   {#if feeChoices}
     <fieldset class="field">
-      <legend>Entry fee, in testnet coins</legend>
+      <legend>Entry fee, in test NEAR</legend>
       <div class="choices">
         {#each feeChoices as fee}
           <label class="choice" class:picked={feeMilli === fee}>
             <input type="radio" name="fee" value={fee / 1000} bind:group={feeNear} />
-            {near(fee)}
+            {fee / 1000}
           </label>
         {/each}
       </div>
@@ -170,17 +187,28 @@
   </fieldset>
 
   <fieldset class="field">
-    <legend>Countdown once the minimum is in</legend>
+    <legend>Starting</legend>
     <div class="choices">
       {#each RULES.countdownChoices as seconds}
         <label class="choice" class:picked={countdownSec === seconds}>
           <input type="radio" name="countdown" value={seconds} bind:group={countdownSec} />
-          {seconds === 0 ? 'Off' : clock(seconds)}
+          {seconds === 0 ? 'By hand' : clock(seconds)}
         </label>
       {/each}
     </div>
-    {#if countdownSec === 0}<p class="hint">Off means you press Start yourself.</p>{/if}
+    <p class="hint">
+      {#if countdownSec === 0}
+        You press Start once {minPlayers} {minPlayers === 1 ? 'player is' : 'players are'} in. {backend.botLimits && !botNote ? 'Bots join within seconds if nobody else is around.' : ''}
+      {:else}
+        Starts by itself {clock(countdownSec)} after {minPlayers} players are in. You can still press Start sooner.
+      {/if}
+    </p>
   </fieldset>
+
+  <label class="play">
+    <input type="checkbox" bind:checked={play} />
+    I'll play too, for the {near(feeMilli)} entry fee
+  </label>
 
   <label class="field">
     <span>You keep {cutPercent}% of the pot</span>
@@ -211,6 +239,23 @@
 </form>
 
 <style>
+  .play {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    margin-top: 0.5rem;
+    font-size: 1.35rem;
+    line-height: 1.1;
+    cursor: pointer;
+  }
+  .play input {
+    flex: none;
+    width: 1.4rem;
+    height: 1.4rem;
+    margin: 0;
+    accent-color: var(--sun);
+  }
   .field {
     display: block;
     border: 0;
@@ -226,8 +271,9 @@
     line-height: 1.1;
     margin-bottom: 0.25rem;
   }
-  input:not([type='radio']):not([type='range']) {
+  input:not([type='radio']):not([type='range']):not([type='checkbox']) {
     width: 100%;
+    min-height: 2.75rem;
     font: inherit;
     font-size: 1.5rem;
     color: var(--ink);
@@ -381,17 +427,17 @@
   }
   .bond {
     margin: 0.7rem 0 0.9rem;
-    color: var(--mist);
+    color: var(--foam);
     font-size: 1.2rem;
     line-height: 1.15;
   }
   .bond b {
     font-weight: 400;
-    color: var(--sun);
   }
   .back {
     display: block;
-    margin-top: 0.9rem;
+    padding: 0.6rem 0;
+    margin-top: 0.3rem;
     font-size: 1.25rem;
   }
 </style>

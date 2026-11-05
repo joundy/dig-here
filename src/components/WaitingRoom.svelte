@@ -7,6 +7,7 @@
   import { clock, near, percent } from '../lib/format';
   import { RULES } from '../lib/game/rules';
   import type { Game } from '../lib/game/types';
+  import { isBot } from '../lib/names';
   import { attachFor } from '../lib/pay';
   import { ui } from '../lib/ui.svelte';
   import MapBadge from './MapBadge.svelte';
@@ -18,18 +19,30 @@
   let busy = $state(false);
   let error = $state('');
 
+  const BOTS_SLOW_SEC = 20;
+  const BOT_ROOMS_PER_HOUR = 3;
+
   const count = $derived(game.players.length);
   const joined = $derived(game.players.includes(me));
+  const mine = $derived(game.host === me);
   const full = $derived(count >= game.maxPlayers);
   const need = $derived(game.minPlayers - count);
   const deadline = $derived(Math.max(0, RULES.waitingDeadlineSec - game.waited));
 
   const status = $derived.by(() => {
+    // A bot host starts as soon as a person is in, so its countdown won't be run out.
+    if (need <= 0 && joined && isBot(game.host)) return 'Starting any second…';
     if (game.startIn !== null) return `Starting in ${clock(game.startIn)}`;
     if (need > 0) return `Need ${need} more`;
-    return game.host === me ? 'Ready when you are' : 'Waiting for the host';
+    return mine ? "Enough players. Press Start when you're ready" : 'Waiting for the host';
   });
-  const small = $derived(need > 0 ? `Everyone gets refunded in ${clock(deadline)} if it doesn't fill.` : game.startIn === null ? `Starts by itself in ${clock(deadline)}.` : '');
+  const botsComing = $derived(need > 0 && mine && joined && !!backend.botLimits);
+  const small = $derived.by(() => {
+    if (botsComing && game.waited < BOTS_SLOW_SEC) return 'Bots join within seconds if nobody else turns up.';
+    if (botsComing) return `Bots help with ${BOT_ROOMS_PER_HOUR} of your rooms an hour, and this may be past that. Everyone gets refunded in ${clock(deadline)} if it doesn't fill.`;
+    if (need > 0) return `Everyone gets refunded in ${clock(deadline)} if it doesn't fill.`;
+    return game.startIn === null ? `Starts by itself in ${clock(deadline)}.` : '';
+  });
 
   let seen = untrack(() => game.players.length);
   $effect(() => {
@@ -76,7 +89,7 @@
 <div class="top">
   <p class="round-crumb"><a href="#/">Game board</a></p>
   <div class="title">
-    <h2>{game.name}</h2>
+    <h1>{game.name}</h1>
     <MapBadge mapId={game.mapId} compact={ui.compact} />
   </div>
   <ul class="facts">
@@ -101,9 +114,11 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  <div class="buttons" class:pair={game.host === me && need <= 0}>
-    {#if game.host === me && need <= 0}
-      <button class="btn" onclick={() => run(() => backend.start(game.id))} disabled={busy}>Start now</button>
+  {#if mine && !joined}<p class="small">You're hosting but not playing. Join to dig too.</p>{/if}
+
+  <div class="buttons" class:pair={mine && need <= 0}>
+    {#if mine && need <= 0}
+      <button class="btn start" onclick={() => run(() => backend.start(game.id))} disabled={busy}>Start now</button>
     {/if}
     {#if joined}
       <button class="leave" onclick={leave} disabled={busy}>{busy ? 'One moment…' : `Leave and get ${near(game.fee)} back`}</button>
@@ -135,7 +150,7 @@
     justify-content: space-between;
     gap: 0.25rem 0.75rem;
   }
-  h2 {
+  h1 {
     margin: 0;
     min-width: 0;
     font-family: var(--display);
@@ -257,7 +272,7 @@
     font-size: 1.25rem;
     line-height: 1.1;
   }
-  :global(.stage.compact.game) h2 {
+  :global(.stage.compact.game) h1 {
     font-size: 2rem;
   }
   :global(.stage.compact.game) .facts {
