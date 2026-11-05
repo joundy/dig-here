@@ -30,7 +30,9 @@ export interface GameBackend {
   start(gameId: string): Promise<void>;
   /** `seenClue` is how many clues the player could see, so a new clue can't quietly cost them bonus. */
   dig(gameId: string, spot: Point, seenClue: number): Promise<void>;
-  /** `seenPrice` is the price the buyer agreed to. */
+  /** The first owner pays the project the mint price. */
+  mintDeed(id: string): Promise<void>;
+  /** Buys a listed NFT from its owner. `seenPrice` is the price the buyer agreed to. */
   buyDeed(id: string, seenPrice: number): Promise<void>;
   /** A null price takes it off the market. */
   listDeed(id: string, price: number | null): Promise<void>;

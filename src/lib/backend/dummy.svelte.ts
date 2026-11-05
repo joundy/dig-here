@@ -8,7 +8,7 @@ import { GameError } from '../game/types';
 import type { Game, NewGameInput, Point } from '../game/types';
 import type { GameBackend } from './types';
 
-const STORAGE_KEY = 'dig-here-dummy-v4';
+const STORAGE_KEY = 'dig-here-dummy-v5';
 const TICK_MS = 250;
 const MAX_FINISHED = 40;
 
@@ -140,6 +140,7 @@ class DummyBackend implements GameBackend {
     return this.#tx((a) => { placeDig(this.#find(gameId), a, spot, seenClue); });
   }
 
+  mintDeed(id: string) { return this.#tx((a) => economy.mintDeed(this.#state.ledger, a, id)); }
   buyDeed(id: string, seenPrice: number) { return this.#tx((a) => economy.buyDeed(this.#state.ledger, a, id, seenPrice)); }
   listDeed(id: string, price: number | null) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
 
@@ -274,7 +275,7 @@ class DummyBackend implements GameBackend {
     for (const host of HOST_NAMES) ledger.hosts[host] = { finished: 4 + mathRng(40), expired: mathRng(2) };
     for (const host of SPAM_HOSTS) ledger.hosts[host] = { finished: 0, expired: 3 + mathRng(10) };
 
-    // Bots own about a third of the deeds, which is also what fills the jackpot at the start.
+    // Bots have minted about a third of the NFTs, so the market has something in it.
     for (const mapId of MAP_IDS) {
       for (const kind of economy.deedKinds(mapId)) {
         if (Math.random() < 0.34) this.#botBuyDeed(economy.deedId(mapId, kind));
@@ -299,16 +300,17 @@ class DummyBackend implements GameBackend {
     for (let i = 0; i < 4; i++) this.#botHostRoom(true);
   }
 
-  /** A bot buys a deed if it can, and sometimes lists it straight away for more than it paid. */
+  /** A bot mints an NFT or buys a listed one, and sometimes lists it straight away for more. */
   #botBuyDeed(id: string) {
     const { ledger } = this.#state;
     const buyer = pickFrom(BOT_NAMES);
     const deed = economy.deedOf(ledger, id);
-    const cost = economy.deedCost(deed);
-    if (deed.owner === buyer || cost === null) return;
+    if (deed.owner === buyer || (deed.owner !== null && deed.price === null)) return;
+    const cost = deed.owner === null ? RULES.deedMintPrice : deed.price!;
     this.#fundBot(buyer, cost);
-    economy.buyDeed(ledger, buyer, id);
-    if (Math.random() < 0.55) economy.listDeed(ledger, buyer, id, Math.round(cost * (1.1 + Math.random() * 1.4) / 100) * 100);
+    if (deed.owner === null) economy.mintDeed(ledger, buyer, id);
+    else economy.buyDeed(ledger, buyer, id);
+    if (Math.random() < 0.55) economy.listDeed(ledger, buyer, id, Math.round(cost * (1.05 + Math.random() * 0.9) / 100) * 100);
   }
 
   /** Runs a bot room through its waiting stage and part of its round. */

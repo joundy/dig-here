@@ -25,7 +25,7 @@ Each game rolls new positions for the landmarks on its map, with landmarks of th
 
 **The economy around the rounds:**
 - **Jackpot:** dig on the treasure's exact pixel to win it. A win pays at most 100× that round's pot.
-- **NFTs:** one for each kind of landmark on each map, about 36 in all. The owner earns 2% of the pot when the treasure lands by that kind. Owners can list theirs for sale at any price in a mini marketplace. NFTs are fake for now, like the money.
+- **NFTs:** one for each kind of landmark on each map, about 36 in all. The first owner mints one for 20 NEAR, which goes to the project. The owner earns 2% of the pot when the treasure lands by that kind, and can list theirs for sale at any price in a mini marketplace. NFTs are fake for now, like the money.
 - **Season:** weekly points, scaled by the pot, with prizes for the top 3.
 - **Hosts:** each room locks a small bond, and hosts have a public record, so spam rooms sink down the board.
 
@@ -48,7 +48,7 @@ npm run dev
 6. In Playtest controls, press **Skip to next clue**. See a banner, a sharper clue, a lower bonus, and your spots change.
 7. Press **End game**. See the possible spots flash, the chest drop, and the scores with the pot split.
 8. Press **Force jackpot** in another round to see a jackpot win.
-9. Go to **NFTs**. Buy one from the For sale tab. Then, under My NFTs, list it at your own price.
+9. Go to **NFTs** and open the **Mint** tab. Deposit 20 NEAR and mint one. Then, under My NFTs, list it at your own price.
 10. Go to **Season**. See the prize pool and your rank.
 11. Tap the balance button. Withdraw your coins, or switch account to play as someone else in the same room.
 

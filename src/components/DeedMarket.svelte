@@ -3,7 +3,7 @@
   import { backend } from '../lib/backend';
   import { near, percent } from '../lib/format';
   import { kindName } from '../lib/game/copy';
-  import { deedChance, deedCost, deedCount, deedId, deedKinds } from '../lib/game/economy';
+  import { deedChance, deedCount, deedId, deedKinds } from '../lib/game/economy';
   import { MAP_IDS } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Kind, MapId } from '../lib/game/types';
@@ -12,11 +12,12 @@
   import MapBadge from './MapBadge.svelte';
   import Sprite from './Sprite.svelte';
 
-  type Tab = 'market' | 'all' | 'mine';
+  type Tab = 'market' | 'mint' | 'all' | 'mine';
   type Row = { map: MapId; kind: Kind; id: string };
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'market', label: 'For sale' },
+    { id: 'mint', label: 'Mint' },
     { id: 'all', label: 'All NFTs' },
     { id: 'mine', label: 'My NFTs' },
   ];
@@ -39,12 +40,13 @@
     const onMap = allRows.filter((r) => mapFilter === 'all' || r.map === mapFilter);
     if (tab === 'all') return onMap;
     if (tab === 'mine') return onMap.filter((r) => backend.deedOf(r.id).owner === me);
+    if (tab === 'mint') return onMap.filter((r) => backend.deedOf(r.id).owner === null);
     return onMap
       .filter((r) => {
-        const deed = backend.deedOf(r.id);
-        return deed.owner !== me && deedCost(deed) !== null;
+        const { owner, price } = backend.deedOf(r.id);
+        return owner !== null && owner !== me && price !== null;
       })
-      .sort((a, b) => deedCost(backend.deedOf(a.id))! - deedCost(backend.deedOf(b.id))! || a.id.localeCompare(b.id));
+      .sort((a, b) => backend.deedOf(a.id).price! - backend.deedOf(b.id).price! || a.id.localeCompare(b.id));
   });
   const pages = $derived(Math.max(1, Math.ceil(matching.length / perPage)));
   const current = $derived(Math.min(page, pages - 1));
@@ -92,13 +94,24 @@
     }
   }
 
-  function buy(row: Row, cost: number) {
+  /** True if the player can afford it. If not, the wallet opens with what's missing. */
+  function canPay(cost: number): boolean {
     const balance = backend.balanceOf(me);
-    if (balance < cost) {
-      openWallet(cost - balance);
-      return;
+    if (balance >= cost) return true;
+    openWallet(cost - balance);
+    return false;
+  }
+
+  function mint(row: Row) {
+    if (canPay(RULES.deedMintPrice)) {
+      void act(row.id, () => backend.mintDeed(row.id), `You minted the ${title(row.kind)} NFT. Keep it, or list it under My NFTs.`);
     }
-    void act(row.id, () => backend.buyDeed(row.id, cost), `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
+  }
+
+  function buy(row: Row, price: number) {
+    if (canPay(price)) {
+      void act(row.id, () => backend.buyDeed(row.id, price), `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
+    }
   }
 
   function startListing(row: Row) {
@@ -123,7 +136,7 @@
   <h1>NFT market</h1>
   <p class="what">
     One NFT for each kind of landmark. When the treasure lands by one, its owner earns {percent(RULES.deedBps)} of the pot.
-    Keep yours, or list it at your own price.
+    The first owner mints it for {near(RULES.deedMintPrice)}. After that, keep it or list it at your own price.
   </p>
 
   <div class="tabs" role="tablist" aria-label="NFTs">
@@ -148,12 +161,11 @@
       {#each rows as row (row.id)}
         {@const deed = backend.deedOf(row.id)}
         {@const mine = deed.owner === me}
-        {@const cost = deedCost(deed)}
         <li class="card" class:mine>
           <div class="art"><Sprite name={row.kind} scale={3} /></div>
           <h2>{title(row.kind)}</h2>
           <div class="where"><MapBadge mapId={row.map} compact /><span>{deedCount(row.map, row.kind)} on the map</span></div>
-          <p class="owner">{mine ? 'You own this' : deed.owner ? `Owner: ${deed.owner}` : 'New: nobody owns it yet'}</p>
+          <p class="owner">{mine ? 'You own this' : deed.owner ? `Owner: ${deed.owner}` : 'Not minted yet'}</p>
           <dl>
             <div><dt>Chance</dt><dd>~{Math.round(deedChance(row.map, row.kind) * 100)}%</dd></div>
             <div><dt>Landed</dt><dd>{deed.landings}</dd></div>
@@ -178,9 +190,13 @@
               <p class="selling">Not listed</p>
               <button class="btn small alt" onclick={() => startListing(row)}>List for sale</button>
             {/if}
-          {:else if cost !== null}
-            <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, cost)}>
-              {busyId === row.id ? 'Signing…' : `Buy for ${near(cost)}`}
+          {:else if deed.owner === null}
+            <button class="btn small" disabled={busyId === row.id} onclick={() => mint(row)}>
+              {busyId === row.id ? 'Minting…' : `Mint for ${near(RULES.deedMintPrice)}`}
+            </button>
+          {:else if deed.price !== null}
+            <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, deed.price!)}>
+              {busyId === row.id ? 'Signing…' : `Buy for ${near(deed.price)}`}
             </button>
           {:else}
             <p class="kept">Not for sale</p>
@@ -190,6 +206,8 @@
     </ul>
   {:else if tab === 'mine'}
     <p class="empty">You own no land. Very modern of you.</p>
+  {:else if tab === 'mint'}
+    <p class="empty">Every NFT here has been minted. Check For sale.</p>
   {:else}
     <p class="empty">Nothing for sale here. Everyone loves their landmark too much.</p>
   {/if}
@@ -223,7 +241,7 @@
   }
   .tabs {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 0.35rem;
   }
   .maps {

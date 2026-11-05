@@ -77,7 +77,7 @@
   });
 
   const deedLine = $derived.by(() => {
-    if (!result.deedOwner) return `Nobody owns the ${kind} NFT, so the share went to the jackpot.`;
+    if (!result.deedOwner) return `Nobody has minted the ${kind} NFT yet, so the share went to the jackpot.`;
     if (result.deedOwner === me) return `You own the ${kind} NFT, so you earned ${near(result.split.deed)}.`;
     return `${result.deedOwner} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
   });

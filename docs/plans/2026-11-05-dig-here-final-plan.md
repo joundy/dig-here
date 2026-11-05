@@ -130,7 +130,7 @@ A round has **four clues instead of three**.
 
 Example with a 10 NEAR pot and a 5% host cut: host 0.5, jackpot 0.3, deed 0.2, season 0.1, winner **8.9**.
 
-We take no fee ourselves. [My call]
+We take nothing from rounds. Our only income is NFT minting (section 3.7). [You]
 
 ### 3.4 Scoring
 
@@ -186,9 +186,9 @@ If your dig is within 6 pixels of an earlier dig, your score is multiplied by 0.
 
 One NFT for each kind of landmark on each map, such as the Snowy Penguin. [You] With 12 kinds on 3 maps, that's about 36. Everything is fake for now, with no contract logic decided yet. [You]
 
-- **First sale:** a fixed price of 3 NEAR [Tune]. The money goes into the jackpot. [My call]
+- **Mint:** every NFT starts unminted. The first owner mints it for 20 NEAR, which goes to us. [You] That's up to 720 NEAR if all 36 are minted.
 - **Earning:** when the treasure lands by any landmark of that kind, the owner gets the 2% share.
-- **Mini marketplace** [You]: an NFT only sells if its owner lists it. The owner sets any price, and can change it or take it off the market. A sale pays the seller.
+- **After minting** it's a normal NFT. [You] It only sells if its owner lists it. The owner sets any price, and can change it or take it off the market. A sale pays the seller.
 - **Fairness:** owners can't influence where the treasure lands, and owning an NFT gives no information.
 
 **Kinds don't have equal chances,** because some have more landmarks on the map. Each NFT's card shows its rough chance (for example, 3 of 40 landmarks is about 8%). [My call]
@@ -343,7 +343,7 @@ Shows **game balance** and **wallet** separately, with Deposit (quick amounts pl
 
 ### 4.10 NFT market (new) [You]
 
-The map is only the background. You choose from cards, not from the map. Tabs: For sale, All NFTs, My NFTs, with a map filter. Each card shows the art, map, owner, chance, times landed, and earnings, with Buy, List for sale, Change price, or Take off market.
+The map is only the background. You choose from cards, not from the map. Tabs: For sale, Mint, All NFTs, My NFTs, with a map filter. Each card shows the art, map, owner, chance, times landed, and earnings, with Mint, Buy, List for sale, Change price, or Take off market.
 
 ### 4.11 Season page (new)
 
@@ -491,7 +491,7 @@ You chose game first, which is the right order. But if the rules keep changing a
 1. Dig tray (players can only follow one room at a time)
 2. Island toys beyond a handful
 3. Third map (ship 2)
-4. NFT resale (players can buy NFTs but not list them)
+4. NFT resale (players can mint NFTs but not list them)
 5. Automatic season ending (a simpler points table, with no on-chain prizes)
 
 **Never cut:** the contract, deposit, waiting room, clue trail, tutorial, Game Board, crowding, and the jackpot.

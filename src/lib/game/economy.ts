@@ -34,6 +34,8 @@ export type Ledger = {
   balances: Record<string, number>;
   /** Fees and bonds locked in open rooms. */
   held: number;
+  /** What the project has earned, from minting. */
+  treasury: number;
   jackpot: number;
   deeds: Record<string, Deed>;
   hosts: Record<string, HostRecord>;
@@ -45,6 +47,7 @@ export function newLedger(now: number): Ledger {
     wallets: {},
     balances: {},
     held: 0,
+    treasury: 0,
     jackpot: 0,
     deeds: {},
     hosts: {},
@@ -55,7 +58,7 @@ export function newLedger(now: number): Ledger {
 /** Everything that exists. No flow may ever change this except by adding to a wallet. */
 export function totalMoney(ledger: Ledger): number {
   const sum = (values: Record<string, number>) => Object.values(values).reduce((a, b) => a + b, 0);
-  return sum(ledger.wallets) + sum(ledger.balances) + ledger.held + ledger.jackpot + ledger.season.pool;
+  return sum(ledger.wallets) + sum(ledger.balances) + ledger.held + ledger.treasury + ledger.jackpot + ledger.season.pool;
 }
 
 export function balanceOf(ledger: Ledger, account: string): number {
@@ -208,27 +211,30 @@ export function payRoom(ledger: Ledger, game: Game): void {
   }
 }
 
-/** What buying this deed costs right now, or null if the owner hasn't listed it. Nobody owns it at first. */
-export function deedCost(deed: Deed): number | null {
-  return deed.owner === null ? RULES.deedFirstPrice : deed.price;
+/** The first owner brings an NFT into being, and pays the project for it. */
+export function mintDeed(ledger: Ledger, account: string, id: string): void {
+  const deed = deedOf(ledger, id);
+  if (deed.owner !== null) throw new GameError('This NFT has already been minted.');
+  spend(ledger, account, RULES.deedMintPrice);
+  ledger.treasury += RULES.deedMintPrice;
+  deed.owner = account;
+  ledger.deeds[id] = deed;
 }
 
 /**
- * `seenPrice` is the price the buyer agreed to, so an owner raising it while the purchase is on its
- * way can't cost them more than they expected.
+ * Buys a listed NFT from its owner. `seenPrice` is the price the buyer agreed to, so an owner
+ * raising it while the purchase is on its way can't cost them more than they expected.
  */
 export function buyDeed(ledger: Ledger, account: string, id: string, seenPrice?: number): void {
   const deed = deedOf(ledger, id);
-  const cost = deedCost(deed);
+  if (deed.owner === null) throw new GameError('This NFT hasn\'t been minted yet.');
   if (deed.owner === account) throw new GameError('You already own this NFT.');
-  if (cost === null) throw new GameError('This NFT isn\'t for sale.');
-  if (seenPrice !== undefined && seenPrice !== cost) throw new GameError('The price just changed. Check it and try again.');
-  spend(ledger, account, cost);
-  if (deed.owner === null) ledger.jackpot += cost;
-  else credit(ledger, deed.owner, cost);
+  if (deed.price === null) throw new GameError('This NFT isn\'t for sale.');
+  if (seenPrice !== undefined && seenPrice !== deed.price) throw new GameError('The price just changed. Check it and try again.');
+  spend(ledger, account, deed.price);
+  credit(ledger, deed.owner, deed.price);
   deed.owner = account;
   deed.price = null;
-  ledger.deeds[id] = deed;
 }
 
 /** Lists a deed for sale at a price, or takes it off the market with null. */

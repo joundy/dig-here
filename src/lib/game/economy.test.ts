@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  balanceOf, buyDeed, closeSeason, deedChance, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, newLedger, openRoom,
+  balanceOf, buyDeed, closeSeason, deedChance, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, mintDeed, newLedger, openRoom,
   payRoom, seasonRanking, totalMoney, walletOf, withdraw,
 } from './economy';
 import type { Ledger } from './economy';
@@ -138,7 +138,7 @@ describe('payout', () => {
     fund(ledger, [owner]);
     const landing = 5;
     const kind = game.landmarks[landing].kind;
-    buyDeed(ledger, owner, deedId('tropical', kind));
+    mintDeed(ledger, owner, deedId('tropical', kind));
     const jackpotBefore = ledger.jackpot;
     const spots = { 'p0.near': 0, 'p1.near': 1 };
     // Off by one pixel, so the jackpot isn't hit.
@@ -146,7 +146,7 @@ describe('payout', () => {
     expect(game.result!.split).toEqual({ hostCut: 500, jackpot: 300, deed: 200, season: 100, prize: 8900 });
     expect(ledger.jackpot - jackpotBefore).toBe(300);
     expect(ledger.season.pool).toBe(100);
-    expect(balanceOf(ledger, owner)).toBe(50000 - RULES.deedFirstPrice + 200);
+    expect(balanceOf(ledger, owner)).toBe(50000 - RULES.deedMintPrice + 200);
     expect(balanceOf(ledger, 'host.near')).toBe(50000 + 500);
     expect(balanceOf(ledger, game.result!.winner!)).toBe(49000 + 8900);
     expect(game.result!.deedOwner).toBe(owner);
@@ -217,25 +217,35 @@ describe('deeds', () => {
     expect(deedKinds('snowy')).toHaveLength(12);
   });
 
-  it('sends the first sale into the jackpot', () => {
+  it('costs 20 NEAR to mint, which goes to the project and not the jackpot', () => {
+    const ledger = newLedger(NOW);
+    fund(ledger, ['a.near', 'b.near']);
+    expect(RULES.deedMintPrice).toBe(20000);
+    mintDeed(ledger, 'a.near', id);
+    expect(ledger.treasury).toBe(20000);
+    expect(ledger.jackpot).toBe(0);
+    expect(balanceOf(ledger, 'a.near')).toBe(30000);
+    expect(deedOf(ledger, id).owner).toBe('a.near');
+    expect(() => mintDeed(ledger, 'b.near', id)).toThrow(/already/);
+  });
+
+  it('can\'t be bought before it\'s minted', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near']);
-    buyDeed(ledger, 'a.near', id);
-    expect(ledger.jackpot).toBe(RULES.deedFirstPrice);
-    expect(deedOf(ledger, id).owner).toBe('a.near');
+    expect(() => buyDeed(ledger, 'a.near', id)).toThrow(/minted/);
   });
 
   it('can\'t be bought from an owner until they list it, and a sale pays the seller', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near', 'b.near']);
-    buyDeed(ledger, 'a.near', id);
+    mintDeed(ledger, 'a.near', id);
     expect(deedOf(ledger, id).price).toBeNull();
     expect(() => buyDeed(ledger, 'b.near', id)).toThrow(/for sale/);
     expect(() => listDeed(ledger, 'b.near', id, 3000)).toThrow(/own/);
     expect(() => listDeed(ledger, 'a.near', id, 0)).toThrow(GameError);
     listDeed(ledger, 'a.near', id, 7000);
     buyDeed(ledger, 'b.near', id);
-    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedFirstPrice + 7000);
+    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedMintPrice + 7000);
     expect(balanceOf(ledger, 'b.near')).toBe(50000 - 7000);
     expect(deedOf(ledger, id)).toMatchObject({ owner: 'b.near', price: null });
   });
@@ -243,7 +253,7 @@ describe('deeds', () => {
   it('can be taken off the market', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near', 'b.near']);
-    buyDeed(ledger, 'a.near', id);
+    mintDeed(ledger, 'a.near', id);
     listDeed(ledger, 'a.near', id, 3000);
     listDeed(ledger, 'a.near', id, null);
     expect(() => buyDeed(ledger, 'b.near', id)).toThrow(/for sale/);
@@ -252,7 +262,7 @@ describe('deeds', () => {
   it('won\'t let you buy your own, or pay a price you didn\'t agree to', () => {
     const ledger = newLedger(NOW);
     fund(ledger, ['a.near', 'b.near']);
-    buyDeed(ledger, 'a.near', id);
+    mintDeed(ledger, 'a.near', id);
     expect(() => buyDeed(ledger, 'a.near', id)).toThrow(/already/);
     listDeed(ledger, 'a.near', id, 4000);
     listDeed(ledger, 'a.near', id, 9000);
@@ -266,9 +276,9 @@ describe('deeds', () => {
     const ledger = newLedger(NOW);
     ledger.wallets['a.near'] = 10;
     deposit(ledger, 'a.near', 10);
-    expect(() => buyDeed(ledger, 'a.near', id)).toThrow(GameError);
+    expect(() => mintDeed(ledger, 'a.near', id)).toThrow(GameError);
     expect(deedOf(ledger, id).owner).toBeNull();
-    expect(ledger.jackpot).toBe(0);
+    expect(ledger.treasury).toBe(0);
   });
 
   it('gives every deed a chance, adding up to 1 across a map', () => {
@@ -364,7 +374,7 @@ it('never creates or loses a coin through hundreds of random rounds', () => {
       const kinds = deedKinds(mapId);
       const id = deedId(mapId, kinds[r(kinds.length)]);
       const buyer = people[r(people.length)];
-      try { buyDeed(ledger, buyer, id); listDeed(ledger, buyer, id, 1 + r(3000)); } catch (e) { expect(e).toBeInstanceOf(GameError); }
+      try { mintDeed(ledger, buyer, id); listDeed(ledger, buyer, id, 1 + r(3000)); } catch (e) { expect(e).toBeInstanceOf(GameError); }
     }
     if (r(40) === 0) closeSeason(ledger, NOW);
     expect(totalMoney(ledger)).toBe(start);
