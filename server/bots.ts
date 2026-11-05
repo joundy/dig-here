@@ -23,6 +23,8 @@ const WALLET_REFILL = near('0.25');
 const GAME_TOP_UP = near('0.06');
 const GAS_RESERVE = near('0.08');
 const DONOR_MIN = near('0.4');
+const OWN_WITHDRAW_MIN = near('0.2');
+const OWN_WITHDRAW = near('0.15');
 // Long enough for a player who joined together with a friend, short enough that a lone juror isn't left waiting.
 const HUMAN_SETTLE_MS = 2500;
 const PRESS_AGAIN_MS = 6000;
@@ -106,6 +108,14 @@ export class Bots {
 
   /** Winners pile up coins while losers run dry. Moving them around first keeps the root's coins for last. */
   async #refill(bot: Bot): Promise<void> {
+    if (bot.balance >= OWN_WITHDRAW_MIN) {
+      const own = await bot.account.call(this.#config.contract, 'withdraw', { amount: OWN_WITHDRAW.toString() }, 10, 1n);
+      if (own.ok && own.value !== false) {
+        bot.balance -= OWN_WITHDRAW;
+        bot.wallet += OWN_WITHDRAW;
+        return;
+      }
+    }
     const donor = [...this.#bots.values()].filter((b) => b !== bot && !b.busy).sort((a, b) => (b.balance > a.balance ? 1 : -1))[0];
     if (donor && donor.balance >= DONOR_MIN) {
       donor.busy = true;
