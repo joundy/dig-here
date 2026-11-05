@@ -172,7 +172,7 @@ flowchart TB
 
 | Part | Decides | Can't do |
 |---|---|---|
-| **Contract** | Every rule, roll and coin | Change after launch: it has no owner or admin methods |
+| **Contract** | Every rule, roll and coin | Change rules or move player coins: it has no owner or admin methods. On testnet the deployer can still redeploy the code, see [Known limits](#known-limits) |
 | **Oracle** | Only *when* due steps are sent | Choose a result, or touch coins. It can refuse to reveal, which refunds everyone |
 | **Live state** | Nothing | It only saves reads. Browsers fall back to the chain if it's down |
 | **Indexer** | Nothing | It keeps history. Verify rechecks what it says |
