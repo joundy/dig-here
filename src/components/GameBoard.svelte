@@ -77,7 +77,10 @@
       await backend.ensureAccount();
       const me = backend.account;
       const balance = backend.balanceOf(me);
-      const room = quickPlayRoom(backend.games, balance, me, hosts) ?? quickPlayRoom(backend.games, Infinity, me, hosts);
+      // Short of coins, it picks something the wallet could pay for before anything dearer.
+      const room = quickPlayRoom(backend.games, balance, me, hosts)
+        ?? quickPlayRoom(backend.games, backend.walletOf(me), me, hosts)
+        ?? quickPlayRoom(backend.games, Infinity, me, hosts);
       if (!room) {
         error = 'No room left to join. Host one!';
         return;
