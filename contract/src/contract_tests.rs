@@ -463,34 +463,45 @@ fn a_withheld_reveal_cannot_strand_a_round_with_too_few_digs() {
     assert_eq!(c.held, 0);
 }
 
-fn sell_penguin(c: &mut Contract, chain: &mut Chain) {
+#[test]
+#[should_panic(expected = "Attach at least 1 yoctoNEAR to mint")]
+fn minting_with_nothing_attached_is_refused_so_a_function_call_key_cannot() {
+    let mut chain = Chain::new();
+    let mut c = contract(&mut chain);
     chain.call("seller.testnet", NEAR);
-    c.mint_nft("snowy:penguin".to_string());
-    chain.call("seller.testnet", 0);
-    c.list_nft("snowy:penguin".to_string(), Some(100));
-    chain.call("buyer.testnet", NEAR);
     c.deposit();
+    chain.call("seller.testnet", 0);
+    c.mint_nft("snowy:penguin".to_string());
 }
 
 #[test]
-#[should_panic(expected = "Attach at least 1 yoctoNEAR to buy")]
-fn buying_with_nothing_attached_is_refused_so_a_function_call_key_cannot() {
+fn minting_with_one_yocto_spends_the_game_balance() {
     let mut chain = Chain::new();
     let mut c = contract(&mut chain);
-    sell_penguin(&mut c, &mut chain);
-    chain.call("buyer.testnet", 0);
-    c.buy_nft("snowy:penguin".to_string(), 100);
+    chain.call("seller.testnet", NEAR);
+    c.deposit();
+    let before = balance(&c, "seller.testnet");
+    chain.call("seller.testnet", 1);
+    c.mint_nft("snowy:penguin".to_string());
+    assert_eq!(balance(&c, "seller.testnet"), before + 1 - yocto_plain(c.config.mint_price));
 }
 
 #[test]
-fn buying_with_one_yocto_spends_the_game_balance() {
+fn a_room_keeps_the_closeness_range_it_was_created_under() {
+    let mut chain = Chain::new();
+    let c = contract(&mut chain);
+    assert_eq!(c.closeness_range_of(1), crate::rules::CLOSENESS_RANGE, "a fresh contract has only ever had the new range");
+    c.set_closeness_new_from(7);
+    assert_eq!(c.closeness_range_of(6), crate::rules::CLOSENESS_RANGE_BEFORE);
+    assert_eq!(c.closeness_range_of(7), crate::rules::CLOSENESS_RANGE);
+}
+
+#[test]
+#[should_panic(expected = "This upgrade has already run")]
+fn the_market_upgrade_runs_once() {
     let mut chain = Chain::new();
     let mut c = contract(&mut chain);
-    sell_penguin(&mut c, &mut chain);
-    let before = balance(&c, "buyer.testnet");
-    chain.call("buyer.testnet", 1);
-    c.buy_nft("snowy:penguin".to_string(), 100);
-    assert_eq!(balance(&c, "buyer.testnet"), before + 1 - yocto_plain(100));
+    c.upgrade_to_market();
 }
 
 #[test]

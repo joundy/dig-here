@@ -1,5 +1,5 @@
 //! Whole-number scoring and ranking, as `scoreDig` and `rankDigs` in `src/lib/game/engine.ts`.
-use crate::rules::{CLOSENESS_RANGE, CROWD_BPS, CROWD_RADIUS};
+use crate::rules::{CROWD_BPS, CROWD_RADIUS};
 
 fn isqrt(n: u64) -> u64 {
     if n < 2 {
@@ -34,9 +34,9 @@ pub struct Ranked {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn score_dig(dig: u8, x: u16, y: u16, bonus_bps: u32, crowded: bool, dug_at: u64, tx: u16, ty: u16) -> Ranked {
+pub fn score_dig(dig: u8, x: u16, y: u16, bonus_bps: u32, crowded: bool, dug_at: u64, tx: u16, ty: u16, range: u64) -> Ranked {
     let distance = isqrt(squared_distance(x, y, tx, ty) as u64 * 1_000_000);
-    let closeness = 1000u64.saturating_sub(distance / CLOSENESS_RANGE);
+    let closeness = 1000u64.saturating_sub(distance / range);
     let crowd = if crowded { CROWD_BPS } else { 10000 };
     Ranked { dig, distance, closeness, score: closeness * bonus_bps as u64 * crowd / 100_000_000, dug_at }
 }

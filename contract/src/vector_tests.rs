@@ -62,6 +62,8 @@ fn after(stream: &mut Stream) -> u64 {
 fn rule_constants() {
     let v = vectors();
     assert_eq!(u(&v["rules"]["expired_bond_penalty_bps"]), EXPIRED_BOND_PENALTY_BPS);
+    assert_eq!(u(&v["rules"]["closeness_range"]), CLOSENESS_RANGE);
+    assert_eq!(u(&v["rules"]["closeness_range_before"]), CLOSENESS_RANGE_BEFORE);
     assert_eq!(expired_penalty(u(&v["rules"]["host_bond"])), 10);
 }
 
@@ -266,7 +268,7 @@ fn scores() {
     let v = vectors();
     for case in area(&v, "scores") {
         let d = vdig(&case["dig"], 0);
-        let r = score_dig(0, d.x, d.y, d.bonus, d.crowded, 0, u(&case["treasure"]["x"]) as u16, u(&case["treasure"]["y"]) as u16);
+        let r = score_dig(0, d.x, d.y, d.bonus, d.crowded, 0, u(&case["treasure"]["x"]) as u16, u(&case["treasure"]["y"]) as u16, u(&case["range"]));
         assert_eq!(r.distance, u(&case["distance"]));
         assert_eq!(r.closeness, u(&case["closeness"]));
         assert_eq!(r.score, u(&case["score"]));
@@ -275,7 +277,7 @@ fn scores() {
 
 fn ranked(digs: &[VDig], tx: u16, ty: u16) -> Vec<Ranked> {
     let mut rows: Vec<Ranked> =
-        digs.iter().enumerate().map(|(i, d)| score_dig(i as u8, d.x, d.y, d.bonus, d.crowded, d.at, tx, ty)).collect();
+        digs.iter().enumerate().map(|(i, d)| score_dig(i as u8, d.x, d.y, d.bonus, d.crowded, d.at, tx, ty, crate::rules::CLOSENESS_RANGE)).collect();
     rank(&mut rows);
     rows
 }

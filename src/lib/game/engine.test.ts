@@ -236,9 +236,9 @@ describe('scoring', () => {
     const t = { x: 0, y: 0 };
     const early = scoreDig({ ...dig(0, 15000), x: 4, y: 3 }, t);
     expect(early.distance).toBe(5000);
-    expect(early.closeness).toBe(896);
+    expect(early.closeness).toBe(948);
     const ninety = scoreDig({ ...dig(0, 15000), x: 4, y: 3 }, { x: 0, y: 0 });
-    expect(ninety.score).toBe(Math.floor((896 * 15000) / 10000));
+    expect(ninety.score).toBe(Math.floor((948 * 15000) / 10000));
     const perfect = scoreDig(dig(0, 10000), t);
     expect(perfect.closeness).toBe(1000);
     expect(perfect.score).toBe(1000);
@@ -247,6 +247,12 @@ describe('scoring', () => {
 
   it('reaches zero at the closeness range', () => {
     expect(scoreDig(dig(RULES.closenessRange, 25000), { x: 0, y: 0 }).closeness).toBe(0);
+  });
+
+  it('scores an old round by the range it was played under', () => {
+    const old = scoreDig(dig(RULES.closenessRangeBefore, 25000), { x: 0, y: 0 }, RULES.closenessRangeBefore);
+    expect(old.closeness).toBe(0);
+    expect(scoreDig(dig(RULES.closenessRangeBefore, 25000), { x: 0, y: 0 }).closeness).toBe(500);
   });
 
   it('multiplies a crowded dig by 0.85', () => {

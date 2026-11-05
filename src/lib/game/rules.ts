@@ -21,8 +21,10 @@ export const RULES = {
     { startsAt: 85, bonusBps: 10000 },
   ],
 
-  /** Pixels at which closeness points reach zero. */
-  closenessRange: 48,
+  /** Pixels at which closeness points reach zero. `docs/research/closeness-range.md` has why 96. */
+  closenessRange: 96,
+  /** What rounds from before that were scored by. Verify needs it, and the contract says which applies to a room. */
+  closenessRangeBefore: 48,
   /** How far from its landmark the treasure can land, in pixels. */
   treasureScatter: 13,
   /** A dig within this many pixels of an earlier dig is crowded. */

@@ -148,6 +148,7 @@ pub struct RoomSummary<'a> {
     pot: u64,
     duration_sec: u32,
     host_cut_bps: u16,
+    closeness_range: u64,
     min_players: u8,
     max_players: u8,
     countdown_sec: u32,
@@ -172,7 +173,7 @@ pub struct RoomSummary<'a> {
     landmarks: Option<Vec<[u16; 3]>>,
 }
 
-fn room_summary(room: &Room, with_landmarks: bool) -> RoomSummary<'_> {
+fn room_summary(room: &Room, with_landmarks: bool, closeness_range: u64) -> RoomSummary<'_> {
     use crate::rooms::Status;
     let live = room.status == Status::Live;
     let started = room.status != Status::Waiting;
@@ -188,6 +189,7 @@ fn room_summary(room: &Room, with_landmarks: bool) -> RoomSummary<'_> {
         pot: room.pot(),
         duration_sec: room.duration_sec,
         host_cut_bps: room.host_cut_bps,
+        closeness_range,
         min_players: room.min_players,
         max_players: room.max_players,
         countdown_sec: room.countdown_sec,
@@ -269,10 +271,10 @@ pub struct ResultView<'a> {
     season_points: Vec<AccountAmount<'a>>,
 }
 
-fn result_view(room: &Room) -> Option<ResultView<'_>> {
+fn result_view(room: &Room, closeness_range: u64) -> Option<ResultView<'_>> {
     let outcome = room.outcome.as_ref()?;
     let player_of = |dig: u8| &room.players[room.digs[dig as usize].player as usize];
-    let ranked = outcome.treasure.as_ref().map(|t| room.ranking(t)).unwrap_or_default();
+    let ranked = outcome.treasure.as_ref().map(|t| room.ranking(t, closeness_range)).unwrap_or_default();
     let season_points = if ranked.len() >= SEASON_MIN_DIGS {
         ranked
             .iter()
@@ -323,6 +325,7 @@ pub struct RoomCreatedEvent<'a> {
     bond: u64,
     duration_sec: u32,
     host_cut_bps: u16,
+    closeness_range: u64,
     min_players: u8,
     max_players: u8,
     countdown_sec: u32,
@@ -337,7 +340,7 @@ pub struct RoomCreatedEvent<'a> {
 }
 
 impl<'a> RoomCreatedEvent<'a> {
-    pub fn of(room: &'a Room, bond: u64) -> Self {
+    pub fn of(room: &'a Room, bond: u64, closeness_range: u64) -> Self {
         Self {
             room_id: room.id,
             name: &room.name,
@@ -347,6 +350,7 @@ impl<'a> RoomCreatedEvent<'a> {
             bond,
             duration_sec: room.duration_sec,
             host_cut_bps: room.host_cut_bps,
+            closeness_range,
             min_players: room.min_players,
             max_players: room.max_players,
             countdown_sec: room.countdown_sec,
@@ -428,7 +432,6 @@ pub struct NftView {
     map: &'static str,
     kind: &'static str,
     owner: Option<AccountId>,
-    price: Option<u64>,
     earned: u64,
     landings: u32,
 }
@@ -495,13 +498,37 @@ impl HostView {
     }
 }
 
+/// The first room id on the current range. Kept under its own key, not in the contract's struct, so an upgrade that
+/// adds it leaves every stored layout alone, and the old code could still read this state.
+const CLOSENESS_NEW_FROM_KEY: &[u8] = b"closeness_new_from";
+
+fn closeness_range_from(room_id: u64, new_from: u64) -> u64 {
+    if room_id >= new_from {
+        CLOSENESS_RANGE
+    } else {
+        CLOSENESS_RANGE_BEFORE
+    }
+}
+
 impl Contract {
+    /// Without the key, this is state from before the change, so every room is on the old range.
+    pub(crate) fn closeness_new_from(&self) -> u64 {
+        env::storage_read(CLOSENESS_NEW_FROM_KEY)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map_or(u64::MAX, u64::from_le_bytes)
+    }
+
+    pub(crate) fn set_closeness_new_from(&self, first_room: u64) {
+        env::storage_write(CLOSENESS_NEW_FROM_KEY, &first_room.to_le_bytes());
+    }
+
     fn open_rooms(&self) -> Vec<Room> {
         self.open.iter().filter_map(|id| self.rooms.get(id)).collect()
     }
 
     pub(crate) fn live_state_json(&self) -> Vec<u8> {
         let rooms = self.open_rooms();
+        let from = self.closeness_new_from();
         let state = LiveState {
             version: self.version,
             now_ms: env::block_timestamp_ms(),
@@ -510,22 +537,23 @@ impl Contract {
             commitments_left: self.tip_tail - self.tip_head,
             missed_reveals: self.missed_reveals,
             max_open_rooms: MAX_OPEN_ROOMS,
-            rooms: rooms.iter().map(|r| room_summary(r, true)).collect(),
+            rooms: rooms.iter().map(|r| room_summary(r, true, closeness_range_from(r.id, from))).collect(),
         };
         near_sdk::serde_json::to_vec(&state).unwrap_or_default()
     }
 
     pub(crate) fn room_json(&self, room_id: u64) -> Vec<u8> {
         let room = self.load_room(room_id);
+        let range = self.closeness_range_of(room_id);
         let full = RoomFull {
-            summary: room_summary(&room, false),
+            summary: room_summary(&room, false, range),
             created_height: room.created_height,
             tip: to_hex(&room.tip),
             block_seed: to_hex(&room.block_seed),
             layout_seed: to_hex(&room.layout_seed),
             landmarks: landmark_views(&room),
             rolls: room.rolls.iter().map(|r| roll_view(&room, r)).collect(),
-            result: result_view(&room),
+            result: result_view(&room, range),
         };
         near_sdk::serde_json::to_vec(&full).unwrap_or_default()
     }
@@ -542,7 +570,6 @@ impl Contract {
                     token_id: id,
                     map: def.name,
                     kind: def.kinds[index % KINDS_PER_MAP].name,
-                    price: deed.price,
                     earned: deed.earned,
                     landings: deed.landings,
                 }
@@ -581,7 +608,8 @@ impl Contract {
             .take(limit.min(MAX_OPEN_ROOMS as u32) as usize)
             .filter_map(|id| self.rooms.get(id))
             .collect();
-        let summaries: Vec<RoomSummary> = rooms.iter().map(|r| room_summary(r, false)).collect();
+        let from = self.closeness_new_from();
+        let summaries: Vec<RoomSummary> = rooms.iter().map(|r| room_summary(r, false, closeness_range_from(r.id, from))).collect();
         return_json(&summaries);
     }
 
@@ -594,11 +622,12 @@ impl Contract {
     /// The ring of finished and refunded rooms, newest first.
     pub fn get_recent_finished(&self) {
         let rooms: Vec<Room> = self.recent.iter().rev().filter_map(|id| self.rooms.get(id)).collect();
+        let from = self.closeness_new_from();
         let rows: Vec<FinishedSummary> = rooms
             .iter()
             .map(|room| {
                 let outcome = room.outcome.as_ref();
-                let ranked = outcome.and_then(|o| o.treasure.as_ref()).map(|t| room.ranking(t)).unwrap_or_default();
+                let ranked = outcome.and_then(|o| o.treasure.as_ref()).map(|t| room.ranking(t, closeness_range_from(room.id, from))).unwrap_or_default();
                 FinishedSummary {
                     room_id: room.id,
                     name: &room.name,
@@ -648,6 +677,12 @@ impl Contract {
     /// The index the next uploaded tip will get. The oracle derives the tip's secret from this.
     pub fn commitments_next_index(&self) -> u64 {
         self.tip_tail
+    }
+
+    /// The closeness range a room was or will be scored by, from its id alone, so this also answers for a round
+    /// long gone from the ring. Rooms from before the range changed keep the old one.
+    pub fn closeness_range_of(&self, room_id: u64) -> u64 {
+        closeness_range_from(room_id, self.closeness_new_from())
     }
 
     pub fn missed_reveals(&self) -> u64 {

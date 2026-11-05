@@ -14,7 +14,10 @@ pub const MIN_DIGS: usize = 2;
 pub const CLUE_STARTS_AT: [u64; 4] = [0, 30, 60, 85];
 pub const CLUE_BONUS_BPS: [u32; 4] = [25000, 15000, 12500, 10000];
 
-pub const CLOSENESS_RANGE: u64 = 48;
+/// The range for rooms created since the upgrade that set `closeness_new_from`. See `Contract::closeness_range_of`.
+pub const CLOSENESS_RANGE: u64 = 96;
+/// What every room before that was scored by. It stays so those rounds still recompute the same.
+pub const CLOSENESS_RANGE_BEFORE: u64 = 48;
 pub const TREASURE_SCATTER: i32 = 13;
 pub const TREASURE_ATTEMPTS: u32 = 60;
 pub const CROWD_RADIUS: i64 = 6;

@@ -184,9 +184,10 @@ export function placeDig(game: Game, account: string, spot: Point, seenClue?: nu
   return dig;
 }
 
-export function scoreDig(dig: Dig, treasure: Point): RankedDig {
+/** `range` is the room's own, because a round is scored by the range it was created under. See `contract/README.md`. */
+export function scoreDig(dig: Dig, treasure: Point, range: number = RULES.closenessRange): RankedDig {
   const distance = isqrt(squaredDistance(dig, treasure) * 1_000_000);
-  const closeness = Math.max(0, 1000 - Math.floor(distance / RULES.closenessRange));
+  const closeness = Math.max(0, 1000 - Math.floor(distance / range));
   const crowd = dig.crowded ? RULES.crowdBps : 10000;
   return { ...dig, distance, closeness, score: Math.floor((closeness * dig.bonusBps * crowd) / 100_000_000) };
 }

@@ -127,9 +127,23 @@ impl Contract {
         self.debit(id, cost, "storage");
     }
 
-    /// Only for accounts that have a record: everyone paid by a room joined or hosted it, and every
-    /// NFT owner was checked when they got the token. A missing record can't fail a settlement, though,
-    /// so it's created here, at the contract's own bounded cost.
+    /// Whether a deed's owner can be paid a share. A market buyer may have no record, so their first share has to
+    /// pay for one. Receiving an NFT can't make the record, because anyone could then grow storage for free by
+    /// passing a token around fresh accounts. Nothing to pay needs no record.
+    pub(crate) fn can_take_share(&mut self, owner: &AccountId, share_milli: u64) -> bool {
+        if share_milli == 0 || self.accounts.get(owner).is_some() {
+            return true;
+        }
+        let before = env::storage_usage();
+        self.accounts.insert(owner, &Account::default());
+        let cost = (env::storage_usage() - before) as u128 * env::storage_byte_cost().as_yoctonear();
+        self.accounts.remove(owner);
+        yocto(share_milli) >= cost
+    }
+
+    /// Only for accounts that have a record: everyone paid by a room joined or hosted it, and a deed's owner got
+    /// one through `credit_paying_for_record`. A missing record can't fail a settlement, though, so it's created
+    /// here rather than panicking.
     pub(crate) fn credit(&mut self, id: &AccountId, amount: u128, reason: &'static str) {
         if amount == 0 {
             return;
@@ -160,7 +174,7 @@ impl Contract {
 
     /// Whatever a payable method was sent goes to the caller's balance first, and its cost comes out of
     /// the balance. So a wallet tops up once, and a function-call key then pays with nothing attached,
-    /// for the methods that allow it. `buy_nft` doesn't.
+    /// for the methods that allow it. `mint_nft` doesn't.
     pub(crate) fn take_attached(&mut self) {
         let attached = env::attached_deposit().as_yoctonear();
         if attached > 0 {

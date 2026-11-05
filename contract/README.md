@@ -21,7 +21,7 @@ Failures are panics with a readable sentence in the error, and they return anyth
 
 ## Calling it
 
-Identify players with their predecessor. Payable methods put whatever's attached into the caller's game balance first, then take the cost from the balance. So a wallet can top up once with one approval, and a function-call key then pays silently with nothing attached. `buy_nft` is the exception: it needs a yocto, so only a real wallet signature can spend a balance on another player's NFT.
+Identify players with their predecessor. Payable methods put whatever's attached into the caller's game balance first, then take the cost from the balance. So a wallet can top up once with one approval, and a function-call key then pays silently with nothing attached. `mint_nft` is the exception: it needs at least a yocto, so only a real wallet signature can spend a balance on an NFT.
 
 The first credit to an account pays for its record out of that credit, at the exact measured cost. A deposit smaller than that fails.
 
@@ -30,13 +30,14 @@ Attach gas per the table below. Gas is bought at 10× its burn price and the res
 | Method | Attach (Tgas) |
 |---|---|
 | `dig` | 5 |
-| `join`, `leave`, `start`, `deposit`, `deposit_for`, `list_nft` | 10 |
+| `join`, `leave`, `start`, `deposit`, `deposit_for` | 10 |
 | `withdraw` (fails below 10) | 10 |
 | `poke` | 30 |
 | `reveal` | 30 |
 | `add_commitments` | 30 for 50 tips |
 | `create_room` | 60 |
-| `mint_nft`, `buy_nft`, `nft_transfer` | 30 |
+| `mint_nft`, `nft_transfer` | 30 |
+| `nft_approve` with a market `msg` | 30, and see `../contract-market/README.md` |
 | `close_season` | 30 |
 
 ## Init
@@ -106,15 +107,17 @@ Token IDs are `<map>:<kind>`, like `snowy:penguin`: 36 in all, 12 per map, as li
 
 | Method | Notes |
 |---|---|
-| `mint_nft({ token_id })` payable | First owner. Costs exactly `mint_price`. The NFT's storage comes out of that, and the treasury's **game balance** gets the rest |
-| `list_nft({ token_id, price })` | Owner only. `price` is milliNEAR, or `null` to delist |
-| `buy_nft({ token_id, seen_price })` at least 1 yocto | Must match the current price. Pays the seller's game balance, and returns their approvals' storage deposit. Attach 1 yocto to pay from the balance, or more to top it up first. **A function-call key can't call this**, because it can't attach anything: otherwise a stolen key could buy a thief's NFT listed at the victim's whole balance |
+| `mint_nft({ token_id })` at least 1 yocto | First owner. Costs exactly `mint_price`. Anything attached goes to the balance first, and the price comes out of it. The NFT's storage comes out of that, and the treasury's **game balance** gets the rest. **A function-call key can't call this**, because it can't attach anything |
 
 Standards: NEP-171 (`nft_transfer`, `nft_transfer_call`, `nft_token`, `nft_resolve_transfer`), NEP-177 (`nft_metadata`), NEP-178 (`nft_approve`, `nft_revoke`, `nft_revoke_all`, `nft_is_approved`) and NEP-181 (`nft_total_supply`, `nft_tokens`, `nft_supply_for_owner`, `nft_tokens_for_owner`), from `near-contract-standards`.
 
-- `nft_transfer` and `buy_nft` need a yocto, so **a function-call key can't call them**. This is expected. Tested in the sandbox.
-- **The receiver must already have a game record**, or the transfer fails with "The receiver needs a Dig Here balance first". `deposit_for` fixes that. Settlements and sales credit an NFT's owner and must never have to create a record.
-- Any transfer ends a listing, including one the owner had made before.
+**Selling is the market contract's job**, in `../contract-market/`: an owner calls `nft_approve` with a price, and the market moves the token when someone buys. `list_nft` and `buy_nft` are gone, and so is any listing made with them.
+
+- `nft_transfer` needs a yocto, so **a function-call key can't call it**. Tested in the sandbox.
+- **A receiver needs no game record.** Receiving an NFT doesn't make one, because anyone could then grow storage for free by passing a token around fresh accounts. The owner's **first deed share pays for their record**, at the exact measured cost, in the same receipt: a `balance` event shows `deed_share` then `storage`, and `paid` and `earned` are the whole share.
+- **A share too small for that isn't stranded.** It goes to the jackpot, exactly as for a deed with no owner, and `deed.owner` in `finished` and `deed_owner` in `get_room` are then null, so Verify's rule is the same one. On testnet that's only a share of 1 milliNEAR, from a pot of 50 to 99, for a name of 18 characters or longer. A share of 0 needs no record, and the owner is still named.
+- **A transfer returns the approvals' storage deposit** to the old owner. `near-contract-standards` keeps it on `nft_transfer`, so this contract adds that.
+- **An approved account hears when its approval ends.** After a transfer or a revoke, up to 4 approved accounts each get a detached `nft_on_approval_ended({ token_id, owner_id, approval_id })`, with 5 Tgas and no deposit. The account that made the transfer doesn't, since it knows. It's best effort: with under 7 Tgas left it's skipped, so a notice can never make a transfer fail, and a failed notice changes nothing here. `nft_transfer_call` hands nearly all its gas to the receiver, so it usually can't send one.
 
 ### Season
 
@@ -125,6 +128,8 @@ Standards: NEP-171 (`nft_transfer`, `nft_transfer_call`, `nft_token`, `nft_resol
 Plain JSON. Fields below are all exact.
 
 **`get_config()`** gives the init config. **`get_now_ms()`** gives chain time. **`get_jackpot()`**, **`commitments_left()`**, **`commitments_next_index()`** and **`missed_reveals()`** each give a number.
+
+**`closeness_range_of({ room_id })`** gives the closeness range a room is scored by, as a number. It answers from the id alone, so it also works for a round long gone from the ring, and for any id. See "The closeness range" below.
 
 **`get_account({ id })`**, `null` if never credited: `{ account_id, balance, season_points }`. `balance` is a yocto string.
 
@@ -145,7 +150,7 @@ Accounts with the excluded suffix never appear in `top`, though they do collect 
 **`get_nfts({ from, limit })`**: all 36, whether minted or not, in deed order:
 
 ```
-[{ token_id, map, kind, owner /* or null */, price /* milli, or null */, earned, landings }]
+[{ token_id, map, kind, owner /* or null */, earned, landings }]
 ```
 
 **`live_state()`**, one batched read for the board and every open room. Measured with 30 full rooms in the gas doc: 32.6 Tgas and 247 KB at worst, so it needs no paging. Open rooms are capped at 30. Send `accept-encoding: gzip`.
@@ -164,6 +169,7 @@ Accounts with the excluded suffix never appear in `top`, though they do collect 
 
 ```
 { room_id, version, name, host, map, fee, pot, duration_sec, host_cut_bps,
+  closeness_range,        // what this room is scored by. See "The closeness range"
   min_players, max_players, countdown_sec,
   status,                 // "waiting" or "live" here; also "finished" or "refunded" in get_room
   created_ms, deadline_ms,
@@ -225,23 +231,42 @@ Rooms get deleted, so these are the permanent record. Everything a proof needs i
 
 | Event | `data` |
 |---|---|
-| `room_created` | `room_id, name, host, map, fee, bond, duration_sec, host_cut_bps, min_players, max_players, countdown_sec, created_ms, deadline_ms, block_height, tip_index, tip, block_seed, layout_seed, landmarks: [{ id, kind, category, x, y, tags, flip }]` |
+| `room_created` | `room_id, name, host, map, fee, bond, duration_sec, host_cut_bps, closeness_range, min_players, max_players, countdown_sec, created_ms, deadline_ms, block_height, tip_index, tip, block_seed, layout_seed, landmarks: [{ id, kind, category, x, y, tags, flip }]` |
 | `joined`, `left` | `room_id, account, players` (the new count), `start_at_ms` |
 | `started` | `room_id, by` (`host`, `timer` or `deadline`), `started_ms, ends_at_ms, block_height, players: [account], pot` |
 | `dig` | `room_id, account, x, y, clue_index, bonus_bps, crowded, dug_at_ms` |
 | `locked` | `room_id, step, lock_seed, digs_hash, digs_count, lock_ms, lock_height, due_ms, reveal_deadline_ms` |
 | `revealed` | `room_id, step, lock_seed, link, digs_hash, roll_seed, clue, candidates_after, treasure, reveal_ms, reveal_height`. For steps 1 to 3 `treasure` is null. For step 4 `clue` and `candidates_after` are null |
-| `finished` | `room_id, map, host, players: [account], fee, host_cut_bps, bond, pot, split: { host_cut, jackpot, deed, season, prize }, treasure: { x, y, landmark_id }, winner, ranking: [{ account, x, y, clue_index, bonus_bps, crowded, dug_at_ms, distance, closeness, score }], deed: { token_id, owner, paid, earned, landings }, jackpot_before, jackpot_after, jackpot_win: null or { account, amount }, season_number, season_pool_after, season_points: [{ account, points }], ended_ms, block_height` |
+| `finished` | `room_id, map, host, players: [account], fee, host_cut_bps, closeness_range, bond, pot, split: { host_cut, jackpot, deed, season, prize }, treasure: { x, y, landmark_id }, winner, ranking: [{ account, x, y, clue_index, bonus_bps, crowded, dug_at_ms, distance, closeness, score }], deed: { token_id, owner, paid, earned, landings }, jackpot_before, jackpot_after, jackpot_win: null or { account, amount }, season_number, season_pool_after, season_points: [{ account, points }], ended_ms, block_height` |
 | `refunded` | `room_id, reason, host, players: [account], fee, pot, bond, bond_returned, bond_penalty, jackpot_after, digs_count, ended_ms, block_height, missed_reveals` |
 | `commitments_added` | `first_index, count, left` |
 | `nft_minted` | `token_id, owner, price, treasury, treasury_received, storage_cost`. The last two are yocto strings |
-| `nft_listed` | `token_id, owner, price` (null when delisted) |
-| `nft_sold` | `token_id, seller, buyer, price` |
-| `nft_listing_cancelled` | `token_id, reason` (`transferred` or `transfer_returned`) |
+| `nft_listed`, `nft_sold` | Old code only, so they're still in history. `price` in milliNEAR. Sales are now in the market's events, whose standard is `dig-here-market` and whose prices are yocto strings |
+| `nft_listing_cancelled` | `token_id, reason` (`transferred` or `transfer_returned` from the old code, `market_moved` from the upgrade) |
+| `closeness_range_changed` | `range_before, range, first_room`. Logged once, by the upgrade |
 | `season_closed` | `season, starting_pool, pool_after, prizes: [{ account, prize }], next_season, next_ends_at_ms` |
 | `balance` | `changes: [{ account, delta, balance, reason }]`. `delta` is a **signed** yocto string, `balance` the new total as a yocto string |
 
 `reason` in `balance` is one of `deposit, storage, withdraw, withdraw_failed, bond, bond_returned, join, leave, refund, host_cut, prize, deed_share, jackpot, mint, mint_income, nft_buy, nft_sale, season_prize`.
+
+## The closeness range
+
+`closeness = max(0, 1000 - floor(distance / range))`, where `distance` is in thousandths of a pixel. **A round is scored by the range it was created under, for good**, whatever happens later.
+
+| Rooms | `range` |
+|---|---|
+| Created before the upgrade to the market | 48 |
+| Every room after, on any contract with this code | 96 |
+
+**The rule for Verify, in order:**
+
+1. `room.closeness_range` from `get_room`, `live_state` or `get_rooms`, which is always there on this code.
+2. Rebuilding from events: `closeness_range` in that room's `room_created` or `finished` event.
+3. Neither, for events from before the field existed: **48**. Those rounds can only be from the old code.
+
+Or ask `closeness_range_of({ room_id })`, which gives the same answer for any room. `RULES.closenessRange` and `RULES.closenessRangeBefore` in `src/lib/game/rules.ts` hold the two values, and `scoreDig(dig, treasure, range)` in `engine.ts` takes the room's range as its third argument. Leaving it out means the new range, so **Verify and anything else scoring a real room must pass it**.
+
+The fact behind this is one number, the first room id on the new range, under the storage key `closeness_new_from` and outside the contract's struct, so adding it changed no stored layout. `upgrade_to_market` sets it to `next_room_id` in the same transaction as the deploy, so no room can be created in between, and a room open during the upgrade keeps 48 to its end. `new` sets it to 1. With the key missing, every room is on the old range. Why 96: `docs/research/closeness-range.md`.
 
 ## Randomness and proof
 
@@ -261,7 +286,7 @@ The contract's own balance holds its storage. See the gas doc for the numbers.
 
 ## Trust
 
-No method can change the rules or move player funds after `new`. The contract has no owner.
+No method can change the rules or move player funds after `new`. The contract has no owner. `upgrade_to_market` is private to the contract's own account, runs once, and moves no coins.
 
 On testnet the deployer keeps a full-access key to `v1.dighere.testnet`, so a person could still redeploy. Before mainnet, delete every key on the account, so nothing can change the code either.
 
@@ -277,7 +302,9 @@ Only through the capped toolbox, from `contract/`:
 ../docker/near cargo test --test sandbox -- --ignored upgrading_in_place
 ```
 
-The last one proves an in-place upgrade. It needs the live code at `target/near-old/dig_here.wasm`, checked against the account's `code_hash`. It builds up state on that code, deploys over it, compares every view, then plays the open rooms on.
+The last one proves an in-place upgrade. It needs the live code at `target/near-old/dig_here.wasm`, checked against the account's `code_hash`, and the market's wasm from `../contract-market`. It builds up state on that code, deploys over it, compares every stored key and every view, plays the open rooms on, and sells an old NFT through the real market.
+
+Both contracts working together are in `../contract-market/tests/sandbox.rs`.
 
 `--no-abi` keeps the wasm small. `gas-probe` adds a method that prices the layout roll, and is only for tests.
 
@@ -291,6 +318,9 @@ To redeploy code to the same account, keeping its state, with a change that does
 ../docker/near near contract deploy v1.dighere.testnet use-file target/near/dig_here.wasm \
   without-init-call network-config testnet sign-with-legacy-keychain send
 ```
+
+The upgrade to the market had to run its one-time step in the same transaction, so it used `with-init-call upgrade_to_market json-args '{}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR'` in place of `without-init-call`. Stored layouts didn't change, so the state stayed as it was, apart from clearing old listings and the new `closeness_new_from` key.
+
 
 Live on `v1` since 2026-11-05, block 276329338: code hash `7byeeAYY4bRdGSXTbcDsyXAoMzezpBWu6oeBQjAeUpQB`, sha256 `621bec19...`, from `BpqDsfNS...`. Struct layouts didn't change. Every view matched one block either side of the deploy, and the upgrade cost 0.0028 NEAR.
 

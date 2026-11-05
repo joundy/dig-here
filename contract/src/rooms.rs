@@ -5,7 +5,7 @@ use crate::clues::{roll_clue, roll_treasure, Candidate, Clue, Treasure};
 use crate::events::emit;
 use crate::layout::{roll_layout, Landmark};
 use crate::map_data::{deed_of, is_land, map_index, spot, token_id, MAPS};
-use crate::money::{expired_penalty, settle, yocto, Split};
+use crate::money::{expired_penalty, settle, split_pot, yocto, Split};
 use crate::rng::{digs_hash, from_hex32, layout_seed, roll_seed, sha256, to_hex, HashedDig, Stream};
 use crate::rules::*;
 use crate::scoring::{first_exact_hit, is_crowded, rank, score_dig, Ranked};
@@ -189,12 +189,12 @@ impl Room {
     }
 
     /// Worked out from the digs when needed, so finished rooms needn't store it.
-    pub fn ranking(&self, treasure: &Treasure) -> Vec<Ranked> {
+    pub fn ranking(&self, treasure: &Treasure, range: u64) -> Vec<Ranked> {
         let mut rows: Vec<Ranked> = self
             .digs
             .iter()
             .enumerate()
-            .map(|(i, d)| score_dig(i as u8, d.x, d.y, Self::bonus_bps(d.clue_index), d.crowded, d.dug_at_ms, treasure.x, treasure.y))
+            .map(|(i, d)| score_dig(i as u8, d.x, d.y, Self::bonus_bps(d.clue_index), d.crowded, d.dug_at_ms, treasure.x, treasure.y, range))
             .collect();
         rank(&mut rows);
         rows
@@ -325,6 +325,7 @@ struct FinishedEvent<'a> {
     players: &'a [AccountId],
     fee: u64,
     host_cut_bps: u16,
+    closeness_range: u64,
     bond: u64,
     pot: u64,
     split: Split,
@@ -501,12 +502,15 @@ impl Contract {
         let now = env::block_timestamp_ms();
         let bond = self.config.host_bond;
         let pot = room.pot();
-        let ranking = room.ranking(&treasure);
+        let closeness_range = self.closeness_range_of(room.id);
+        let ranking = room.ranking(&treasure, closeness_range);
         let hit = first_exact_hit(room.digs.iter().map(|d| (d.x, d.y, d.dug_at_ms)), treasure.x, treasure.y);
         let kind = room.landmarks[treasure.landmark_id as usize].kind;
         let deed_index = deed_of(room.map, kind);
         let deed_token = token_id(deed_index as usize);
-        let deed_owner = self.tokens.owner_by_id.get(&deed_token);
+        // An owner this contract can't pay counts as no owner, so the share goes to the jackpot and is never stranded.
+        let share = split_pot(pot, room.host_cut_bps).deed;
+        let deed_owner = self.tokens.owner_by_id.get(&deed_token).filter(|owner| self.can_take_share(owner, share));
         let jackpot_before = self.jackpot;
         let settled = settle(pot, room.host_cut_bps, &ranking, hit.is_some(), deed_owner.is_some(), jackpot_before);
         let split = settled.split;
@@ -525,7 +529,9 @@ impl Contract {
         deed.earned += settled.deed_paid;
         self.deeds.insert(&deed_index, &deed);
         if let Some(owner) = &deed_owner {
-            self.credit_milli(owner, settled.deed_paid, "deed_share");
+            if settled.deed_paid > 0 {
+                self.credit_paying_for_record(owner, yocto(settled.deed_paid), "deed_share");
+            }
         }
 
         let jackpot_win = hit.map(|h| (h as u8, settled.jackpot_win));
@@ -549,6 +555,7 @@ impl Contract {
                 players: &room.players,
                 fee: room.fee,
                 host_cut_bps: room.host_cut_bps,
+                closeness_range,
                 bond,
                 pot,
                 split,
@@ -687,7 +694,7 @@ impl Contract {
         };
         self.open.push(id);
         self.save_room(&mut room);
-        emit("room_created", &views::RoomCreatedEvent::of(&room, bond));
+        emit("room_created", &views::RoomCreatedEvent::of(&room, bond, self.closeness_range_of(room.id)));
         self.flush_balance_events();
         id
     }

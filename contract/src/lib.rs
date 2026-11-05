@@ -19,9 +19,11 @@ mod contract_tests;
 #[cfg(test)]
 mod vector_tests;
 
+use events::emit;
 use money::{Account, BalanceChange};
 use near_contract_standards::non_fungible_token::NonFungibleToken;
 use near_sdk::collections::LookupMap;
+use near_sdk::serde::Serialize;
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
 use nft::Deed;
 use rooms::Room;
@@ -50,6 +52,14 @@ enum Prefix {
     NftMetadata,
     NftEnumeration,
     NftApprovals,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+struct ClosenessChanged {
+    range_before: u64,
+    range: u64,
+    first_room: u64,
 }
 
 #[near(contract_state)]
@@ -132,6 +142,22 @@ impl Contract {
         };
         // The treasury is paid from its game balance, so it needs a record before the first mint.
         this.accounts.insert(&this.config.treasury.clone(), &Account::default());
+        this.set_closeness_new_from(1);
         this
+    }
+
+    /// The upgrade to the market and the new closeness range, deployed together with this in one transaction, so no
+    /// room can be created in between. Rooms already open keep the range their players joined under. Old listings stop
+    /// existing, since the market replaces them. Only the contract's own account can call it, and only once.
+    #[private]
+    pub fn upgrade_to_market(&mut self) {
+        require!(self.closeness_new_from() == u64::MAX, "This upgrade has already run.");
+        let from = self.next_room_id;
+        self.set_closeness_new_from(from);
+        emit(
+            "closeness_range_changed",
+            &ClosenessChanged { range_before: rules::CLOSENESS_RANGE_BEFORE, range: rules::CLOSENESS_RANGE, first_room: from },
+        );
+        self.retire_old_listings();
     }
 }

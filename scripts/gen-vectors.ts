@@ -251,8 +251,9 @@ function scores() {
   return range(120).map((i) => {
     const rng = rngFor(`score/${i}`);
     const treasure = { x: rng(W), y: rng(H) };
-    // Exact, close, at the edge of the closeness range, and far beyond it.
-    const reach = [0, 1, 6, 13, 34, 47, 48, 49, 200][i % 9];
+    // Exact, close, at the edge of either closeness range, and far beyond them.
+    const reach = [0, 1, 6, 13, 34, 47, 48, 49, 95, 96, 97, 200][i % 12];
+    const closenessRange = i % 5 === 0 ? RULES.closenessRangeBefore : RULES.closenessRange;
     const angle = rng(3);
     const dx = angle === 0 ? reach : angle === 1 ? Math.floor((reach * 3) / 5) : rng(reach + 1);
     const dy = angle === 0 ? 0 : angle === 1 ? Math.floor((reach * 4) / 5) : rng(reach + 1);
@@ -262,8 +263,8 @@ function scores() {
       Object.assign(treasure, { x: 0, y: 0 });
       Object.assign(dig, { x: W - 1, y: H - 1 });
     }
-    const { distance, closeness, score } = scoreDig(makeDig(dig), treasure);
-    return { dig: { x: dig.x, y: dig.y, bonus_bps: dig.bonus_bps, crowded: dig.crowded }, treasure, distance, closeness, score };
+    const { distance, closeness, score } = scoreDig(makeDig(dig), treasure, closenessRange);
+    return { dig: { x: dig.x, y: dig.y, bonus_bps: dig.bonus_bps, crowded: dig.crowded }, treasure, range: closenessRange, distance, closeness, score };
   });
 }
 
@@ -534,7 +535,7 @@ export default function generate(): Record<string, string> {
     ['season_closes', seasonCloses()],
     ['rounds', rounds()],
   ];
-  const rules = JSON.stringify({ host_bond: RULES.hostBond, expired_bond_penalty_bps: RULES.expiredBondPenaltyBps });
+  const rules = JSON.stringify({ host_bond: RULES.hostBond, expired_bond_penalty_bps: RULES.expiredBondPenaltyBps, closeness_range: RULES.closenessRange, closeness_range_before: RULES.closenessRangeBefore });
   return {
     'contract/tests/vectors.json': `{\n  "rules": ${rules},\n${sections.map(([name, cases]) => area(name, cases)).join(',\n')}\n}\n`,
   };

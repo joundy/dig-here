@@ -1,5 +1,7 @@
 # Contract gas and storage
 
+**The upgrade to the market changed a few of these.** `mint_nft` and `nft_transfer` below have new figures, and `list_nft` and `buy_nft` are gone. The market's own figures are in `contract-market/README.md`. The wasm is now 379,664 bytes. The rest were not re-measured, except where the upgrade's sandbox run printed the same numbers within 3%.
+
 Measured 2026-11-05, on the real wasm in a `near-sandbox` 2.14.0 node (protocol 88), by `contract/tests/sandbox.rs`. Wasm SHA-256 `a0d5b128e1aeb9ac16c187b29bfba3f1dd3a4cb06205572c01da63b7b47d27df`. Everything is **[measured]** unless marked **[inferred]** or **[read]**. Method and event fields are in `contract/README.md`.
 
 All numbers are for the worst shape: 30-player rooms, every name 64 characters, a 40-byte room name, 20% host cut. Real rooms with shorter names cost less.
@@ -47,11 +49,10 @@ All numbers are for the worst shape: 30-player rooms, every name 64 characters, 
 | `reveal`, clue | 3.060 to 3.089 | 0.00031 | 0 to +34 | 30 |
 | `reveal` step 4, settle with no deed owner | 8.594 | 0.00086 | +348 | 30 |
 | `reveal` step 4, settle with an owned deed and the oldest room evicted | 9.339 | 0.00093 | -2,665 | 30 |
-| `mint_nft`, first | 3.544 | 0.00035 | +815 | 30 |
-| `mint_nft`, by the same owner | 3.903 | 0.00039 | +604 | 30 |
-| `list_nft` | 2.209 | 0.00022 | +63, then +8 | 10 |
-| `buy_nft` | 4.471 | 0.00045 | +193 | 30 |
-| `nft_transfer`, cancelling a listing | 3.547 | 0.00035 | -8 | 30 |
+| `mint_nft`, first | 3.850 | 0.00039 | +815 | 30 |
+| `mint_nft`, by the same owner | 4.209 | 0.00042 | +604 | 30 |
+| `nft_transfer`, no approvals | 3.666 | 0.00037 | +201, a new owner | 30 |
+| `nft_transfer`, an approved market told, deposit returned | 6.079 | 0.00061 | | 30 |
 | `close_season`, 3 winners | 2.914 | 0.00029 | 0 | 30 |
 
 **Not covered by the settlement figures:** an exact-pixel jackpot hit adds one more credit, about 0.1 Tgas **[inferred]**, and a top list already holding ten 64-character names adds about 0.05 Tgas of state **[inferred]**. Both are well inside the 30 attached. The jackpot path itself ran and passed on a smaller room.
@@ -156,16 +157,18 @@ An exact-pixel hit adds one `balance` row, about 150 bytes **[inferred]**. Every
 
 | Storage | Paid by | Bound |
 |---|---|---|
-| Player records | Their first credit, at the exact measured cost | One each, paid |
+| Player records | Their first credit, at the exact measured cost. An NFT owner's first deed share counts | One each, paid |
 | Open rooms | Host bond, locked while open | `create_room` needs `host_bond >= (1300 + 83 * max_players) * byte cost`. A test holds that formula to the real encoding. 30 players needs 0.0379 NEAR, and testnet's bond is 0.1 |
 | The ring of 30 finished rooms | The reserve, because the bond goes back | 30 × 3,682 bytes = **1.10 NEAR** at the very most |
 | Commitments | The reserve | 200 × 81 = **0.162 NEAR** |
 | Deed records, season list, main state | The reserve | About **0.05 NEAR** |
 | NFT tokens | The mint price, by taking it from what the treasury gets | 36 tokens |
+| An NFT's new owner: their token list, and any longer name | The reserve, since a transfer can't charge the receiver | At most 201 bytes per token at any moment, so **0.07 NEAR** for 36, and leaving an owner releases theirs |
+| A first approval's map and id entries, past what `nft_approve` charges | The reserve | About 110 bytes per token **[inferred from the library's code]**, so **0.04 NEAR** for 36 |
 
 Eviction releases storage: settling a room when the ring is full changed storage by -2,665 bytes. Storage stayed flat with the ring full (`open_rooms_are_capped_and_old_rooms_fall_off_the_ring`).
 
-**The reserve the contract needs above its code is 1.31 NEAR at most.** `v1` was funded with 5.5 NEAR: 3.80 for the code, 1.70 free. If the reserve ever ran out, withdrawals would fail with `LackBalanceForState` and restore nothing lost, because the receipt reverts whole; topping up the account fixes it.
+**The reserve the contract needs above its code is 1.42 NEAR at most**, adding the two NFT rows. It was 1.31 before them. `v1` was funded with 5.5 NEAR: 3.80 for the code, 1.70 free. If the reserve ever ran out, withdrawals would fail with `LackBalanceForState` and restore nothing lost, because the receipt reverts whole; topping up the account fixes it.
 
 `get_totals()` plus the account's balance shows this at any time. `assert_solvent` in the sandbox tests checks that the contract holds everything it owes plus its storage, after each kind of round.
 

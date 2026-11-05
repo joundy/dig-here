@@ -32,7 +32,7 @@ Date: 2026-11-06. Testnet only. Research behind this: `docs/research/`. Game rul
 ## Money
 
 - The contract stores balances in yoctoNEAR (`u128`). Fees, prices, pots and every split are whole **milliNEAR** (`u64`), exactly as `src/lib/game/economy.ts`, then converted (× 10^21) when credited.
-- **`join` and `create_room`, `mint_nft`, `buy_nft` are payable:** anything attached goes to the game balance, then the cost comes out of the balance. So a wallet tops up once with one approval, and a function-call key then pays silently with nothing attached. `buy_nft` needs at least 1 yocto, so a function-call key can't spend a balance on someone else's NFT.
+- **`join`, `create_room` and `mint_nft` are payable:** anything attached goes to the game balance, then the cost comes out of the balance. So a wallet tops up once with one approval, and a function-call key then pays silently with nothing attached. `mint_nft` needs at least 1 yocto, so a function-call key can't spend a balance on an NFT.
 - **Winnings and refunds credit the balance.** Never push coins at settlement.
 - **`withdraw(amount)`** needs exactly 1 yocto, deducts first, and restores in a private callback only on failure.
 - **Storage:** a player's first credit pays their record (measure `env::storage_usage()` before and after, take the exact cost). The host bond covers the room. Check `max_players` fits the bond at `create_room`.
@@ -66,9 +66,8 @@ poke(room_id)                    anyone. Does whatever is due: see below
 reveal(room_id, link)            anyone holding the right preimage
 add_commitments(tips)            oracle only
 
-mint_nft(token_id)               payable. First owner, pays mint_price to treasury
-list_nft(token_id, price|null)   owner only
-buy_nft(token_id, seen_price)    payable, at least 1 yocto. Pays the lister
+mint_nft(token_id)               at least 1 yocto. First owner, pays mint_price to treasury
+(selling moved to the market contract: contract-market/README.md)
 close_season()                   anyone, after the end time
 NEP-171, NEP-177, NEP-178, NEP-181 for NFTs
 ```
@@ -213,7 +212,7 @@ JSON fields are snake_case. Local dev server: `http://localhost:8787`. Vite prox
 
 Bots are **demand-driven**, to save coins and RPC calls: with no browser connected for 5 minutes they stop hosting and digging beyond finishing what's open, and they start within seconds when one connects. A lone juror must see players in a waiting room within about 15 seconds.
 
-The function-call key a wallet adds at sign-in allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `poke`.
+The function-call key a wallet adds at sign-in allows: `join`, `leave`, `start`, `dig`, `create_room`, `poke`. Keys issued earlier also name `mint_nft` and `list_nft`, and the contract refuses them.
 
 Lost sends are real on testnet (see research): a client stops waiting after 8 seconds, checks the hash, and only then re-signs. Close the visible dig window 2.5 seconds before the on-chain end.
 
@@ -229,7 +228,7 @@ Making the share configurable changes the contract's stored config, so it needs 
 
 Every player, including jurors, uses a real testnet wallet, by the user's decision. This replaces every mention of guests above. Watching needs no account. Bots stay, testnet only.
 
-**Signing in.** The first action needing an account opens the connect dialog, with no wallet code loaded before that. NEAR Connect shows wallets flagged for testnet and for function-call keys. The plugin adds a key for the eight game methods with a 0.25 NEAR allowance. The game checks the key is really on chain, and says so if the wallet skipped it.
+**Signing in.** The first action needing an account opens the connect dialog, with no wallet code loaded before that. NEAR Connect shows wallets flagged for testnet and for function-call keys. The plugin adds a key for the six game methods with a 0.25 NEAR allowance. The game checks the key is really on chain, and says so if the wallet skipped it.
 
 **First payment.** `join`, `create_room` and `mint_nft` from a short balance show what they need before the wallet is asked: the cost, a 0.002 NEAR setup if the account has no record yet, and a choice of no extra, about 5 games or about 20 games. A choice with extra must leave at least 0.1 NEAR in the wallet, and any choice at least 0.02 NEAR for gas. If none fits, the dialog shows the faucet steps instead.
 

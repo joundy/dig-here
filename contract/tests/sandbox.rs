@@ -537,7 +537,7 @@ async fn jackpot_for_an_exact_pixel() -> Result<()> {
 }
 
 #[tokio::test]
-async fn nft_mint_list_buy_and_listing_cancelled_by_transfer() -> Result<()> {
+async fn nft_mint_transfer_and_deed_share() -> Result<()> {
     let mut w = world().await?;
     w.add_tips(1).await?;
     let host = w.player("host").await?;
@@ -546,6 +546,8 @@ async fn nft_mint_list_buy_and_listing_cancelled_by_transfer() -> Result<()> {
     let carol = w.player("carol").await?;
     let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
 
+    let nothing = call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), 0).await?;
+    assert!(failure(&nothing).contains("Attach at least 1 yoctoNEAR to mint"));
     let bad = call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:banana"}), price).await?;
     assert!(failure(&bad).contains("no such NFT"));
 
@@ -575,53 +577,28 @@ async fn nft_mint_list_buy_and_listing_cancelled_by_transfer() -> Result<()> {
     let supply: String = w.game.view("nft_supply_for_owner").args_json(json!({"account_id": alice.id()})).await?.json()?;
     assert_eq!(supply, "1");
 
-    // Listing.
-    let not_mine = call(&bob, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?;
-    assert!(failure(&not_mine).contains("don't own"));
-    let listed = call(&alice, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?;
-    assert_eq!(event(&events(&listed), "nft_listed")["data"]["price"], 100);
     let nfts: Value = w.game.view("get_nfts").args_json(json!({"from": 0, "limit": 36})).await?.json()?;
     assert_eq!(nfts.as_array().unwrap().len(), 36);
     let row = nfts.as_array().unwrap().iter().find(|n| n["token_id"] == "snowy:penguin").unwrap();
     assert_eq!(row["owner"], alice.id().as_str());
-    assert_eq!(row["price"], 100);
+    assert!(row.get("price").is_none(), "selling moved to the market: {row}");
 
-    // Buying: the wrong price is turned down, and the right one pays the owner's balance.
-    let bid = 100 * YOCTO_PER_MILLI;
-    let stale = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 99}), bid).await?;
-    assert!(failure(&stale).contains("price just changed"));
-    let own = call(&alice, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 1).await?;
-    assert!(failure(&own).contains("already own"));
-    let seller_before = w.balance_milli(&alice).await?;
-    let bought = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), bid + YOCTO_PER_MILLI * 2).await?;
-    assert!(bought.is_success(), "{:?}", bought.failures());
-    assert!(bought.logs().iter().any(|l| l.contains("nep171") && l.contains("nft_transfer")));
-    assert_eq!(event(&events(&bought), "nft_sold")["data"]["seller"], alice.id().as_str());
-    assert_eq!(w.balance_milli(&alice).await? - seller_before, 100);
-    let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
-    assert_eq!(token["owner_id"], bob.id().as_str());
-    let gone = call(&carol, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), bid).await?;
-    assert!(failure(&gone).contains("isn't for sale"));
+    // The old market methods are gone from the code.
+    for (method, args) in [("list_nft", json!({"token_id": "snowy:penguin", "price": 100})), ("buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}))] {
+        assert!(failure(&call(&alice, &w.game, method, args, 1).await?).contains("MethodNotFound"), "{method}");
+    }
 
-    // A transfer ends the listing, so nobody can buy from the old owner's price.
-    call(&bob, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 50}), 0).await?.into_result()?;
-    let no_record = call(&bob, &w.game, "nft_transfer", json!({"receiver_id": carol.id(), "token_id": "snowy:penguin"}), 1).await?;
-    assert!(failure(&no_record).contains("needs a Dig Here balance"));
-    call(&bob, &w.game, "deposit_for", json!({"account_id": carol.id()}), YOCTO_PER_MILLI * 5).await?.into_result()?;
-    let no_yocto = call(&bob, &w.game, "nft_transfer", json!({"receiver_id": carol.id(), "token_id": "snowy:penguin"}), 0).await?;
+    // A receiver needs no record. The transfer still needs the yocto.
+    let no_yocto = call(&alice, &w.game, "nft_transfer", json!({"receiver_id": carol.id(), "token_id": "snowy:penguin"}), 0).await?;
     assert!(failure(&no_yocto).contains("1 yoctoNEAR"));
-    let moved = call(&bob, &w.game, "nft_transfer", json!({"receiver_id": carol.id(), "token_id": "snowy:penguin"}), 1).await?;
+    let moved = call(&alice, &w.game, "nft_transfer", json!({"receiver_id": carol.id(), "token_id": "snowy:penguin"}), 1).await?;
     assert!(moved.is_success(), "{:?}", moved.failures());
-    assert_eq!(event(&events(&moved), "nft_listing_cancelled")["data"]["reason"], "transferred");
-    let dead = call(&alice, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 50}), 50 * YOCTO_PER_MILLI).await?;
-    assert!(failure(&dead).contains("isn't for sale"));
-    let nfts: Value = w.game.view("get_nfts").args_json(json!({"from": 13, "limit": 5})).await?.json()?;
-    let row = nfts.as_array().unwrap().iter().find(|n| n["token_id"] == "snowy:penguin").unwrap();
-    assert!(row["price"].is_null());
-    assert_eq!(row["owner"], carol.id().as_str());
+    let record: Value = w.game.view("get_account").args_json(json!({"id": carol.id()})).await?.json()?;
+    assert!(record.is_null(), "receiving an NFT must not grow storage for free");
+    let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
+    assert_eq!(token["owner_id"], carol.id().as_str());
 
-    // A transfer call that fails sends the token back, and any listing with it stays gone.
-    call(&carol, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 70}), 0).await?.into_result()?;
+    // A transfer call that fails sends the token back.
     let back = call(
         &carol,
         &w.game,
@@ -633,8 +610,6 @@ async fn nft_mint_list_buy_and_listing_cancelled_by_transfer() -> Result<()> {
     assert!(back.logs().iter().any(|l| l.contains("nft_transfer")));
     let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
     assert_eq!(token["owner_id"], carol.id().as_str(), "a receiver with no code can't keep it");
-    let nfts: Value = w.game.view("get_nfts").args_json(json!({"from": 16, "limit": 1})).await?.json()?;
-    assert!(nfts[0]["token_id"] == "snowy:penguin" && nfts[0]["price"].is_null());
 
     // Owning a deed earns its share. Own all twelve kinds on a map so the landing has to hit one.
     let kinds = ["lighthouse", "well", "hut", "windmill", "pine", "apple", "scarecrow", "cow", "sheep", "duck", "boat", "palm"];
@@ -1146,12 +1121,9 @@ async fn gas_and_storage_with_full_rooms() -> Result<()> {
     report.note(format!("refund logs: {} bytes", refunded.logs().iter().map(|l| l.len()).sum::<usize>()));
 
     // NFTs.
-    report.call(&w, "mint_nft", &players[0], "mint_nft", json!({"token_id": "snowy:penguin"}), 0).await?;
-    report.call(&w, "mint_nft (second by the same owner)", &players[0], "mint_nft", json!({"token_id": "snowy:seal"}), 0).await?;
-    report.call(&w, "list_nft", &players[0], "list_nft", json!({"token_id": "snowy:penguin", "price": 10}), 0).await?;
-    report.call(&w, "buy_nft", &players[1], "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 10}), 1).await?;
-    report.call(&w, "list_nft (to cancel)", &players[1], "list_nft", json!({"token_id": "snowy:penguin", "price": 10}), 0).await?;
-    report.call(&w, "nft_transfer (listing cancelled)", &players[1], "nft_transfer", json!({"receiver_id": players[2].id(), "token_id": "snowy:penguin"}), 1).await?;
+    report.call(&w, "mint_nft", &players[0], "mint_nft", json!({"token_id": "snowy:penguin"}), 1).await?;
+    report.call(&w, "mint_nft (second by the same owner)", &players[0], "mint_nft", json!({"token_id": "snowy:seal"}), 1).await?;
+    report.call(&w, "nft_transfer", &players[0], "nft_transfer", json!({"receiver_id": players[2].id(), "token_id": "snowy:penguin"}), 1).await?;
 
     // Withdraw and its callback.
     report.call(&w, "withdraw", &players[3], "withdraw", json!({"amount": near(1).as_yoctonear().to_string()}), 1).await?;
@@ -1229,7 +1201,7 @@ async fn gas_and_storage_with_full_rooms() -> Result<()> {
     let owner = &players[4];
     call(owner, &w.game, "deposit", json!({}), near(10).as_yoctonear()).await?.into_result()?;
     for kind in token_kinds {
-        call(owner, &w.game, "mint_nft", json!({"token_id": format!("tropical:{kind}")}), 0).await?.into_result()?;
+        call(owner, &w.game, "mint_nft", json!({"token_id": format!("tropical:{kind}")}), 1).await?.into_result()?;
     }
     let tip_index = w.game.view("commitments_next_index").await?.json::<u64>()?;
     assert!(tip_index > 0);
@@ -1407,56 +1379,48 @@ impl Report {
     }
 }
 
-/// Exactly what a guest's key allowed until `buy_nft` came off the list. Keys already handed out still say this.
-const OLD_GUEST_METHODS: [&str; 9] = ["join", "leave", "start", "dig", "create_room", "mint_nft", "list_nft", "buy_nft", "poke"];
+/// What a browser's key allowed before the market. Keys already handed out still say this.
+const OLD_KEY_METHODS: [&str; 9] = ["join", "leave", "start", "dig", "create_room", "mint_nft", "list_nft", "buy_nft", "poke"];
 
 #[tokio::test]
-async fn a_stolen_browser_key_cannot_buy_a_rigged_nft() -> Result<()> {
+async fn a_stolen_browser_key_cannot_mint_list_or_buy() -> Result<()> {
     let mut w = world().await?;
     w.add_tips(1).await?;
     let thief = w.player("thief").await?;
-    let guest = w.player("guest").await?;
-    let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
-    call(&w.root, &w.game, "deposit_for", json!({"account_id": guest.id()}), near(1).as_yoctonear()).await?.into_result()?;
-    call(&thief, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
-    let victim_has = w.balance_yocto(&guest).await?;
-    let asking = (victim_has / YOCTO_PER_MILLI) as u64;
-    call(&thief, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": asking}), 0).await?.into_result()?;
+    let victim = w.player("victim").await?;
+    call(&w.root, &w.game, "deposit_for", json!({"account_id": victim.id()}), near(1).as_yoctonear()).await?.into_result()?;
+    let victim_has = w.balance_yocto(&victim).await?;
+    call(&thief, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), MINT_PRICE as u128 * YOCTO_PER_MILLI * 2).await?.into_result()?;
 
     let key = SecretKey::from_random(KeyType::ED25519);
-    let methods = OLD_GUEST_METHODS.join(",");
-    guest
-        .batch(guest.id())
-        .add_key(key.public_key(), AccessKey::function_call_access(w.game.id(), &methods.split(',').collect::<Vec<_>>(), Some(near(1))))
+    victim
+        .batch(victim.id())
+        .add_key(key.public_key(), AccessKey::function_call_access(w.game.id(), &OLD_KEY_METHODS, Some(near(1))))
         .transact()
         .await?
         .into_result()?;
-    let stolen = Account::from_secret_key(guest.id().clone(), key, &w.worker);
+    let stolen = Account::from_secret_key(victim.id().clone(), key, &w.worker);
 
-    let with_nothing = stolen
-        .call(w.game.id(), "buy_nft")
-        .args_json(json!({"token_id": "snowy:penguin", "seen_price": asking}))
-        .gas(Gas::from_tgas(30))
-        .transact()
-        .await?;
-    assert!(failure(&with_nothing).contains("Attach at least 1 yoctoNEAR to buy"));
-    assert_eq!(w.balance_yocto(&guest).await?, victim_has, "the balance must not move");
+    // Nothing attached, which is all a function-call key can do: the contract refuses.
+    for (method, args, why) in [
+        ("mint_nft", json!({"token_id": "snowy:seal"}), "Attach at least 1 yoctoNEAR to mint"),
+        ("list_nft", json!({"token_id": "snowy:seal", "price": 1}), "MethodNotFound"),
+        ("buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 1}), "MethodNotFound"),
+    ] {
+        let out = stolen.call(w.game.id(), method).args_json(args).gas(Gas::from_tgas(30)).transact().await?;
+        assert!(failure(&out).contains(why), "{method}: {:?}", out.failures());
+    }
 
+    // A yocto attached: the node refuses that from a function-call key before the contract runs.
     let with_a_yocto = stolen
-        .call(w.game.id(), "buy_nft")
-        .args_json(json!({"token_id": "snowy:penguin", "seen_price": asking}))
+        .call(w.game.id(), "mint_nft")
+        .args_json(json!({"token_id": "snowy:seal"}))
         .deposit(NearToken::from_yoctonear(1))
         .gas(Gas::from_tgas(30))
         .transact()
         .await;
-    assert!(format!("{with_a_yocto:?}").contains("Deposit") || with_a_yocto.is_err(), "the node refuses a deposit from a function-call key: {with_a_yocto:?}");
-    assert_eq!(w.balance_yocto(&guest).await?, victim_has, "the balance must not move");
-
-    // The person holding the account's real key still can, and only needs one yocto beyond their balance.
-    let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
-    assert_eq!(token["owner_id"], thief.id().as_str());
-    let real = call(&guest, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": asking}), 1).await?;
-    assert!(real.is_success(), "{:?}", real.failures());
+    assert!(format!("{with_a_yocto:?}").contains("Deposit") || with_a_yocto.is_err(), "{with_a_yocto:?}");
+    assert_eq!(w.balance_yocto(&victim).await?, victim_has, "the balance must not move");
     assert_solvent(&w).await
 }
 
@@ -1538,32 +1502,75 @@ async fn digs_wait_out_a_lock_and_a_withheld_reveal_still_refunds() -> Result<()
     assert_solvent(&w).await
 }
 
+/// Everyone who holds an NFT with no record: the first share big enough pays for the record, and a smaller one goes
+/// to the jackpot like an unowned deed's, so it's never stranded and the receiver's storage is never free.
 #[tokio::test]
-async fn buying_returns_the_sellers_approval_deposit() -> Result<()> {
+async fn an_owner_with_no_record_earns_and_pays_for_it_out_of_the_share() -> Result<()> {
     let mut w = world().await?;
-    w.add_tips(1).await?;
+    w.add_tips(3).await?;
+    let host = w.player("host").await?;
     let alice = w.player("alice").await?;
-    let bob = w.player("bob").await?;
-    let market = w.player("market").await?;
+    let owner = w.player("a-fresh-owner").await?;
     let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
-    call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
-    call(&alice, &w.game, "nft_approve", json!({"token_id": "snowy:penguin", "account_id": market.id()}), near(1).as_yoctonear() / 100).await?.into_result()?;
-    call(&alice, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?.into_result()?;
+    let kinds = ["lighthouse", "well", "hut", "windmill", "pine", "apple", "scarecrow", "cow", "sheep", "duck", "boat", "palm"];
+    for kind in kinds {
+        let token_id = format!("tropical:{kind}");
+        call(&alice, &w.game, "mint_nft", json!({"token_id": token_id}), price * 2).await?.into_result()?;
+        call(&alice, &w.game, "nft_transfer", json!({"receiver_id": owner.id(), "token_id": token_id}), 1).await?.into_result()?;
+    }
+    let record = |w: &World| {
+        let (game, id) = (w.game.clone(), owner.id().clone());
+        async move { Ok::<Value, anyhow::Error>(game.view("get_account").args_json(json!({ "id": id })).await?.json()?) }
+    };
+    assert!(record(&w).await?.is_null());
+    let players = vec![w.player("p1").await?, w.player("p2").await?, w.player("p3").await?];
 
-    // Alice's own calls are still getting their spare gas back for a few blocks, which would swamp the number.
-    w.worker.fast_forward(5).await?;
-    let wallet_before = alice.view_account().await?.balance.as_yoctonear();
-    let bought = call(&bob, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 102 * YOCTO_PER_MILLI).await?;
-    assert!(bought.is_success(), "{:?}", bought.failures());
-    let gained = alice.view_account().await?.balance.as_yoctonear() - wallet_before;
-    // One approval's bytes at the storage price: the account name's length plus 4 for its map entry and 8 for the id.
-    let approval_bytes = market.id().as_str().len() as u128 + 4 + 8;
-    assert_eq!(gained, approval_bytes * 10_000_000_000_000_000_000);
+    // A pot of 3 milli: the share rounds to nothing, so nothing is owed and no record is needed.
+    async fn round(w: &World, host: &Account, players: &[Account], fee: u64) -> Result<ExecutionFinalResult> {
+        let room = w.make_room(host, "tropical", fee, 60, 2, 30, 0).await?;
+        w.join_all(room, fee, players).await?;
+        call(host, &w.game, "start", json!({ "room_id": room }), 0).await?.into_result()?;
+        w.dig_all(room, "tropical", players, 1).await?;
+        Ok(w.run_steps(room, 4).await?.unwrap())
+    }
+    let settled = round(&w, &host, &players, 1).await?;
+    let all = events(&settled);
+    let deed = &event(&all, "finished")["data"]["deed"];
+    assert_eq!(deed["owner"], owner.id().as_str());
+    assert_eq!(deed["paid"], 0);
+    assert!(record(&w).await?.is_null());
+    assert_solvent(&w).await?;
+
+    // A pot of 60 milli: a share of 1 milli can't buy a record of about 1.05, so it goes to the jackpot, named as such.
+    let jackpot_before: u64 = w.game.view("get_jackpot").await?.json()?;
+    let settled = round(&w, &host, &players, 20).await?;
+    let all = events(&settled);
+    let finished = &event(&all, "finished")["data"];
+    assert!(finished["deed"]["owner"].is_null(), "{}", finished["deed"]);
+    assert_eq!(finished["deed"]["paid"], 0);
+    assert_eq!(finished["split"]["deed"], 1);
+    assert_eq!(w.game.view("get_jackpot").await?.json::<u64>()?, jackpot_before + 1 + finished["split"]["jackpot"].as_u64().unwrap());
+    assert!(record(&w).await?.is_null());
+    assert_solvent(&w).await?;
+
+    // A pot of 3,000 milli: the 60 milli share pays for the record, and the owner keeps the rest.
+    let settled = round(&w, &host, &players, 1000).await?;
+    let all = events(&settled);
+    let deed = &event(&all, "finished")["data"]["deed"];
+    assert_eq!(deed["owner"], owner.id().as_str());
+    assert_eq!(deed["paid"], 60);
+    let rows = event(&all, "balance")["data"]["changes"].as_array().unwrap().clone();
+    let mine: Vec<&Value> = rows.iter().filter(|r| r["account"] == owner.id().as_str()).collect();
+    assert_eq!(mine.iter().map(|r| r["reason"].as_str().unwrap()).collect::<Vec<_>>(), ["deed_share", "storage"]);
+    let cost: u128 = mine[1]["delta"].as_str().unwrap().trim_start_matches('-').parse()?;
+    assert_eq!(cost, (1 + 4 + owner.id().as_str().len() as u128 + 37 + 40) * 10_000_000_000_000_000_000, "the exact cost of the record");
+    assert_eq!(w.balance_yocto(&owner).await?, 60 * YOCTO_PER_MILLI - cost);
     assert_solvent(&w).await
 }
 
 /// Needs the wasm that's live on testnet at `target/near-old/dig_here.wasm`, whose hash has to equal the account's
-/// `code_hash`, so what's proven is the upgrade that will really happen. Run it with `--ignored` before any in-place deploy.
+/// `code_hash`, so what's proven is the upgrade that will really happen, and the market's at
+/// `target/near/dig_here_market.wasm`. Run it with `--ignored` before any in-place deploy.
 #[tokio::test]
 #[ignore]
 async fn upgrading_in_place_keeps_every_balance_room_and_nft() -> Result<()> {
@@ -1571,18 +1578,19 @@ async fn upgrading_in_place_keeps_every_balance_room_and_nft() -> Result<()> {
     let new = wasm("target/near/dig_here.wasm");
     assert_ne!(old, new, "this upgrade changes nothing");
     let mut w = world_with(&old).await?;
-    w.add_tips(6).await?;
+    w.add_tips(8).await?;
     let host = w.player("host").await?;
     let alice = w.player("alice").await?;
     let players = vec![alice.clone(), w.player("b").await?, w.player("c").await?];
     let fee = 10;
     let price = MINT_PRICE as u128 * YOCTO_PER_MILLI;
-    let market = w.player("market").await?;
+    let market_account = w.root.create_subaccount("market").initial_balance(near(5)).transact().await?.into_result()?;
 
     // Everything a live contract can be holding, from before the upgrade: a finished round, a waiting room with a
     // running countdown, a live room with its roll locked and unrevealed, and a listed NFT with an approval.
     call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:penguin"}), price * 2).await?.into_result()?;
-    call(&alice, &w.game, "nft_approve", json!({"token_id": "snowy:penguin", "account_id": market.id()}), near(1).as_yoctonear() / 100).await?.into_result()?;
+    call(&alice, &w.game, "mint_nft", json!({"token_id": "snowy:seal"}), price).await?.into_result()?;
+    call(&alice, &w.game, "nft_approve", json!({"token_id": "snowy:penguin", "account_id": market_account.id()}), near(1).as_yoctonear() / 100).await?.into_result()?;
     call(&alice, &w.game, "list_nft", json!({"token_id": "snowy:penguin", "price": 100}), 0).await?.into_result()?;
     let finished = w.make_room(&host, "snowy", fee, 60, 2, 30, 0).await?;
     w.join_all(finished, fee, &players).await?;
@@ -1609,6 +1617,7 @@ async fn upgrading_in_place_keeps_every_balance_room_and_nft() -> Result<()> {
         }
         out.insert("nfts".into(), w.game.view("get_nfts").args_json(json!({"from": 0, "limit": 36})).await?.json::<Value>()?);
         out.insert("token".into(), w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json::<Value>()?);
+        out.insert("tokens".into(), w.game.view("nft_tokens").args_json(json!({"limit": 36})).await?.json::<Value>()?);
         for id in rooms {
             out.insert(format!("room {id}"), w.room(*id).await?);
         }
@@ -1620,31 +1629,115 @@ async fn upgrading_in_place_keeps_every_balance_room_and_nft() -> Result<()> {
     }
 
     let everyone = [&host, &players[0], &players[1], &players[2], &w.treasury];
-    let before = snapshot(&w, &[finished, waiting, locked], &everyone).await?;
+    let rooms = [finished, waiting, locked];
+    let mut before = snapshot(&w, &rooms, &everyone).await?;
+    let raw_before = w.worker.view_state(w.game.id()).await?;
     let holding = w.game.view_account().await?.balance.as_yoctonear();
 
-    // Same account, same state, no init call: only the code changes.
-    let upgraded = w.game.as_account().deploy(&new).await?;
-    assert!(upgraded.is_success(), "{:?}", upgraded.details);
-    w.game = upgraded.into_result()?;
+    // Same account, same state, and the first-run step in the same transaction, so no room can slip in between.
+    let upgrade = |gas: u64| {
+        w.game
+            .as_account()
+            .batch(w.game.id())
+            .deploy(&new)
+            .call(near_workspaces::operations::Function::new("upgrade_to_market").args_json(json!({})).gas(Gas::from_tgas(gas)))
+            .transact()
+    };
+    let upgraded = upgrade(30).await?;
+    assert!(upgraded.is_success(), "{:?}", upgraded.failures());
+    println!("upgrade: burned {} Tgas", upgraded.total_gas_burnt.as_gas() / 1_000_000_000_000);
+    let all = events(&upgraded);
+    assert_eq!(event(&all, "closeness_range_changed")["data"]["first_room"], locked + 1);
+    assert_eq!(event(&all, "closeness_range_changed")["data"]["range_before"], 48);
+    assert_eq!(event(&all, "closeness_range_changed")["data"]["range"], 96);
+    assert_eq!(event(&all, "nft_listing_cancelled")["data"]["reason"], "market_moved");
 
-    assert_eq!(snapshot(&w, &[finished, waiting, locked], &everyone).await?, before, "reading every record the new code can reach");
-    let after = w.game.view_account().await?;
-    println!("upgrade: storage now {} bytes, balance {} -> {}", after.storage_usage, holding, after.balance.as_yoctonear());
+    // Stored bytes: every key and value is untouched, except the cancelled listing and the one new key.
+    let raw_after = w.worker.view_state(w.game.id()).await?;
+    let mut changed: Vec<String> = Vec::new();
+    for (key, value) in &raw_before {
+        if raw_after.get(key) != Some(value) {
+            changed.push(String::from_utf8_lossy(key).into_owned());
+        }
+    }
+    assert_eq!(changed.len(), 1, "only the listed deed may change: {changed:?}");
+    let added: Vec<String> = raw_after.keys().filter(|k| !raw_before.contains_key(*k)).map(|k| String::from_utf8_lossy(k).into_owned()).collect();
+    assert_eq!(added, ["closeness_new_from"]);
 
-    // And they all still run on the new code: the old lock now holds digs back, its reveal works, and settlement pays.
+    // Every view reads the same, apart from the two things this upgrade means to change.
+    let mut after = snapshot(&w, &rooms, &everyone).await?;
+    for id in rooms {
+        let room = after.get_mut(format!("room {id}")).unwrap().as_object_mut().unwrap();
+        assert_eq!(room.remove("closeness_range"), Some(json!(48)), "room {id} keeps the range it was created under");
+    }
+    let old_nfts = before.get_mut("nfts").unwrap().as_array_mut().unwrap();
+    assert_eq!(old_nfts.iter().filter(|n| !n["price"].is_null()).count(), 1, "the old listing was there");
+    for nft in old_nfts.iter_mut() {
+        nft.as_object_mut().unwrap().remove("price");
+    }
+    assert_eq!(after, before, "reading every record the new code can reach");
+    let account = w.game.view_account().await?;
+    println!("upgrade: storage now {} bytes, balance {} -> {}", account.storage_usage, holding, account.balance.as_yoctonear());
+    assert_solvent(&w).await?;
+    assert_eq!(w.game.view("closeness_range_of").args_json(json!({"room_id": locked})).await?.json::<u64>()?, 48);
+    assert_eq!(w.game.view("closeness_range_of").args_json(json!({"room_id": locked + 1})).await?.json::<u64>()?, 96);
+
+    // It can't run twice, and a stranger can't run it.
+    let twice = call(w.game.as_account(), &w.game, "upgrade_to_market", json!({}), 0).await?;
+    assert!(failure(&twice).contains("already run"));
+    assert!(failure(&call(&alice, &w.game, "upgrade_to_market", json!({}), 0).await?).contains("private"));
+
+    // The old rooms still run on the new code: the old lock holds digs back, its reveal works, and settlement pays,
+    // scored by the range the room was created under.
     let refused = call(&players[1], &w.game, "dig", json!({"room_id": locked, "x": spots[1].0, "y": spots[1].1, "seen_clue": 1}), 0).await?;
     assert!(failure(&refused).contains(CLUE_ARRIVING));
     w.reveal(locked, &links[0]).await?.into_result()?;
     call(&players[1], &w.game, "dig", json!({"room_id": locked, "x": spots[1].0, "y": spots[1].1, "seen_clue": 2}), 0).await?.into_result()?;
     let prize_holder = w.balance_yocto(&players[1]).await?;
-    w.run_steps(locked, 4).await?;
+    let settled = w.run_steps(locked, 4).await?.unwrap();
     let room = w.room(locked).await?;
     assert_eq!(room["status"], "finished");
     assert!(w.balance_yocto(&players[1]).await? >= prize_holder);
-
+    let scored_by = |room: &Value, range: u64| {
+        for row in room["result"]["ranking"].as_array().unwrap() {
+            assert_eq!(row["closeness"].as_u64().unwrap(), 1000u64.saturating_sub(row["distance"].as_u64().unwrap() / range), "{row}");
+        }
+    };
+    scored_by(&room, 48);
+    scored_by(&w.room(finished).await?, 48);
+    assert_eq!(event(&events(&settled), "finished")["data"]["closeness_range"], 48);
     assert_eq!(w.room(waiting).await?["status"], "waiting");
-    let bought = call(&host, &w.game, "buy_nft", json!({"token_id": "snowy:penguin", "seen_price": 100}), 1).await?;
+
+    // A room created now is on the new range.
+    let fresh = w.make_room(&host, "snowy", fee, 60, 2, 30, 0).await?;
+    assert_eq!(fresh, locked + 1);
+    assert_eq!(w.room(fresh).await?["closeness_range"], 96);
+    w.join_all(fresh, fee, &players).await?;
+    call(&host, &w.game, "start", json!({ "room_id": fresh }), 0).await?.into_result()?;
+    w.dig_all(fresh, "snowy", &players, 1).await?;
+    let settled = w.run_steps(fresh, 4).await?.unwrap();
+    assert_eq!(event(&events(&settled), "finished")["data"]["closeness_range"], 96);
+    scored_by(&w.room(fresh).await?, 96);
+
+    // The real market sells an NFT minted before the upgrade, whose old approval and old listing were left behind.
+    let market = market_account.deploy(&wasm("target/near/dig_here_market.wasm")).await?.into_result()?;
+    market.call("new").args_json(json!({"nft_contract": w.game.id()})).transact().await?.into_result()?;
+    let sale_price = 100 * YOCTO_PER_MILLI;
+    let msg = json!({"price": sale_price.to_string()}).to_string();
+    let listed = alice
+        .call(w.game.id(), "nft_approve")
+        .args_json(json!({"token_id": "snowy:penguin", "account_id": market.id(), "msg": msg}))
+        .deposit(NearToken::from_yoctonear(YOCTO_PER_MILLI))
+        .gas(Gas::from_tgas(30))
+        .transact()
+        .await?;
+    assert!(listed.is_success(), "{:?}", listed.failures());
+    let buyer = w.player("buyer-with-no-record").await?;
+    let seller_wallet = alice.view_account().await?.balance.as_yoctonear();
+    let bought = buyer.call(market.id(), "buy").args_json(json!({"token_id": "snowy:penguin"})).deposit(NearToken::from_yoctonear(sale_price)).gas(Gas::from_tgas(60)).transact().await?;
     assert!(bought.is_success(), "{:?}", bought.failures());
+    let token: Value = w.game.view("nft_token").args_json(json!({"token_id": "snowy:penguin"})).await?.json()?;
+    assert_eq!(token["owner_id"], buyer.id().as_str());
+    assert!(alice.view_account().await?.balance.as_yoctonear() >= seller_wallet + sale_price, "the seller's wallet got the price");
     assert_solvent(&w).await
 }

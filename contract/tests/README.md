@@ -115,7 +115,7 @@ x and y can go negative or off the map there, so use signed numbers. Off the map
 |---|---|
 | Crowded | Any earlier dig with `d2 <= 6*6` |
 | `distance` | `isqrt(d2 * 1_000_000)`, floor of the square root, in thousandths of a pixel |
-| `closeness` | `max(0, 1000 - floor(distance / 48))` |
+| `closeness` | `max(0, 1000 - floor(distance / range))`. `range` is the room's: 96, or 48 for rooms from before the change. Each `scores` case states its own |
 | `score` | `floor(closeness * bonus_bps * (crowded ? 8500 : 10000) / 100_000_000)`. Fits in u64 |
 | Ranking | Higher score first. If both scores are 0, smaller distance first. Then earlier `dug_at`. Still tied: dig order, so **sort stably** |
 | Pot split | Each of host cut, jackpot (300), deed (200), season (100) is `floor(pot * bps / 10000)`. The prize is whatever is left |
