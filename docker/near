@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Runs a command in the NEAR toolbox image, with this project at /work.
+#   docker/near near --version
+#   docker/near cargo near build non-reproducible-wasm
+#   docker/near bash
+# The working directory follows yours inside the project, so `cd contract && ../docker/near cargo near build` works.
+# Pass extra `docker run` flags in DOCKER_NEAR_ARGS, e.g. DOCKER_NEAR_ARGS="-p 3030:3030".
+set -euo pipefail
+
+image=dig-here-near-tools
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  docker build -q -t "$image" \
+    --build-arg USER_ID="$(id -u)" --build-arg GROUP_ID="$(id -g)" \
+    -f "$here/near-tools.Dockerfile" "$here" >&2
+fi
+
+workdir=/work
+case "$PWD/" in
+  "$root"/*) workdir="/work${PWD#"$root"}" ;;
+esac
+
+tty_flags=(-i)
+if [ -t 0 ] && [ -t 1 ]; then tty_flags=(-it); fi
+
+# label=disable lets the container read the project under SELinux without relabelling any host files.
+# shellcheck disable=SC2086
+# Hard limits, so a build or a sandbox can never freeze the desktop. Raise them per run through DOCKER_NEAR_ARGS.
+exec docker run --rm --init "${tty_flags[@]}" \
+  --memory=6g --memory-swap=6g --cpus=6 --pids-limit=4000 \
+  -e CARGO_BUILD_JOBS=4 \
+  --security-opt label=disable \
+  -v "$root:/work" \
+  -v dig-here-near-creds:/home/near/.near-credentials \
+  -v dig-here-near-cargo-registry:/usr/local/cargo/registry \
+  -v dig-here-near-cargo-git:/usr/local/cargo/git \
+  -w "$workdir" \
+  ${DOCKER_NEAR_ARGS:-} \
+  "$image" "$@"
