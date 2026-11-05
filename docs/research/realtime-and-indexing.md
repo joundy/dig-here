@@ -8,7 +8,7 @@ All timing comes from one machine in Indonesia, reaching Cloudflare's Jakarta ed
 
 1. **Live state: hybrid.** The backend polls one batched contract view once a second and pushes changes to browsers over Server-Sent Events (SSE). Browsers read nothing from the chain while SSE is up. If SSE goes quiet for 5 seconds, the browser polls the same view directly every 2 seconds until SSE comes back.
 2. **RPC.** Browser: `test.rpc.fastnear.com`, then `near-testnet.drpc.org` for reads if that fails. Server: FastNEAR, with dRPC as read failover. Don't use `rpc.testnet.near.org` (deprecated, 3.2 s, cut off after 46 requests) or Intear (1 s added to every request without a key).
-3. **Digs.** Browser signs and sends directly with `wait_until: EXECUTED_OPTIMISTIC`, draws the dig at once, and confirms on the response. Never use `NONE`: 6 of 20 such sends never reached the chain.
+3. **Digs.** Browser signs and sends directly with `wait_until: EXECUTED_OPTIMISTIC`, draws the dig at once, and confirms on the response. **Sends must retry:** in bad spells 30 to 60% of sends from one shard never reached the chain, whatever `wait_until` was used. After 8 seconds with no answer, check the hash, then sign again with a new nonce.
 4. **History.** Don't tail blocks. Anonymous Neardata allows 30 requests a minute and the chain makes about 100 blocks a minute. Index from the FastNEAR Transactions API instead, filtered to our contract, into `node:sqlite`. It works without a key and goes back to 2021.
 5. **Helper and oracle sends.** One gas key with many nonce lanes. Gas keys work on testnet today.
 
@@ -120,7 +120,7 @@ Load for 50 players and 30 open rooms:
 
 All figures **[inferred]** from the measured rates above. Writes are the same in every option, and small: players dig once a round, and helper transactions come to about 1.3 tx/s if 30 rooms each run 8 helper transactions over 180 seconds.
 
-How long until other players see a dig **[inferred]**: about 1.5 s for it to show in an optimistic view, 0.5 s average wait for the next poll, 0.25 s for the read, and well under 0.1 s for SSE. **About 2.3 s**, against about 2 s for direct polling. The player digging sees their own dig instantly.
+How long until other players see a dig **[inferred from the measured parts]**: 1.75 s for it to show in an optimistic view, 0.5 s average wait for the next poll, 0.25 s for the read, and well under 0.1 s for SSE. **About 2.5 s**, about the same as polling directly once a second. The player digging sees their own dig instantly.
 
 **The contract needs:** a cheap `live_state` view returning a version counter and the compact state of open rooms. A single view can't exceed the gas limit, so test it with 30 full rooms once the contract exists. That's the one piece here I couldn't measure yet.
 
@@ -157,13 +157,39 @@ Each row is 10 sends of one function call (with a storage write and an event) th
 - On the same shard, `INCLUDED` came back reporting `EXECUTED_OPTIMISTIC`, because the call had already run.
 - `testnet-accounts-and-funding.md` saw slower FastNEAR figures for transfers (`EXECUTED_OPTIMISTIC` 7.9 to 10.8 s, 3 samples) and left that unexplained. My 20 samples here don't show it, but the difference isn't explained either. Allow for an occasional slow send.
 
-RUN_LOG_PLACEHOLDER
+**Sends get lost in spells [measured].** Each batch is sends about 1.5 s apart through FastNEAR, with the hash checked 10 seconds later. The probe signer is on shard index 8, the other on shard index 0, and both call the same contract:
+
+| Order | Signer's shard | Level | Reached the chain |
+| --- | --- | --- | --- |
+| 1 | 8 | `NONE` | 7 of 10 |
+| 2 | 8 | `INCLUDED` | 7 of 10, the other 3 answered `Timeout` |
+| 3 | 8 | `EXECUTED_OPTIMISTIC` | 4 of 10, the other 6 answered `Timeout` |
+| 4 | 8 | `broadcast_tx_async` | 7 of 10 |
+| 5 | 0 | `NONE` | **10 of 10** |
+| 6 | 0 | `EXECUTED_OPTIMISTIC` | **10 of 10** |
+| 7 | 8 | `EXECUTED_OPTIMISTIC` | 4 of 8, the other 4 answered `Timeout` after 30 s |
+| 8 | 8 | `INCLUDED` | 10 of 10 (it had recovered) |
+
+- Earlier the same day, a signer on the same shard lost 1 of about 115, and the first `NONE` batch before the restart was also 7 of 10.
+- Chunks weren't the cause as far as I can see: 60 blocks in a row had no missed chunk on any shard.
+- So this isn't about `wait_until`. Whether it's specific to FastNEAR is unsettled: a dRPC batch at `NONE` landed 6 of 10, but it overlapped another test on the same key, so it proves nothing.
+- Row 7, straight after rows 5 and 6, points at the signer's shard, but I can't name the cause. Treat it as normal testnet weather.
+- The contract's counter shows these timed-out sends did not land later **[inferred from the total]**.
+
+**Reads after a send [measured]:**
+
+| Read | min | p50 | p90 | Samples |
+| --- | --- | --- | --- | --- |
+| Optimistic view shows the change | 256 ms | 1748 ms | 2270 ms | 8 |
+| Final view shows the change | 2711 ms | 3267 ms | 3295 ms | 4 |
+| Transactions API has it | 3047 ms | 4055 ms | 4067 ms | 4 |
 
 **What a dig should use:** `EXECUTED_OPTIMISTIC`.
 
 - It returns the result and logs, so the browser knows whether the dig worked. `INCLUDED` barely saves time, and doesn't say whether the dig worked.
 - Draw the dig immediately, mark it confirmed on the response.
-- A timeout doesn't tell you what happened, in either direction. I saw a send time out after 30 s with `NOT_OBSERVED` and never reach the chain. The sibling report saw timed-out transfers land. So after 8 s, poll `tx` by hash, and if it's unknown, sign again with a new nonce. A second dig is harmless if the contract allows one dig per player per room.
+- A timeout doesn't tell you what happened, in either direction. Mine never landed. `testnet-accounts-and-funding.md` saw timed-out transfers land. FastNEAR holds a lost send for 30 s, which is far too long for a game. So give up waiting at 8 s, poll `tx` by hash, and if it's unknown, sign again with a new nonce. A second dig is harmless if the contract allows one dig per player per room. Tell the player "still digging" during the wait.
+- A last-moment dig can be lost and have no time left to retry. The contract treats it as not dug, and the player keeps their refund path. That's worth one line in the UI.
 - Money the user will act on (a win or a payout on screen) should wait for a final view. Backend helper steps that depend on an earlier transaction should use `FINAL`, as the randomness order needs.
 - **Guest names can make digs faster.** Shards split on the whole account name sorted as text, so the leftmost part decides, not the parent: `g123.dighere.testnet` lands on a different shard from `dighere.testnet`, while `dig-g123.dighere.testnet` lands on the same one under today's boundaries. That's the difference between 1.4 s and 2.1 s **[inferred from the shard layout's `boundary_accounts`; the timing gap is measured]**. A later reshard could move a boundary, which only costs that speed. Wallet users land wherever their name falls.
 
@@ -173,7 +199,7 @@ RUN_LOG_PLACEHOLDER
 | --- | --- |
 | One key, 5 and 20 parallel sends, in nonce order | All succeeded, about 2.3 s |
 | One key, 50 parallel | All 429: FastNEAR's limit, not a nonce problem |
-| One key, 6 sent newest first, 700 ms apart | OOO_PLACEHOLDER |
+| One key, 6 sent newest first, 700 ms apart | 1 succeeded, 5 `InvalidNonce`: once a higher nonce lands, lower ones are dead |
 | Gas key, 8 and 32 parallel, one per lane | All succeeded, 2.3 to 2.9 s |
 
 **Gas keys work on testnet [measured]:** protocol version 88, and they arrived in 86 **[read]**. I created one with 64 lanes through `near-kit` 0.20.2, funded it with 2 NEAR, and sent 40 transactions, costing 0.0055 NEAR, then withdrew 1.5 NEAR. `view_access_key` shows `GasKeyFullAccess` with balance and `num_nonces`.
@@ -182,8 +208,9 @@ Use them like this:
 
 - **Oracle and helper:** one gas key, about 32 lanes, one lane per in-flight transaction. Withdraw before deleting, because deleting burns the balance and fails above 1 NEAR **[read]**.
 - **Bots:** one account each already means one nonce each, so no gas key is needed unless one bot runs many rooms.
-- **Limits [read]:** function-call gas keys can't set an allowance, and from protocol 87 a gas key can't sign the inner part of a meta transaction. `near-kit` covers everything; check `near-api-js` before relying on it.
-- Without gas keys, one sender behind a queue also works, but one lost transaction holds up everything after it until it times out.
+- **Limits [read]:** function-call gas keys can't set an allowance, and from protocol 87 a gas key can't sign the inner part of a meta transaction.
+- **Lost sends still apply.** A lost transaction on a lane doesn't block other lanes, which is another reason to use them for the helper.
+- Without gas keys, one sender behind a queue also works, but a lost transaction stalls everything behind it until it times out. Sending several at once risks the `InvalidNonce` result above.
 
 ## 6. History indexer
 
@@ -212,7 +239,7 @@ Finished games, proofs, NFT sales and host records are then all queries or small
 
 **Results [measured]:**
 
-INDEXER_PLACEHOLDER
+- Accuracy: on the probe contract the indexer stored 69 events when the contract's own counter said 69. After stopping it and sending 10 more, a restart stored only the 10 new ones: 79 and 79, no gaps and no duplicates.
 
 - Catch-up on a busy real contract: 970 transactions and 1154 events, covering 12,568 blocks (about 2.1 hours of chain) in about a minute, without a key. That's about 100 times real time on a contract busier than ours is likely to be, and the 452 KB database shows size won't matter.
 - Node 24's `node:sqlite` worked with no flag, printing only an experimental warning **[measured on 24.19]**.
@@ -225,6 +252,7 @@ INDEXER_PLACEHOLDER
 - SSE through Cloudflare on the real domain.
 - `live_state` gas with 30 full rooms.
 - Why FastNEAR refused requests in the one 40-second stretch.
-- Why `NONE` sends get lost.
+- Why sends get lost in spells. Before any demo, send 10 test digs from the guest name pattern and from the helper, and check all 10 land.
+- `near-api-js` 7.4.0's type files mention gas keys, but I only ran them through `near-kit`.
 
 Sources: [RPC providers](https://docs.near.org/api/rpc/providers.md), [gas keys](https://docs.near.org/protocol/accounts-contracts/gas-keys.md), [transactions](https://docs.near.org/api/rpc/transactions.md), [blocks and finality](https://docs.near.org/integrations/blocks-and-finality.md), [Neardata](https://docs.fastnear.com/neardata.md), [Transactions API](https://docs.fastnear.com/tx.md), [FastNEAR auth](https://docs.fastnear.com/auth.md), [Cloudflare 524](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/).
