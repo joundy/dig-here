@@ -1,4 +1,5 @@
 // Where live state comes from. The backend first; if it goes quiet, straight from the chain, and back.
+import type { MarketFrame } from './deeds';
 import type { LiveState } from './rooms';
 
 const QUIET_MS = 5000;
@@ -9,7 +10,7 @@ const WATCH_MS = 500;
 const REOPEN_MS = 5000;
 
 export type FeedMode = 'backend' | 'chain';
-export type StateBody = { version: number; fetched_ms: number; live: LiveState };
+export type StateBody = { version: number; fetched_ms: number; live: LiveState; market?: MarketFrame | null };
 
 export type EventSourceLike = {
   readyState: number;
@@ -26,6 +27,8 @@ export type FeedDeps = {
   /** Chain time, to tell a backend that answers but has stopped reading the chain. */
   chainNow(): number;
   onState(live: LiveState): void;
+  /** Listings and owners, when the backend has them. */
+  onMarket?(market: MarketFrame): void;
   onMode(mode: FeedMode): void;
 };
 
@@ -88,6 +91,7 @@ export class LiveFeed {
         this.#lastFrame = Date.now();
         this.#setMode('backend');
         this.#deps.onState(body.live);
+        if (body.market) this.#deps.onMarket?.(body.market);
       } catch {
         // A bad frame is the same as no frame: the watchdog handles it.
       }
@@ -117,6 +121,7 @@ export class LiveFeed {
       this.#lastFrame = Date.now();
       this.#setMode('backend');
       this.#deps.onState(body.live);
+      if (body.market) this.#deps.onMarket?.(body.market);
       if (!this.#stream || this.#stream.readyState === 2) this.#open();
     } catch {
       this.#setMode('chain');

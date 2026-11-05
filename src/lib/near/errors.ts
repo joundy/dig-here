@@ -23,9 +23,20 @@ export function panicMessage(raw: string): string | null {
 
 export const NO_COINS = 'Your wallet is out of testnet coins. Grab some free ones from the faucet, then try again.';
 
+/** The market and the NFT standard say these to developers. A player gets what it means for them. */
+const MARKET_WORDS: [RegExp, string][] = [
+  [/^Attach at least the price/, 'The price went up just now, so nothing was spent. Check it and try again.'],
+  [/^Attach at least \d+ Tgas/, 'That took more digging than expected. Nothing was spent, so try again.'],
+  [/^This NFT isn't for sale/, 'That listing has just ended, so nothing was spent.'],
+  [/^Only the seller can change the price/, "You don't own this listing any more."],
+  [/must be token owner|Unauthorized|Sender not approved/i, "You don't own this NFT any more."],
+  [/^Token not found/i, "That NFT hasn't been minted yet."],
+  [/msg must be/, "That price didn't work. Try a plain number, like 1.5."],
+];
+
 export function plainError(raw: string): string {
   const panic = panicMessage(raw);
-  if (panic) return panic;
+  if (panic) return MARKET_WORDS.find(([pattern]) => pattern.test(panic))?.[1] ?? panic;
   const wrong = raw.match(/WrongNetwork: (\S+)/);
   if (wrong) return `${wrong[1]} isn't a testnet account. This game runs on NEAR testnet, so switch your wallet to testnet and pick an account ending in .testnet.`;
   if (/NoWallets/.test(raw)) return "Couldn't load the list of wallets. Check your connection and try again.";

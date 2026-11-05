@@ -64,12 +64,12 @@ export async function disconnectWallet(accountId: string): Promise<void> {
 }
 
 /** A call the wallet has to approve, because it attaches coins or because the game's own key can't make it. */
-export async function callWithDeposit(accountId: string, method: string, args: object, gasTgas: number, depositYocto: string): Promise<any> {
+export async function callWithDeposit(accountId: string, method: string, args: object, gasTgas: number, depositYocto: string, receiverId: string = CONTRACT): Promise<any> {
   const near = await getConnector();
   const { wallet } = await near.getConnectedWallet();
   return wallet.signAndSendTransaction({
     signerId: accountId,
-    receiverId: CONTRACT,
+    receiverId,
     actions: [{ type: 'FunctionCall', params: { methodName: method, args, gas: `${BigInt(gasTgas) * 1_000_000_000_000n}`, deposit: depositYocto } }],
   });
 }

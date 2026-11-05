@@ -1,518 +1,520 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
   import { near, percent } from '../lib/format';
-  import { kindName } from '../lib/game/copy';
-  import { deedChance, deedCount, deedId, deedKinds } from '../lib/game/economy';
+  import { mapName } from '../lib/game/copy';
+  import { deedKinds } from '../lib/game/economy';
   import { MAP_IDS } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Kind, MapId } from '../lib/game/types';
-  import { attachFor } from '../lib/pay';
+  import { ALL_DEEDS, DEFAULT_SORT, islandStats, marketRows, parseDeedId, SORTS, tabCounts } from '../lib/market';
+  import type { DeedRow, MarketSort, MarketTab } from '../lib/market';
   import { ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
-  import MapBadge from './MapBadge.svelte';
+  import DeedCard from './DeedCard.svelte';
+  import DeedDetail from './DeedDetail.svelte';
+  import DeedNews from './DeedNews.svelte';
+  import IslandLineup from './IslandLineup.svelte';
   import Sprite from './Sprite.svelte';
-  import Who from './Who.svelte';
 
-  type Tab = 'market' | 'mint' | 'all' | 'mine';
-  type Row = { map: MapId; kind: Kind; id: string };
+  let { id = '' }: { id?: string } = $props();
 
-  const TABS: { id: Tab; label: string }[] = [
-    { id: 'market', label: 'For sale' },
+  const TABS: { id: MarketTab; label: string }[] = [
+    { id: 'sale', label: 'For sale' },
     { id: 'mint', label: 'Mint' },
-    { id: 'all', label: 'All NFTs' },
-    { id: 'mine', label: 'My NFTs' },
+    { id: 'all', label: 'All' },
+    { id: 'mine', label: 'Mine' },
   ];
-  const PER_PAGE = 8;
-  const allRows: Row[] = MAP_IDS.flatMap((map) => deedKinds(map).map((kind) => ({ map, kind, id: deedId(map, kind) })));
+  const SKELETONS = 8;
 
-  let tab = $state<Tab>('market');
+  let tab = $state<MarketTab>('sale');
   let mapFilter = $state<MapId | 'all'>('all');
-  let page = $state(0);
-  let busyId = $state('');
-  let error = $state('');
-  let note = $state('');
-  let editing = $state('');
-  let priceNear = $state<number | null>(null);
-  let sending = $state('');
-  let sendTo = $state('');
+  let sort = $state<MarketSort>(DEFAULT_SORT.sale);
+  let claiming = $state(false);
+  let claimError = $state('');
+  /** Where the list was when an NFT was opened, to go back to. */
+  let listScroll = 0;
 
   const me = $derived(backend.account);
-  const mintPrice = $derived(backend.prices.mintPrice);
-  const perPage = $derived(ui.compact ? 4 : PER_PAGE);
-
-  const matching = $derived.by(() => {
-    const onMap = allRows.filter((r) => mapFilter === 'all' || r.map === mapFilter);
-    if (tab === 'all') return onMap;
-    if (tab === 'mine') return onMap.filter((r) => backend.deedOf(r.id).owner === me);
-    if (tab === 'mint') return onMap.filter((r) => backend.deedOf(r.id).owner === null);
-    return onMap
-      .filter((r) => {
-        const { owner, price } = backend.deedOf(r.id);
-        return owner !== null && owner !== me && price !== null;
-      })
-      .sort((a, b) => backend.deedOf(a.id).price! - backend.deedOf(b.id).price! || a.id.localeCompare(b.id));
+  const selected = $derived(id ? parseDeedId(id) : null);
+  const read = (deedId: string) => backend.deedOf(deedId);
+  const counts = $derived(tabCounts(me, read));
+  const rows = $derived(marketRows(tab, mapFilter, sort, me, read));
+  const sorts = $derived(SORTS.filter((option) => option.tabs.includes(tab)));
+  /** Sorted by island, the list breaks into one collection per map. */
+  const groups = $derived.by((): { map: MapId | null; rows: DeedRow[] }[] => {
+    if (sort !== 'island') return [{ map: mapFilter === 'all' ? null : mapFilter, rows }];
+    return MAP_IDS
+      .filter((map) => mapFilter === 'all' || map === mapFilter)
+      .map((map) => ({ map, rows: rows.filter((row) => row.map === map) }))
+      .filter((group) => group.rows.length > 0);
   });
-  const pages = $derived(Math.max(1, Math.ceil(matching.length / perPage)));
-  const current = $derived(Math.min(page, pages - 1));
-  const rows = $derived(matching.slice(current * perPage, (current + 1) * perPage));
-  const myEarnings = $derived(allRows.reduce((sum, r) => {
-    const deed = backend.deedOf(r.id);
-    return deed.owner === me ? sum + deed.earned : sum;
+  const myEarnings = $derived(ALL_DEEDS.reduce((sum, row) => {
+    const deed = read(row.id);
+    return me && deed.owner === me ? sum + deed.earned : sum;
   }, 0));
 
-  // The map is only the backdrop here. It follows the map filter.
+  // The map is only the backdrop here. It follows whichever island you're looking at.
   $effect(() => {
-    world.showMap(mapFilter === 'all' ? 'tropical' : mapFilter);
+    world.showMap(selected?.map ?? (mapFilter === 'all' ? 'tropical' : mapFilter));
   });
 
-  function choose(next: Tab) {
+  // Coming back from an NFT puts you where you were. The hash change has already scrolled to the top.
+  $effect(() => {
+    if (id) return;
+    const to = listScroll;
+    void tick().then(() => window.scrollTo(0, to));
+  });
+
+  function chooseTab(next: MarketTab) {
     tab = next;
-    page = 0;
-    editing = error = note = '';
+    sort = DEFAULT_SORT[next];
   }
 
-  function chooseMap(next: MapId | 'all') {
-    mapFilter = next;
-    page = 0;
-    editing = '';
-  }
-
-  function title(kind: Kind): string {
-    const name = kindName(kind);
-    return `${name[0].toUpperCase()}${name.slice(1)}`;
-  }
-
-  /** `action` resolves to false when it stepped aside without doing anything, as when the wallet opened instead. */
-  async function act(id: string, action: () => Promise<void | false>, done: string) {
-    busyId = id;
-    error = note = '';
+  async function claim() {
+    claiming = true;
+    claimError = '';
     try {
-      if ((await action()) === false) return;
+      await backend.claimFromMarket();
       audio.coin();
-      note = done;
-      editing = '';
     } catch (e) {
-      error = (e as Error).message;
+      claimError = (e as Error).message;
       audio.error();
     } finally {
-      busyId = '';
+      claiming = false;
     }
   }
 
-  function mint(row: Row) {
-    void act(row.id, async () => {
-      await backend.ensureAccount();
-      const attach = await attachFor(`Mint the ${title(row.kind)} NFT`, mintPrice, 50);
-      if (attach === null) return false;
-      await backend.mintDeed(row.id, attach);
-    }, `You minted the ${title(row.kind)} NFT. Keep it, or list it under My NFTs.`);
-  }
-
-  function buy(row: Row, price: number) {
-    void act(row.id, async () => {
-      await backend.ensureAccount();
-      // A wallet's own approval tops up whatever's missing, so only the playtest has to have the coins first.
-      if (backend.identity.kind !== 'wallet' && (await attachFor('', price, price)) === null) return false;
-      await backend.buyDeed(row.id, price);
-    }, `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
-  }
-
-  function startListing(row: Row) {
-    editing = row.id;
-    const { price } = backend.deedOf(row.id);
-    priceNear = price === null ? null : price / 1000;
-    error = note = '';
-  }
-
-  function list(event: SubmitEvent, row: Row) {
-    event.preventDefault();
-    const price = Math.round((Number(priceNear) || 0) * 1000);
-    void act(row.id, () => backend.listDeed(row.id, price), `Listed for ${near(price)}.`);
-  }
-
-  function send(event: SubmitEvent, row: Row) {
-    event.preventDefault();
-    const to = sendTo.trim();
-    void act(row.id, () => backend.transferDeed(row.id, to), `Sent to ${to}.`);
-  }
-
-  function startSending(row: Row) {
-    sending = row.id;
-    sendTo = '';
-    error = note = '';
-  }
-
-  function unlist(row: Row) {
-    void act(row.id, () => backend.listDeed(row.id, null), 'Off the market. It stays yours.');
-  }
+  const found = (map: MapId) => (kind: Kind) => backend.deedOf(`${map}:${kind}`).owner !== null;
 </script>
 
-<section class="panel market" class:phone={ui.compact}>
-  <h1>NFT market</h1>
-  <p class="what">
-    Earn {percent(RULES.deedBps)} of the pot when the treasure lands by your kind of landmark.
-    Mint a new one for {near(mintPrice)}, or buy one someone has listed.
-  </p>
+{#snippet lineup(map: MapId)}
+  {@const stats = islandStats(map, read)}
+  <header class="island {map}">
+    <IslandLineup {map} kinds={deedKinds(map)} found={found(map)} />
+    <div class="plate">
+      <h2>{mapName(map)}</h2>
+      <p>
+        <span>{stats.minted} of {stats.total} minted</span>
+        {#if stats.floor !== null}<span>From <b>{near(stats.floor)}</b></span>{/if}
+        {#if stats.earned > 0 && !ui.compact}<span>{near(stats.earned)} earned</span>{/if}
+      </p>
+    </div>
+  </header>
+{/snippet}
 
-  <div class="tabs" role="tablist" aria-label="NFTs">
-    {#each TABS as item}
-      <button role="tab" aria-selected={tab === item.id} class:on={tab === item.id} onclick={() => choose(item.id)}>{item.label}</button>
-    {/each}
-  </div>
-
-  <div class="maps" role="group" aria-label="Filter by map">
-    <button class:on={mapFilter === 'all'} aria-pressed={mapFilter === 'all'} onclick={() => chooseMap('all')}>All maps</button>
-    {#each MAP_IDS as map}
-      <button class:on={mapFilter === map} aria-pressed={mapFilter === map} onclick={() => chooseMap(map)}><MapBadge mapId={map} compact /></button>
-    {/each}
-  </div>
-
-  {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if note}<p class="note" role="status">{note}</p>{/if}
-  {#if tab === 'mine' && matching.length}<p class="total">Earned so far: {near(myEarnings)}</p>{/if}
-
-  {#if rows.length}
-    <ul class="cards">
-      {#each rows as row (row.id)}
-        {@const deed = backend.deedOf(row.id)}
-        {@const mine = deed.owner === me}
-        <li class="card" class:mine>
-          <div class="art">
-            <span class="stack">
-              <Sprite name={row.kind} scale={3} />
-              {#if row.kind === 'windmill'}<span class="blades"><Sprite name="bladesPlus" scale={3} /></span>{/if}
-            </span>
-          </div>
-          <h2>{title(row.kind)}</h2>
-          <div class="where"><MapBadge mapId={row.map} compact /><span>{deedCount(row.map, row.kind)} on the map</span></div>
-          <p class="owner">{#if mine}You own this{:else if deed.owner}Owner: <Who account={deed.owner} {me} />{:else}Not minted yet{/if}</p>
-          <dl>
-            <div><dt>Chance</dt><dd>~{Math.round(deedChance(row.map, row.kind) * 100)}%</dd></div>
-            <div><dt>Landed</dt><dd>{deed.landings}</dd></div>
-            <div><dt>Earned</dt><dd>{near(deed.earned)}</dd></div>
-          </dl>
-
-          {#if editing === row.id}
-            <form class="edit" onsubmit={(e) => list(e, row)}>
-              <label>
-                <span>Your price in NEAR</span>
-                <input type="number" bind:value={priceNear} min="0.001" step="any" inputmode="decimal" disabled={busyId === row.id} />
-              </label>
-              <button class="btn small" type="submit" disabled={busyId === row.id}>{deed.price === null ? 'List it' : 'Save price'}</button>
-              <button class="plain" type="button" onclick={() => (editing = '')}>Cancel</button>
-            </form>
-          {:else if sending === row.id}
-            <form class="edit" onsubmit={(e) => send(e, row)}>
-              <label>
-                <span>Send to account</span>
-                <input bind:value={sendTo} placeholder="name.testnet" autocomplete="off" disabled={busyId === row.id} />
-              </label>
-              <button class="btn small" type="submit" disabled={busyId === row.id || !sendTo.trim()}>{busyId === row.id ? 'Asking your wallet…' : 'Send'}</button>
-              <button class="plain" type="button" onclick={() => (sending = '')}>Cancel</button>
-            </form>
-          {:else if mine}
-            {#if deed.price !== null}
-              <p class="selling">Listed for <strong>{near(deed.price)}</strong></p>
-              <button class="btn small alt" onclick={() => startListing(row)}>Change price</button>
-              <button class="plain" disabled={busyId === row.id} onclick={() => unlist(row)}>Take off market</button>
-            {:else}
-              <p class="selling">Not listed</p>
-              <button class="btn small alt" disabled={busyId === row.id} onclick={() => startListing(row)}>List for sale</button>
-            {/if}
-            {#if backend.canTransferDeeds}
-              <button class="plain" onclick={() => startSending(row)}>Send to someone</button>
-            {/if}
-          {:else if deed.owner === null}
-            <button class="btn small" disabled={busyId === row.id} onclick={() => mint(row)}>
-              {busyId === row.id ? 'Minting…' : `Mint for ${near(mintPrice)}`}
-            </button>
-          {:else if deed.price !== null}
-            <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, deed.price!)}>
-              {busyId === row.id ? 'Signing…' : `Buy for ${near(deed.price)}`}
-            </button>
-          {:else}
-            <p class="kept">Not for sale</p>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  {:else if tab === 'mine'}
-    <p class="empty">You own no land. Very modern of you.</p>
-  {:else if tab === 'mint'}
-    <p class="empty">Every NFT here has been minted. Check For sale.</p>
+<section class="panel market">
+  {#if id}
+    {#if selected}
+      {#key selected.id}<DeedDetail row={selected} />{/key}
+    {:else}
+      <div class="state">
+        <Sprite name="parrot" scale={4} />
+        <h2>There's no such NFT</h2>
+        <p>That link doesn't match any landmark on our islands.</p>
+        <a class="btn alt small" href="#/deeds">See all NFTs</a>
+      </div>
+    {/if}
   {:else}
-    <p class="empty">Nothing for sale here. Everyone loves their landmark too much.</p>
-  {/if}
+    <header class="head">
+      <h1>NFT market</h1>
+      <label class="sort">
+        <span class="sr-only">Sort by</span>
+        <select class="select" bind:value={sort}>
+          {#each sorts as option}<option value={option.id}>{option.label}</option>{/each}
+        </select>
+      </label>
+      <p>Own a landmark and earn {percent(RULES.deedBps)} of the pot whenever the treasure lands by one.</p>
+    </header>
 
-  {#if pages > 1}
-    <nav class="pager" aria-label="Pages">
-      <button aria-label="Previous page" disabled={current === 0} onclick={() => (page = current - 1)}>‹</button>
-      <span>{current + 1} / {pages}</span>
-      <button aria-label="Next page" disabled={current === pages - 1} onclick={() => (page = current + 1)}>›</button>
-    </nav>
-  {/if}
+    <div class="tabs" role="tablist" aria-label="NFTs">
+      {#each TABS as item}
+        <button role="tab" aria-selected={tab === item.id} class:on={tab === item.id} onclick={() => chooseTab(item.id)}>
+          {item.label} {#if backend.deedsReady && (item.id !== 'mine' || me)}<span class="count">{counts[item.id]}</span>{/if}
+        </button>
+      {/each}
+    </div>
 
-  <p class="links"><a href="#/">Back to games</a><a href="#/season">Season</a></p>
+    <div class="bar">
+      <div class="islands" role="group" aria-label="Filter by island">
+        <button class:on={mapFilter === 'all'} aria-pressed={mapFilter === 'all'} onclick={() => (mapFilter = 'all')}>All islands</button>
+        {#each MAP_IDS as map}
+          <button class="{map}" class:on={mapFilter === map} aria-pressed={mapFilter === map} onclick={() => (mapFilter = map)}>
+            <Sprite name={map === 'tropical' ? 'palm' : map === 'snowy' ? 'penguin' : 'camel'} scale={1} />
+            {mapName(map).split(' ')[0]}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    {#if backend.deedsError}
+      <div class="trouble" role="alert">
+        <p>{backend.deedsError}</p>
+        <button class="btn alt small" onclick={() => backend.reloadDeeds()}>Try again</button>
+      </div>
+    {/if}
+
+    {#if backend.marketClaim > 0}
+      <div class="claim" role="status">
+        <p>The market is holding {near(backend.marketClaim)} for you, because a payment couldn't reach your account when it was due.</p>
+        <button class="btn small" disabled={claiming} onclick={claim}>{claiming ? 'Waiting for your wallet…' : 'Send it to my wallet'}</button>
+        {#if claimError}<p class="error" role="alert">{claimError}</p>{/if}
+      </div>
+    {/if}
+
+    <div class="shop">
+      <div class="list">
+        {#if !backend.deedsReady}
+          <ul class="cards" aria-busy="true" aria-label="Loading the market">
+            {#each { length: SKELETONS }, i}<li class="ghost" style:--i={i}><span></span></li>{/each}
+          </ul>
+        {:else if tab === 'mine' && !me}
+          <div class="state">
+            <Sprite name="chest" scale={5} />
+            <h2>Your collection lives in your wallet</h2>
+            <p>Connect it to see the NFTs you own and what they've earned.</p>
+            <button class="btn small" onclick={() => backend.ensureAccount().catch(() => {})}>Connect wallet</button>
+          </div>
+        {:else if rows.length === 0}
+          <div class="state">
+            {#if tab === 'mine'}
+              <Sprite name="chest" scale={5} />
+              <h2>Your chest is empty</h2>
+              <p>Mint a landmark nobody owns yet, or buy one from another player.</p>
+              <div class="pair">
+                <button class="btn small" onclick={() => chooseTab('mint')}>See what's left to mint</button>
+                <button class="btn alt small" onclick={() => chooseTab('sale')}>See what's for sale</button>
+              </div>
+            {:else if tab === 'mint'}
+              <Sprite name="shovel" scale={5} />
+              <h2>{mapFilter === 'all' ? 'Every NFT has been minted' : `All of ${mapName(mapFilter)} is minted`}</h2>
+              <p>From here on they only change hands between players.</p>
+              <button class="btn alt small" onclick={() => chooseTab('sale')}>See what's for sale</button>
+            {:else}
+              <Sprite name="coin" scale={6} />
+              <h2>Nothing for sale {mapFilter === 'all' ? 'yet' : `on ${mapName(mapFilter)}`}</h2>
+              <p>Everyone's holding on to their landmark. You can still mint one nobody owns.</p>
+              <button class="btn small" onclick={() => chooseTab('mint')}>See what's left to mint</button>
+            {/if}
+          </div>
+        {:else}
+          {#if tab === 'mine'}<p class="earned"><Sprite name="coin" scale={2} /> Your NFTs have earned {near(myEarnings)}</p>{/if}
+          {#each groups as group (group.map ?? 'flat')}
+            {#if group.map}{@render lineup(group.map)}{/if}
+            <ul class="cards">
+              {#each group.rows as row (row.id)}
+                <li><DeedCard {row} onopen={() => (listScroll = window.scrollY)} /></li>
+              {/each}
+            </ul>
+          {/each}
+        {/if}
+      </div>
+
+      <aside class="side"><DeedNews /></aside>
+    </div>
+  {/if}
 </section>
 
 <style>
-  .market h1 {
+  .market {
+    --set: var(--mist);
+  }
+  :global(.market .tropical) {
+    --set: #5fd98f;
+  }
+  :global(.market .snowy) {
+    --set: #8fdcf5;
+  }
+  :global(.market .desert) {
+    --set: #ff9d4d;
+  }
+  .head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) minmax(9rem, 12rem);
+    align-items: center;
+    gap: 0.25rem 1rem;
+    margin-bottom: 0.6rem;
+  }
+  .head .sort {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  h1 {
     margin: 0;
     font-family: var(--display);
-    font-size: 2.6rem;
+    font-size: 2.8rem;
     font-weight: 400;
     line-height: 1;
     color: var(--sun);
+    white-space: nowrap;
   }
-  .what {
-    margin: 0.3rem 0 0.7rem;
-    color: var(--mist);
+  .head p {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
     font-size: 1.2rem;
     line-height: 1.15;
-    max-width: 46rem;
+    color: var(--mist);
+    max-width: 44rem;
   }
   .tabs {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 0.35rem;
+    gap: 0.2rem;
   }
-  .maps {
+  .tabs button {
+    min-height: 2.75rem;
+    padding: 0 0.25rem;
+    font: inherit;
+    font-size: 1.4rem;
+    white-space: nowrap;
+    color: var(--foam);
+    background: var(--deep);
+    border: 0;
+    cursor: pointer;
+  }
+  .tabs button.on {
+    color: var(--ink);
+    background: var(--sun);
+  }
+  .count {
+    opacity: 0.75;
+  }
+  .bar {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.35rem;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin: 0.4rem 0 0.7rem;
   }
-  .maps button {
-    min-height: 2.5rem;
-    padding: 0.1rem 0.6rem;
+  .islands {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+  .islands button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    min-height: 2.75rem;
+    padding: 0 0.6rem;
     font: inherit;
-    font-size: 1.15rem;
+    font-size: 1.2rem;
     line-height: 1;
+    white-space: nowrap;
     color: var(--mist);
     background: none;
     border: 0;
     box-shadow: inset 0 0 0 2px var(--deep);
     cursor: pointer;
   }
-  .maps button.on {
+  .islands button.on {
     color: var(--foam);
     background: var(--deep);
-    box-shadow: inset 0 -3px 0 var(--sun);
+    box-shadow: inset 0 -3px 0 var(--set);
   }
-  .kept {
-    margin: auto 0 0;
-    padding: 0.4rem 0;
-    color: var(--mist);
-    font-size: 1.15rem;
-    line-height: 1.1;
-    text-align: center;
+  .sort .select {
+    height: 2.5rem;
   }
-  .pager {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.6rem;
-    margin-top: 0.6rem;
-    font-variant-numeric: tabular-nums;
+  .shop {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 15.5rem;
+    gap: 1rem;
+    align-items: start;
   }
-  .pager button {
-    width: 2.75rem;
-    height: 2.75rem;
-    font: inherit;
-    font-size: 1.6rem;
-    color: var(--foam);
-    background: var(--deep);
-    border: 0;
-    cursor: pointer;
+  .list {
+    display: grid;
+    gap: 0.7rem;
+    min-width: 0;
   }
-  .pager button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .tabs button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2.75rem;
-    padding: 0.2rem 0.3rem;
-    font: inherit;
-    font-size: 1.2rem;
-    line-height: 1;
-    color: var(--foam);
-    background: var(--deep);
-    border: 0;
-    cursor: pointer;
-    transition: transform 0.09s cubic-bezier(0.3, 1.6, 0.6, 1);
-  }
-  .tabs button:active {
-    transform: translateY(2px);
-  }
-  .tabs button.on {
-    color: var(--ink);
-    background: var(--sun);
-  }
-  .note,
-  .total {
-    margin: 0.5rem 0 0;
-    color: var(--sun);
-    font-size: 1.2rem;
-    line-height: 1.15;
+  .side {
+    position: sticky;
+    top: 0.5rem;
+    padding: 0.6rem 0.65rem 0.7rem;
+    background: rgb(18 63 154 / 0.45);
   }
   .cards {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.5rem;
-    margin: 0.7rem 0 0;
-    padding: 0;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    gap: 0.75rem;
+    margin: 0;
+    padding: 3px;
     list-style: none;
   }
-  .phone .cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: 0;
-    padding: 0.5rem;
-    background: var(--deep);
-    transition: transform 0.12s cubic-bezier(0.3, 1.6, 0.6, 1);
-  }
-  @media (hover: hover) {
-    .card:hover {
-      transform: translateY(-3px);
-    }
-  }
-  .card.mine {
-    box-shadow: inset 0 0 0 3px var(--pink);
-  }
-  .art {
+  .cards > li {
     display: grid;
-    place-items: center;
-    height: 4.6rem;
-    background: var(--mist);
-    box-shadow: inset 0 -4px 0 #a7bfe6;
+    min-width: 0;
   }
-  .stack {
+  .ghost {
+    aspect-ratio: 13 / 22;
+    background: var(--deep);
+    animation: breathe 1.2s steps(4) infinite alternate;
+    animation-delay: calc(var(--i) * 90ms);
+  }
+  .ghost span {
+    display: block;
+    height: 70%;
+    background: rgb(247 247 238 / 0.08);
+  }
+  @keyframes breathe {
+    from { opacity: 0.45; }
+    to { opacity: 0.9; }
+  }
+  .island {
+    --frame: 3px;
+    display: grid;
     position: relative;
-    display: inline-block;
-    line-height: 0;
+    margin: 3px;
+    background: var(--deep);
+    box-shadow:
+      0 calc(-1 * var(--frame)) 0 0 var(--set),
+      0 var(--frame) 0 0 var(--set),
+      calc(-1 * var(--frame)) 0 0 0 var(--set),
+      var(--frame) 0 0 0 var(--set);
   }
-  /* The world draws a windmill's blades separately, so they can spin. */
-  .blades {
-    position: absolute;
-    top: -6px;
-    left: 0;
-  }
-  .card h2 {
-    margin: 0.2rem 0 0;
-    font-family: var(--display);
-    font-size: 1.7rem;
-    font-weight: 400;
-    line-height: 1;
-    overflow-wrap: anywhere;
-  }
-  .where {
+  .plate {
     display: flex;
     flex-wrap: wrap;
+    align-items: baseline;
     justify-content: space-between;
-    gap: 0 0.4rem;
-    color: var(--mist);
-    font-size: 1.05rem;
-    line-height: 1.1;
+    gap: 0 1rem;
+    padding: 0.25rem 0.6rem 0.35rem;
   }
-  .owner {
+  .plate h2 {
     margin: 0;
-    color: var(--sun);
-    font-size: 1.1rem;
-    line-height: 1.1;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    font-family: var(--display);
+    font-size: 1.8rem;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--set);
   }
-  .mine .owner {
-    color: #ffb3d1;
-  }
-  dl {
-    margin: 0 0 0.3rem;
-    font-size: 1.1rem;
-    line-height: 1.12;
-  }
-  dl div {
+  .plate p {
     display: flex;
-    justify-content: space-between;
-    gap: 0.4rem;
-  }
-  dt {
+    flex-wrap: wrap;
+    gap: 0 0.9rem;
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.15;
     color: var(--mist);
   }
-  dd {
-    margin: 0;
-    font-variant-numeric: tabular-nums;
-  }
-  .selling {
-    margin: auto 0 0;
-    font-size: 1.1rem;
-    line-height: 1.1;
-  }
-  .selling strong {
+  .plate b {
     font-weight: 400;
     color: var(--sun);
   }
-  .card > .btn {
-    margin-top: auto;
-  }
-  .card .btn.small {
-    font-size: 1.35rem;
-    padding: 0.35rem 0.25rem 0.5rem;
-    box-shadow: inset 0 -4px 0 #d98f00, inset 0 2px 0 #ffe680;
-  }
-  .card .btn.small.alt {
-    margin-top: 0.25rem;
-    color: var(--foam);
-    background: var(--sea);
-    box-shadow: inset 0 -4px 0 var(--ink);
-  }
-  .edit {
-    display: grid;
-    gap: 0.25rem;
-    margin-top: auto;
-  }
-  .edit span {
-    display: block;
-    color: var(--mist);
-    font-size: 1.05rem;
-    line-height: 1.1;
-  }
-  .edit input {
-    width: 100%;
-    font: inherit;
-    font-size: 1.3rem;
-    color: var(--ink);
-    background: var(--foam);
-    border: 0;
-    padding: 0.2rem 0.4rem;
-  }
-  .plain {
-    min-height: 2rem;
-    font: inherit;
-    font-size: 1.1rem;
-    color: var(--mist);
-    background: none;
-    border: 0;
-    text-decoration: underline;
-    cursor: pointer;
-  }
-  .empty {
-    margin: 1.5rem 0;
-    color: var(--mist);
-    text-align: center;
-  }
-  .links {
+  .earned {
     display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0;
+    font-size: 1.3rem;
+    color: var(--sun);
+  }
+  .state {
+    display: grid;
+    justify-items: center;
+    gap: 0.5rem;
+    padding: 2rem 1rem 2.25rem;
+    text-align: center;
+    background: rgb(18 63 154 / 0.45);
+  }
+  .state h2 {
+    margin: 0.2rem 0 0;
+    font-family: var(--display);
+    font-size: 2rem;
+    font-weight: 400;
+    line-height: 1;
+  }
+  .state p {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.15;
+    color: var(--mist);
+    max-width: 26rem;
+  }
+  .small {
+    width: auto;
+    font-size: 1.5rem;
+    padding: 0.4rem 1rem 0.6rem;
+  }
+  .pair {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 0.25rem;
+  }
+  .trouble {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     justify-content: space-between;
-    margin: 0.8rem 0 0;
-    font-size: 1.2rem;
+    gap: 0.4rem 0.75rem;
+    margin-bottom: 0.7rem;
+    padding: 0.4rem 0.6rem;
+    color: var(--ink);
+    background: #ffc2d9;
+  }
+  .claim {
+    display: grid;
+    gap: 0.4rem;
+    margin-bottom: 0.7rem;
+    padding: 0.5rem 0.6rem 0.6rem;
+    background: var(--deep);
+    box-shadow: inset 3px 0 0 var(--sun);
+  }
+  .claim p {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.15;
+  }
+  .claim .btn {
+    justify-self: start;
+  }
+  .trouble p {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.15;
+  }
+
+  @media (max-width: 960px) {
+    .shop {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .side {
+      position: static;
+    }
+    .cards {
+      grid-template-columns: repeat(auto-fill, minmax(9.3rem, 1fr));
+      gap: 0.6rem;
+    }
+  }
+  @media (max-width: 480px) {
+    h1 {
+      font-size: 2.4rem;
+    }
+    .head {
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 0.3rem 0.5rem;
+    }
+    .head .sort {
+      grid-column: 2;
+    }
+    .head p {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      font-size: 1.1rem;
+    }
+    .tabs button {
+      font-size: 1.25rem;
+    }
+    .islands button {
+      flex: 1 1 0;
+      padding: 0 0.2rem;
+      font-size: 1.1rem;
+    }
   }
 </style>

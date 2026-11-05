@@ -49,7 +49,7 @@ export const SPRITE_ART = {
     '..kwwwkwwwkk....',
     '.kwwwwwwwwwwkkk.',
     'kwwwwcwwwwwkdddk',
-    'kwwwwwwwcwwkdwdk',
+    'kwwwwwwwcwwkdkdk',
     'kwcwwwwwwwwkdddk',
     '.kwwwwcwwwwwkkk.',
     '..kkwwwkwwwkk...',

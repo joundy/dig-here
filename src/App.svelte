@@ -25,7 +25,9 @@
     const game = path.match(/^\/game\/(.+)$/);
     if (game) return { name: 'game' as const, id: game[1], key: path };
     if (path === '/new') return { name: 'new' as const, id: '', key: path };
-    if (path === '/deeds') return { name: 'deeds' as const, id: '', key: path };
+    // One key for the market and its NFTs, because the list has to still be there, as it was, on the way back.
+    const deed = path.match(/^\/deeds(?:\/(.+))?$/);
+    if (deed) return { name: 'deeds' as const, id: deed[1] ?? '', key: '/deeds' };
     if (path === '/season') return { name: 'season' as const, id: '', key: path };
     return { name: 'lobby' as const, id: '', key: '/' };
   });
@@ -99,13 +101,13 @@
     />
   </div>
   {#key route.key}
-    <div class="rail" in:fly={{ x: 40, duration: calm ? 0 : 240 }}>
+    <div class="rail" class:wide={route.name === 'deeds'} in:fly={{ x: 40, duration: calm ? 0 : 240 }}>
       {#if route.name === 'game'}
         <RoomGate id={route.id} onboard={(b) => (board = b)} />
       {:else if route.name === 'new'}
         <NewGame />
       {:else if route.name === 'deeds'}
-        <DeedMarket />
+        <DeedMarket id={route.id} />
       {:else if route.name === 'season'}
         <SeasonPage />
       {:else}

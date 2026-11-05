@@ -1,25 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { digButton } from '../digButton';
-import { botLimitNote, botLimitsFrom, buyDeposit, defaultsWithin, isTestnetAccount, spendable, topUpPlan } from '../near/choices';
+import { botLimitNote, botLimitsFrom, defaultsWithin, isTestnetAccount, spendable, topUpPlan } from '../near/choices';
+import { activityOf, deedsFrom, milliCeil } from '../near/deeds';
 import { plainError } from '../near/errors';
 import { displayName } from '../near/rooms';
 
 const YOCTO = 10n ** 21n;
-
-describe('what a wallet attaches to a buy', () => {
-  it('is 1 yocto when the balance covers the price', () => {
-    expect(buyDeposit(100, 100)).toBe('1');
-    expect(buyDeposit(100, 250)).toBe('1');
-  });
-
-  it('adds what the balance is short of', () => {
-    expect(BigInt(buyDeposit(100, 30))).toBe(70n * YOCTO + 1n);
-  });
-
-  it("adds a record's cost when there may be no record yet, since that comes out of the credit", () => {
-    expect(BigInt(buyDeposit(100, 0))).toBe(102n * YOCTO + 1n);
-  });
-});
 
 describe('what a first join asks a wallet for', () => {
   it('covers the fee and the setup, and offers more only out of what the wallet can spare', () => {
@@ -102,6 +88,40 @@ describe('the dig button', () => {
   });
 });
 
+describe('reading the market', () => {
+  const listing = (over: object = {}) => ({ token_id: 't:a', seller: 'a.testnet', price: String(1500n * YOCTO), approval_id: 1, in_progress: false, ...over });
+  const nfts = [{ token_id: 't:a', owner: 'a.testnet', earned: 2, landings: 1 }, { token_id: 't:b', owner: null, earned: 0, landings: 0 }];
+
+  it('rounds a price up, so a screen never shows less than the real one', () => {
+    expect(milliCeil(String(1500n * YOCTO))).toBe(1500);
+    expect(milliCeil(String(1500n * YOCTO + 1n))).toBe(1501);
+  });
+
+  it('joins a listing to its NFT', () => {
+    const { deeds, yocto } = deedsFrom(nfts, [listing()]);
+    expect(deeds['t:a']).toEqual({ owner: 'a.testnet', price: 1500, earned: 2, landings: 1, saleInProgress: false });
+    expect(deeds['t:b'].price).toBeNull();
+    expect(yocto.get('t:a')).toBe(String(1500n * YOCTO));
+  });
+
+  it("ignores a listing whose seller doesn't own the NFT any more, or that the backend calls stale", () => {
+    expect(deedsFrom(nfts, [listing({ seller: 'old.testnet' })]).deeds['t:a'].price).toBeNull();
+    expect(deedsFrom(nfts, [listing({ stale: true })]).deeds['t:a'].price).toBeNull();
+    expect(deedsFrom(nfts, [listing({ token_id: 't:missing' })]).yocto.size).toBe(0);
+  });
+
+  it('carries a sale in progress', () => {
+    expect(deedsFrom(nfts, [listing({ in_progress: true })]).deeds['t:a'].saleInProgress).toBe(true);
+  });
+
+  it('reads an activity line, and skips a kind it has never heard of', () => {
+    const row = { seq: 1, kind: 'sold' as const, token_id: 't:a', seller: 's', buyer: 'b', price: String(2n * YOCTO), block_ms: 5, tx_hash: 'h' };
+    expect(activityOf(row)).toEqual([{ kind: 'sold', id: 't:a', at: 5, from: 's', to: 'b', price: 2, tx: 'h' }]);
+    expect(activityOf({ ...row, kind: 'price_changed', price: null, tx_hash: null })).toEqual([{ kind: 'price', id: 't:a', at: 5, from: 's', to: 'b', price: null, tx: undefined }]);
+    expect(activityOf({ ...row, kind: 'teleported' as never })).toEqual([]);
+  });
+});
+
 it('strips what makes a room name read as something else', () => {
   expect(displayName('Lunch‮gnirts\n')).toBe('Lunchgnirts');
   expect(displayName('🌴 Niño 🪙')).toBe('🌴 Niño 🪙');
@@ -111,6 +131,14 @@ it('strips what makes a room name read as something else', () => {
 describe('the backend', () => {
   const SUCCESS = { status: { SuccessValue: '' }, transaction_outcome: { outcome: { status: {} } }, receipts_outcome: [], final_execution_status: 'FINAL' };
   let keyAnswer: unknown = SUCCESS;
+  let walletAnswer: unknown = SUCCESS;
+  /** What each contract's views answer, by `contract.method`. */
+  let views: Record<string, unknown> = {};
+  const CHAIN = 'v1.dighere.testnet';
+  const MARKET = 'market.dighere.testnet';
+  const logsOf = (...events: object[]) => ({ ...SUCCESS, receipts_outcome: [{ outcome: { logs: events.map((e) => `EVENT_JSON:${JSON.stringify(e)}`) } }] });
+  const nft = (owner: string | null, id = 'snowy:penguin') => ({ token_id: id, map: 'snowy', kind: 'penguin', owner, earned: 3, landings: 1 });
+  const listing = (seller: string, price = 1000n * YOCTO, id = 'snowy:penguin') => ({ token_id: id, seller, price: price.toString(), approval_id: 1, in_progress: false });
   const walletCalls: any[][] = [];
   const keySends: any[] = [];
   let sources: { emit: (data: unknown) => void }[] = [];
@@ -149,7 +177,7 @@ describe('the backend', () => {
         callWithDeposit: async (...args: any[]) => {
           if (walletThrows) throw walletThrows;
           walletCalls.push(args);
-          return SUCCESS;
+          return walletAnswer;
         },
         connectWallet: () => signIn(),
         disconnectWallet: async (id: string) => { storage.delete(`access_key::plugin::testnet::${id}`); },
@@ -173,6 +201,8 @@ describe('the backend', () => {
     walletCalls.length = 0;
     keySends.length = 0;
     keyAnswer = SUCCESS;
+    walletAnswer = SUCCESS;
+    views = {};
     keyThrows = walletThrows = null;
     walletModuleLoads = 0;
     signIn = async () => ({ accountId: 'me.testnet', keyAdded: true });
@@ -187,7 +217,11 @@ describe('the backend', () => {
       addEventListener(_type: string, listener: (e: { data: string }) => void) { this.#listener = listener; }
       close() {}
     });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ jsonrpc: '2.0', result: { amount: '0', storage_usage: 100, result: [...new TextEncoder().encode('null')] } }))));
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { body?: string }) => {
+      const params = init?.body ? JSON.parse(init.body).params : null;
+      const answer = params?.method_name ? views[`${params.account_id}.${params.method_name}`] ?? null : null;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: { amount: '0', storage_usage: 100, result: [...new TextEncoder().encode(JSON.stringify(answer))] } }));
+    }));
     vi.useFakeTimers();
   });
 
@@ -198,23 +232,188 @@ describe('the backend', () => {
     vi.doUnmock('../near/signer');
   });
 
-  it('sends a wallet buy through the wallet with the yocto, even when a browser key is there', async () => {
+  it('buys through the market with the exact price attached, and never through a browser key', async () => {
+    const price = 1500n * YOCTO + 7n;
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet', price)];
     const backend = await load(WALLET, WITH_KEY);
-    await backend.buyDeed('snowy:penguin', 100);
+    walletAnswer = logsOf({ standard: 'dig-here-market', event: 'nft_sold', data: {} });
+    await backend.buyDeed('snowy:penguin', 1501);
     expect(keySends).toEqual([]);
     expect(walletCalls).toHaveLength(1);
-    const [account, method, args, , deposit] = walletCalls[0];
-    expect(account).toBe('me.testnet');
-    expect(method).toBe('buy_nft');
-    expect(args).toEqual({ token_id: 'snowy:penguin', seen_price: 100 });
-    expect(BigInt(deposit) % YOCTO).toBe(1n);
+    const [account, method, args, gas, deposit, receiver] = walletCalls[0];
+    expect([account, method, receiver]).toEqual(['me.testnet', 'buy', MARKET]);
+    expect(args).toEqual({ token_id: 'snowy:penguin' });
+    expect(gas).toBe(60);
+    expect(deposit).toBe(price.toString());
+    expect(backend.deedOf('snowy:penguin')).toMatchObject({ owner: 'me.testnet', price: null });
   });
 
-  it('lists through the browser key, with no popup', async () => {
-    const backend = await load(WALLET, WITH_KEY);
-    await backend.listDeed('snowy:penguin', 100);
-    expect(keySends.map((c) => c.method)).toEqual(['list_nft']);
+  it("doesn't open the wallet for a listing that went stale, whatever the page last showed", async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('new-owner.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('old-owner.testnet')];
+    const backend = await load(WALLET);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('That listing has just ended, so nothing was spent.');
     expect(walletCalls).toEqual([]);
+    expect(backend.deedOf('snowy:penguin').price).toBeNull();
+  });
+
+  it('stops a buy when the price moved, or a sale is already on its way', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet', 2000n * YOCTO)];
+    const backend = await load(WALLET);
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('The price just changed to 2 NEAR, so nothing was spent. Check it and try again.');
+    views[`${MARKET}.get_listings`] = [{ ...listing('seller.testnet'), in_progress: true }];
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow("Someone else's purchase is on its way. Try again in a moment.");
+    expect(walletCalls).toEqual([]);
+  });
+
+  it('says the coins came back when the sale fell through on the chain', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet')];
+    const backend = await load(WALLET);
+    walletAnswer = logsOf({ standard: 'dig-here-market', event: 'nft_sale_failed', data: {} });
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('All your coins came back to your wallet.');
+  });
+
+  it("checks the chain when a wallet doesn't hand back the logs", async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet')];
+    const backend = await load(WALLET);
+    const buying = backend.buyDeed('snowy:penguin', 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    views[`${CHAIN}.get_nfts`] = [nft('me.testnet')];
+    views[`${MARKET}.get_listings`] = [];
+    await vi.advanceTimersByTimeAsync(1000);
+    await buying;
+    expect(backend.deedOf('snowy:penguin').owner).toBe('me.testnet');
+  });
+
+  it('owns up when neither the logs nor the chain show the sale', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet')];
+    const backend = await load(WALLET);
+    const buying = expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow("The sale didn't go through.");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await buying;
+  });
+
+  it('passes on a contract refusal in plain words, and a wallet that said no', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet')];
+    const backend = await load(WALLET);
+    walletThrows = new Error('User rejected the request');
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow("Your wallet said no, so nothing happened. Try again when you're ready.");
+    walletThrows = null;
+    walletAnswer = { ...SUCCESS, status: { Failure: { ActionError: { kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: Attach at least the price.' } } } } } };
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('The price went up just now, so nothing was spent.');
+  });
+
+  it("lists with nft_approve on the game contract, the market as the approved account, and the price in msg", async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('me.testnet')];
+    const backend = await load(WALLET, WITH_KEY);
+    await backend.listDeed('snowy:penguin', 1250);
+    expect(keySends).toEqual([]);
+    const [, method, args, gas, deposit, receiver] = walletCalls[0];
+    expect([method, receiver, gas]).toEqual(['nft_approve', CHAIN, 30]);
+    expect(args).toEqual({ token_id: 'snowy:penguin', account_id: MARKET, msg: JSON.stringify({ price: (1250n * YOCTO).toString() }) });
+    expect(deposit).toBe(YOCTO.toString());
+    expect(backend.deedOf('snowy:penguin').price).toBe(1250);
+  });
+
+  it('changes a price and takes a listing down through the market, with a yocto each', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('me.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('me.testnet')];
+    const backend = await load(WALLET, WITH_KEY);
+    await backend.changeDeedPrice('snowy:penguin', 2000);
+    await backend.delistDeed('snowy:penguin');
+    expect(keySends).toEqual([]);
+    expect(walletCalls.map(([, method, args, gas, deposit, receiver]) => [method, args, gas, deposit, receiver])).toEqual([
+      ['update_price', { token_id: 'snowy:penguin', price: (2000n * YOCTO).toString() }, 10, '1', MARKET],
+      ['delist', { token_id: 'snowy:penguin' }, 10, '1', MARKET],
+    ]);
+  });
+
+  it('shows our own move until a read catches up, then trusts the reads again', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('me.testnet')];
+    const backend = await load(WALLET);
+    await backend.listDeed('snowy:penguin', 1250);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin').price).toBe(1250);
+    views[`${MARKET}.get_listings`] = [listing('me.testnet', 1250n * YOCTO)];
+    await vi.advanceTimersByTimeAsync(2000);
+    views[`${MARKET}.get_listings`] = [];
+    backend.reloadDeeds();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin').price).toBeNull();
+  });
+
+  it('mints through the wallet with one yocto when the balance covers it, and never through a browser key', async () => {
+    const backend = await load(WALLET, WITH_KEY);
+    await backend.mintDeed('snowy:penguin');
+    expect(keySends).toEqual([]);
+    const [, method, args, , deposit, receiver] = walletCalls[0];
+    expect([method, deposit, receiver]).toEqual(['mint_nft', '1', CHAIN]);
+    expect(args).toEqual({ token_id: 'snowy:penguin' });
+    expect(backend.deedOf('snowy:penguin').owner).toBe('me.testnet');
+  });
+
+  it('adds a top-up to a mint when the balance is short', async () => {
+    const backend = await load(WALLET, WITH_KEY);
+    await backend.mintDeed('snowy:penguin', 300);
+    expect(walletCalls[0][4]).toBe((300n * YOCTO).toString());
+  });
+
+  it('reads who owns what, and what they ask, from a frame the backend sends', async () => {
+    const backend = await load(null);
+    expect(backend.deedsReady).toBe(false);
+    sources[0].emit({ ...frame(null, 1), market: { contract: MARKET, version: 'a', nfts: [nft('a.testnet'), nft('b.testnet', 'snowy:seal')], listings: [listing('a.testnet'), { ...listing('b.testnet', 1000n * YOCTO, 'snowy:seal'), stale: true }] } });
+    expect(backend.deedsReady).toBe(true);
+    expect(backend.deedOf('snowy:penguin')).toMatchObject({ owner: 'a.testnet', price: 1000 });
+    expect(backend.deedOf('snowy:seal')).toMatchObject({ owner: 'b.testnet', price: null });
+  });
+
+  it('shows owners with no prices, and says so, when only the market is out of reach', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('a.testnet')];
+    const backend = await load(null);
+    vi.mocked(fetch).mockImplementation(async (_url: unknown, init?: { body?: unknown }) => {
+      const params = init?.body ? JSON.parse(String(init.body)).params : null;
+      if (params?.account_id === MARKET) return new Response(JSON.stringify({ jsonrpc: '2.0', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' }, data: 'no such account' } }));
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: { amount: '0', storage_usage: 100, result: [...new TextEncoder().encode(JSON.stringify(views[`${params?.account_id}.${params?.method_name}`] ?? null))] } }));
+    });
+    backend.reloadDeeds();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedsReady).toBe(true);
+    expect(backend.deedOf('snowy:penguin').owner).toBe('a.testnet');
+    expect(backend.deedsError).toMatch(/Can't read the market's prices/);
+  });
+
+  it("stays not ready when nothing can be read, and says it'll try again", async () => {
+    const backend = await load(null);
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'));
+    backend.reloadDeeds();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedsReady).toBe(false);
+    expect(backend.deedsError).toMatch(/Can't reach the market/);
+  });
+
+  it('knows what the market is holding, and claims it through the wallet', async () => {
+    views[`${MARKET}.get_unclaimed`] = (2500n * YOCTO).toString();
+    const backend = await load(WALLET);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.marketClaim).toBe(2500);
+    await backend.claimFromMarket();
+    expect(walletCalls[0].slice(1)).toEqual(['claim_unclaimed', {}, 30, '1', MARKET]);
+    expect(backend.marketClaim).toBe(0);
+  });
+
+  it('has nothing to say about sales until the backend answers', async () => {
+    const backend = await load(null);
+    expect(backend.deedNews).toBeNull();
+    expect(backend.deedHistory('snowy:penguin')).toBeNull();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedNews).toBeNull();
   });
 
   it('clears everything a returning guest left behind, and goes back to watching', async () => {
@@ -317,10 +516,10 @@ describe('the backend', () => {
     expect(walletCalls).toEqual([]);
   });
 
-  it("doesn't offer buying to the browser's key at all", async () => {
+  it("keeps every NFT move off the browser's key", async () => {
     const { GAME_METHODS } = await import('../near/config');
-    expect(GAME_METHODS).not.toContain('buy_nft');
-    expect(GAME_METHODS).toEqual(expect.arrayContaining(['mint_nft', 'list_nft', 'dig']));
+    for (const method of ['mint_nft', 'list_nft', 'buy_nft', 'nft_approve', 'nft_transfer']) expect(GAME_METHODS).not.toContain(method);
+    expect(GAME_METHODS).toEqual(expect.arrayContaining(['join', 'leave', 'start', 'dig', 'create_room', 'poke']));
   });
 
   it('knows a clue is arriving from the lock to the reveal, and sends no dig meanwhile', async () => {

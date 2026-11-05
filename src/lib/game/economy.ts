@@ -14,6 +14,22 @@ export type Deed = {
   price: number | null;
   earned: number;
   landings: number;
+  /** Someone's purchase is on its way, so it can't be bought or changed for a moment. */
+  saleInProgress?: boolean;
+};
+
+/** One line of an NFT's history. `from` and `to` are whoever it left and whoever it reached. */
+export type DeedEvent = {
+  kind: 'minted' | 'listed' | 'price' | 'delisted' | 'sold' | 'failed' | 'sent' | 'landed';
+  id: string;
+  /** Milliseconds since the epoch. */
+  at: number;
+  from: string | null;
+  to: string | null;
+  /** What it sold or was listed for, or what the owner earned when the treasure landed by it. */
+  price: number | null;
+  /** The transaction, where the chain has one. */
+  tx?: string;
 };
 
 export type HostRecord = { finished: number; expired: number };
@@ -38,6 +54,10 @@ export type Ledger = {
   treasury: number;
   jackpot: number;
   deeds: Record<string, Deed>;
+  /** Newest first, and only as long as the market needs it. */
+  deedLog: DeedEvent[];
+  /** When things are happening, set by whoever runs the ledger. These rules never read a clock of their own. */
+  clockMs: number;
   hosts: Record<string, HostRecord>;
   season: Season;
 };
@@ -50,6 +70,8 @@ export function newLedger(now: number): Ledger {
     treasury: 0,
     jackpot: 0,
     deeds: {},
+    deedLog: [],
+    clockMs: now,
     hosts: {},
     season: { number: 1, endsAt: now + RULES.seasonLengthSec * 1000, pool: 0, points: {}, lastWinners: [] },
   };
@@ -147,6 +169,13 @@ export function deedOf(ledger: Ledger, id: string): Deed {
   return ledger.deeds[id] ?? { owner: null, price: null, earned: 0, landings: 0 };
 }
 
+const DEED_LOG_KEPT = 200;
+
+function logDeed(ledger: Ledger, event: Omit<DeedEvent, 'at'>): void {
+  ledger.deedLog.unshift({ ...event, at: ledger.clockMs });
+  ledger.deedLog.length = Math.min(ledger.deedLog.length, DEED_LOG_KEPT);
+}
+
 /** Moves a finished or refunded room's money. Safe to call once the round is over. */
 export function payRoom(ledger: Ledger, game: Game): void {
   if (game.paid || isOpen(game) || !game.result) return;
@@ -185,6 +214,7 @@ export function payRoom(ledger: Ledger, game: Game): void {
     credit(ledger, deed.owner, split.deed);
     deed.earned += split.deed;
     result.deedOwner = deed.owner;
+    logDeed(ledger, { kind: 'landed', id, from: null, to: deed.owner, price: split.deed });
   } else {
     ledger.jackpot += split.deed;
   }
@@ -219,11 +249,12 @@ export function mintDeed(ledger: Ledger, account: string, id: string): void {
   ledger.treasury += RULES.deedMintPrice;
   deed.owner = account;
   ledger.deeds[id] = deed;
+  logDeed(ledger, { kind: 'minted', id, from: null, to: account, price: RULES.deedMintPrice });
 }
 
 /**
- * Buys a listed NFT from its owner. `seenPrice` is the price the buyer agreed to, so an owner
- * raising it while the purchase is on its way can't cost them more than they expected.
+ * Buys a listed NFT from its owner, wallet to wallet: the game balance isn't involved at either end. `seenPrice` is
+ * the price the buyer agreed to, so an owner raising it while the purchase is on its way can't cost them more.
  */
 export function buyDeed(ledger: Ledger, account: string, id: string, seenPrice?: number): void {
   const deed = deedOf(ledger, id);
@@ -231,8 +262,10 @@ export function buyDeed(ledger: Ledger, account: string, id: string, seenPrice?:
   if (deed.owner === account) throw new GameError('You already own this NFT.');
   if (deed.price === null) throw new GameError('This NFT isn\'t for sale.');
   if (seenPrice !== undefined && seenPrice !== deed.price) throw new GameError('The price just changed. Check it and try again.');
-  spend(ledger, account, deed.price);
-  credit(ledger, deed.owner, deed.price);
+  if (walletOf(ledger, account) < deed.price) throw new GameError('Your wallet doesn\'t have that much.');
+  ledger.wallets[account] -= deed.price;
+  ledger.wallets[deed.owner] = walletOf(ledger, deed.owner) + deed.price;
+  logDeed(ledger, { kind: 'sold', id, from: deed.owner, to: account, price: deed.price });
   deed.owner = account;
   deed.price = null;
 }
@@ -242,7 +275,20 @@ export function listDeed(ledger: Ledger, account: string, id: string, price: num
   const deed = deedOf(ledger, id);
   if (deed.owner !== account) throw new GameError('You don\'t own this NFT.');
   if (price !== null && (!Number.isInteger(price) || price <= 0)) throw new GameError('Set a price above 0.');
+  const kind = price === null ? 'delisted' : deed.price === null ? 'listed' : 'price';
+  if (price === null && deed.price === null) return;
   deed.price = price;
+  logDeed(ledger, { kind, id, from: account, to: null, price });
+}
+
+/** Sends a deed to someone for nothing. Any listing ends with it. */
+export function sendDeed(ledger: Ledger, account: string, id: string, to: string): void {
+  const deed = deedOf(ledger, id);
+  if (deed.owner !== account) throw new GameError('You don\'t own this NFT.');
+  if (!to || to === account) throw new GameError('Enter someone else\'s account.');
+  deed.owner = to;
+  deed.price = null;
+  logDeed(ledger, { kind: 'sent', id, from: account, to, price: null });
 }
 
 /** Equal points go by account name, compared byte by byte: a locale-aware order depends on the browser's language, and Rust's wouldn't match. */

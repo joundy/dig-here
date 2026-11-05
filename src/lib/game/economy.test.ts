@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  balanceOf, buyDeed, closeSeason, deedChance, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, mintDeed, newLedger, openRoom,
+  balanceOf, buyDeed, closeSeason, deedChance, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, mintDeed, newLedger, openRoom, sendDeed,
   payRoom, seasonRanking, totalMoney, walletOf, withdraw,
 } from './economy';
 import type { Ledger } from './economy';
@@ -245,10 +245,45 @@ describe('deeds', () => {
     expect(() => listDeed(ledger, 'b.near', id, 3000)).toThrow(/own/);
     expect(() => listDeed(ledger, 'a.near', id, 0)).toThrow(GameError);
     listDeed(ledger, 'a.near', id, 7000);
+    ledger.wallets['b.near'] = 9000;
     buyDeed(ledger, 'b.near', id);
-    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedMintPrice + 7000);
-    expect(balanceOf(ledger, 'b.near')).toBe(50000 - 7000);
+    expect(walletOf(ledger, 'a.near')).toBe(7000);
+    expect(walletOf(ledger, 'b.near')).toBe(2000);
+    expect(balanceOf(ledger, 'a.near')).toBe(50000 - RULES.deedMintPrice);
+    expect(balanceOf(ledger, 'b.near')).toBe(50000);
     expect(deedOf(ledger, id)).toMatchObject({ owner: 'b.near', price: null });
+    expect(ledger.deedLog[0]).toMatchObject({ kind: 'sold', id, from: 'a.near', to: 'b.near', price: 7000 });
+  });
+
+  it('refuses a buyer whose wallet is short, even with coins in the game balance', () => {
+    const ledger = newLedger(NOW);
+    fund(ledger, ['a.near', 'b.near']);
+    mintDeed(ledger, 'a.near', id);
+    listDeed(ledger, 'a.near', id, 7000);
+    expect(() => buyDeed(ledger, 'b.near', id)).toThrow(/wallet/);
+    expect(deedOf(ledger, id).owner).toBe('a.near');
+  });
+
+  it('ends a listing when the NFT is sent to someone', () => {
+    const ledger = newLedger(NOW);
+    fund(ledger, ['a.near', 'b.near']);
+    mintDeed(ledger, 'a.near', id);
+    listDeed(ledger, 'a.near', id, 7000);
+    expect(() => sendDeed(ledger, 'b.near', id, 'c.near')).toThrow(/own/);
+    expect(() => sendDeed(ledger, 'a.near', id, 'a.near')).toThrow(/someone else/);
+    sendDeed(ledger, 'a.near', id, 'b.near');
+    expect(deedOf(ledger, id)).toMatchObject({ owner: 'b.near', price: null });
+  });
+
+  it('writes down what happened to an NFT, newest first', () => {
+    const ledger = newLedger(NOW);
+    fund(ledger, ['a.near']);
+    mintDeed(ledger, 'a.near', id);
+    listDeed(ledger, 'a.near', id, 3000);
+    listDeed(ledger, 'a.near', id, 4000);
+    listDeed(ledger, 'a.near', id, null);
+    listDeed(ledger, 'a.near', id, null);
+    expect(ledger.deedLog.map((e) => e.kind)).toEqual(['delisted', 'price', 'listed', 'minted']);
   });
 
   it('can be taken off the market', () => {
@@ -267,8 +302,9 @@ describe('deeds', () => {
     expect(() => buyDeed(ledger, 'a.near', id)).toThrow(/already/);
     listDeed(ledger, 'a.near', id, 4000);
     listDeed(ledger, 'a.near', id, 9000);
+    ledger.wallets['b.near'] = 9000;
     expect(() => buyDeed(ledger, 'b.near', id, 4000)).toThrow(/price/);
-    expect(balanceOf(ledger, 'b.near')).toBe(50000);
+    expect(walletOf(ledger, 'b.near')).toBe(9000);
     buyDeed(ledger, 'b.near', id, 9000);
     expect(deedOf(ledger, id).owner).toBe('b.near');
   });

@@ -1,4 +1,4 @@
-import type { Deed, HostRecord, Season } from '../game/economy';
+import type { Deed, DeedEvent, HostRecord, Season } from '../game/economy';
 import type { Game, NewGameInput, Point } from '../game/types';
 import type { RoundProof } from '../verifyChain';
 
@@ -73,8 +73,23 @@ export interface GameBackend {
   refreshBalances(): void;
   /** Leaves the wallet and goes back to watching. */
   disconnectWallet(): Promise<void>;
+  /** False until the first read of who owns what has come back, or if it never has. */
+  readonly deedsReady: boolean;
+  /** Why the market can't be read right now, in words for the player. Empty when all is well. */
+  readonly deedsError: string;
+  /** Tries the market's reads again now. */
+  reloadDeeds(): void;
+  /** The market's latest news, newest first. Null if nobody can say, which isn't the same as nothing having happened. */
+  readonly deedNews: DeedEvent[] | null;
+  /** One NFT's history, newest first. Null if nobody can say. */
+  deedHistory(id: string): DeedEvent[] | null;
+  /** Coins the market is holding for this player, because paying them out once failed. */
+  readonly marketClaim: number;
+  /** Sends what the market is holding to the player's wallet. */
+  claimFromMarket(): Promise<void>;
   /** Null unless the player's wallet can do it. */
   readonly canTransferDeeds: boolean;
+  /** Ends any listing, since the market can't sell what its seller gave away. */
   transferDeed(id: string, to: string): Promise<void>;
 
   /** A first credit pays for the player's record out of itself, so this is what that adds, if they still need one. */
@@ -102,12 +117,16 @@ export interface GameBackend {
   clueArriving(gameId: string): boolean;
   /** `seenClue` is how many clues the player could see, so a new clue can't quietly cost them bonus. */
   dig(gameId: string, spot: Point, seenClue: number): Promise<void>;
-  /** The first owner pays the project the mint price. `attach` comes from the wallet, for a balance that's short. */
+  /** The first owner pays the project the mint price out of the game balance. `attach` comes from the wallet, for a balance that's short. */
   mintDeed(id: string, attach?: number): Promise<void>;
-  /** Buys a listed NFT from its owner. `seenPrice` is the price the buyer agreed to. */
+  /** Buys a listed NFT from its owner's listing, paid from the wallet with the seller paid to theirs. `seenPrice` is the price the buyer agreed to. */
   buyDeed(id: string, seenPrice: number): Promise<void>;
-  /** A null price takes it off the market. */
-  listDeed(id: string, price: number | null): Promise<void>;
+  /** Puts an NFT the player owns on the market. */
+  listDeed(id: string, price: number): Promise<void>;
+  /** A new price for the player's own listing. */
+  changeDeedPrice(id: string, price: number): Promise<void>;
+  /** Takes the player's own listing off the market. The NFT stays theirs. */
+  delistDeed(id: string): Promise<void>;
 }
 
 export type AccountPrompt = {

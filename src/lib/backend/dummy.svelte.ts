@@ -4,11 +4,12 @@ import type { Ledger } from '../game/economy';
 import { advance, finishAt, isCrowded, isOpen, placeDig, secondsToNextClue, startGame } from '../game/engine';
 import { isLand, MAP_IDS, mathRng, rollLayout } from '../game/map';
 import { RULES } from '../game/rules';
+import { ALL_DEEDS } from '../market';
 import { GameError } from '../game/types';
 import type { Game, NewGameInput, Point } from '../game/types';
 import type { GameBackend, Identity, PlaytestControls, Prices } from './types';
 
-const STORAGE_KEY = 'dig-here-dummy-v5';
+const STORAGE_KEY = 'dig-here-dummy-v6';
 const TICK_MS = 250;
 const MAX_FINISHED = 40;
 
@@ -93,7 +94,11 @@ class DummyBackend implements GameBackend, PlaytestControls {
   readonly offline = false;
   readonly accountPrompt = null;
   readonly setupCost = 0;
-  readonly canTransferDeeds = false;
+  readonly canTransferDeeds = true;
+  readonly deedsReady = true;
+  readonly deedsError = '';
+  readonly marketClaim = 0;
+  async claimFromMarket() {}
   readonly playableAccounts = PLAYABLE_ACCOUNTS;
   readonly prices: Prices = {
     hostBond: RULES.hostBond,
@@ -130,7 +135,9 @@ class DummyBackend implements GameBackend, PlaytestControls {
   clueArriving() { return false; }
   refreshBalances() {}
   async disconnectWallet() {}
-  async transferDeed(): Promise<void> { throw new GameError('This stand-in has no wallet to send from.'); }
+  reloadDeeds() {}
+  get deedNews() { return this.#state.ledger.deedLog; }
+  deedHistory(id: string) { return this.#state.ledger.deedLog.filter((e) => e.id === id); }
 
   walletOf(account: string) { return economy.walletOf(this.#state.ledger, account); }
   balanceOf(account: string) { return economy.balanceOf(this.#state.ledger, account); }
@@ -142,6 +149,7 @@ class DummyBackend implements GameBackend, PlaytestControls {
   async #tx<T>(action: (account: string) => T): Promise<T> {
     const account = this.account;
     await new Promise((resolve) => setTimeout(resolve, 300 + Math.random() * 1200));
+    this.#state.ledger.clockMs = Date.now();
     const result = action(account);
     this.#save();
     return result;
@@ -170,7 +178,10 @@ class DummyBackend implements GameBackend, PlaytestControls {
 
   mintDeed(id: string) { return this.#tx((a) => economy.mintDeed(this.#state.ledger, a, id)); }
   buyDeed(id: string, seenPrice: number) { return this.#tx((a) => economy.buyDeed(this.#state.ledger, a, id, seenPrice)); }
-  listDeed(id: string, price: number | null) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
+  listDeed(id: string, price: number) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
+  changeDeedPrice(id: string, price: number) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, price)); }
+  delistDeed(id: string) { return this.#tx((a) => economy.listDeed(this.#state.ledger, a, id, null)); }
+  transferDeed(id: string, to: string) { return this.#tx((a) => economy.sendDeed(this.#state.ledger, a, id, to.trim())); }
 
   // Playtest controls. These exist only on the dummy and aren't part of GameBackend.
 
@@ -309,6 +320,10 @@ class DummyBackend implements GameBackend, PlaytestControls {
         if (Math.random() < 0.34) this.#botBuyDeed(economy.deedId(mapId, kind));
       }
     }
+    // A few trades, so the sales feed has something to show.
+    for (const { id } of ALL_DEEDS.filter((row) => economy.deedOf(ledger, row.id).price !== null).slice(0, 4)) this.#botBuyDeed(id);
+    // Ages them, or they'd all say "just now".
+    ledger.deedLog.forEach((event, i) => { event.at -= (i + 1) * 47 * 60_000; });
 
     // Some finished rounds, for the Finished tab and the season table.
     for (let i = 0; i < 8; i++) {
@@ -335,9 +350,14 @@ class DummyBackend implements GameBackend, PlaytestControls {
     const deed = economy.deedOf(ledger, id);
     if (deed.owner === buyer || (deed.owner !== null && deed.price === null)) return;
     const cost = deed.owner === null ? RULES.deedMintPrice : deed.price!;
-    this.#fundBot(buyer, cost);
-    if (deed.owner === null) economy.mintDeed(ledger, buyer, id);
-    else economy.buyDeed(ledger, buyer, id);
+    if (deed.owner === null) {
+      this.#fundBot(buyer, cost);
+      economy.mintDeed(ledger, buyer, id);
+    } else {
+      // A market buy comes straight out of the wallet.
+      ledger.wallets[buyer] = economy.walletOf(ledger, buyer) + cost;
+      economy.buyDeed(ledger, buyer, id);
+    }
     if (Math.random() < 0.55) economy.listDeed(ledger, buyer, id, Math.round(cost * (1.05 + Math.random() * 0.9) / 100) * 100);
   }
 
@@ -352,6 +372,7 @@ class DummyBackend implements GameBackend, PlaytestControls {
 
   #tick(realSeconds: number) {
     const seconds = realSeconds * this.speed;
+    this.#state.ledger.clockMs = Date.now();
     for (const game of this.#state.games) {
       if (isOpen(game)) this.#advanceGame(game, seconds);
     }

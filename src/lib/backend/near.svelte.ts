@@ -1,14 +1,17 @@
 // The real thing: rooms from the contract on testnet, moves signed in the browser.
 // Reading needs no account and no signing code. Everything that signs is loaded on first use.
 import { currentBonus, isCrowded, isOpen, secondsLeft } from '../game/engine';
-import type { Deed, HostRecord, Season } from '../game/economy';
+import type { Deed, DeedEvent, HostRecord, Season } from '../game/economy';
+import { near } from '../format';
 import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Dig, Game, NewGameInput, Point } from '../game/types';
 import { ChainClock } from '../near/clock';
-import { botLimitsFrom, buyDeposit, RECORD_MILLI, spendable } from '../near/choices';
-import { FEE_CHOICES, GAS_TGAS } from '../near/config';
+import { botLimitsFrom, RECORD_MILLI, spendable } from '../near/choices';
+import { APPROVE_DEPOSIT, CONTRACT, FEE_CHOICES, GAS_TGAS, MARKET } from '../near/config';
 import { CLUE_REFUSAL } from '../digButton';
+import { activityOf, deedsFrom } from '../near/deeds';
+import type { ActivityRow, ListingRow, MarketFrame, NftRow } from '../near/deeds';
 import { isMissingKey, isOutOfAllowance, isSignedOut, plainError } from '../near/errors';
 import { LiveFeed } from '../near/feed';
 import type { StateBody } from '../near/feed';
@@ -16,7 +19,7 @@ import { balanceFromEvents, readOutcome } from '../near/outcome';
 import type { Outcome } from '../near/outcome';
 import { clocksOf, digsOf, displayName, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
 import type { ChainRoom, FinishedSummary, LiveState } from '../near/rooms';
-import { isGoneRoom, RpcError, view, viewAccount } from '../near/rpc';
+import { isGoneRoom, marketView, RpcError, view, viewAccount } from '../near/rpc';
 import { loadSession, saveSession, walletKey } from '../near/session';
 import type { Session } from '../near/session';
 import type { Call, KeySender } from '../near/signer';
@@ -27,6 +30,12 @@ const TICK_MS = 250;
 const BALANCE_MS = 30_000;
 const HOST_RECORD_MS = 120_000;
 const DEEDS_MS = 20_000;
+const NEWS_MS = 30_000;
+/** A history is worth a look when someone opens it, and rarely changes while they read it. */
+const HISTORY_MS = 60_000;
+/** A read can be a block or two behind the wallet's answer, so a just-landed sale gets a few looks. */
+const SALE_CHECKS = 6;
+const SALE_CHECK_GAP_MS = 800;
 /** Asked for again on every redraw, a refused read would otherwise come back round at once. */
 const RETRY_READ_MS = 15_000;
 const CHAIN_TIME_MS = 20_000;
@@ -98,6 +107,11 @@ class NearBackend implements GameBackend {
   #hasRecord = $state(true);
   #hosts = $state<Record<string, HostRecord>>({});
   #deeds = $state<Record<string, Deed>>({});
+  deedsReady = $state(false);
+  deedsError = $state('');
+  marketClaim = $state(0);
+  #news = $state<DeedEvent[] | null>(null);
+  #histories = $state<Record<string, DeedEvent[] | null>>({});
   /** Rooms with a roll locked and not yet revealed, when the contract turns digs away. */
   #clueArriving = $state<Record<string, boolean>>({});
   #botLimits = $state<BotLimits | null>(null);
@@ -123,6 +137,14 @@ class NearBackend implements GameBackend {
   #loading = new Map<string, Promise<void>>();
   #hostsAsked = new Map<string, number>();
   #deedsAsked = 0;
+  #marketSeen = 0;
+  #marketVersion: string | null = null;
+  /** The exact price of each listing. Milli is for screens, and rounding it would fail or overpay a buy. */
+  #listingYocto = new Map<string, string>();
+  /** Our own move, which outranks a read that doesn't show it yet. */
+  #localDeeds = new Map<string, { deed: Partial<Deed>; yocto?: string; at: number }>();
+  #newsAsked = 0;
+  #historyAsked = new Map<string, number>();
   #pokedAt = new Map<string, number>();
   #accountChoice: Promise<void> | null = null;
   #firstRead: Promise<void> = Promise.resolve();
@@ -134,6 +156,7 @@ class NearBackend implements GameBackend {
       readChain: () => view<LiveState>('live_state'),
       chainNow: () => this.#clock.now(),
       onState: (live) => this.#applyLive(live),
+      onMarket: (market) => this.#applyMarketFrame(market),
       onMode: (mode) => {
         this.offline = mode === 'chain';
         if (mode === 'chain') void this.#feed.refresh();
@@ -456,19 +479,111 @@ class NearBackend implements GameBackend {
   }
 
   deedOf(id: string): Deed {
-    if (Date.now() - this.#deedsAsked > DEEDS_MS) {
+    // A frame from the backend carries all of this, so only a quiet backend sends us to the nodes.
+    const fresh = Date.now() - this.#marketSeen < DEEDS_MS;
+    if (!fresh && Date.now() - this.#deedsAsked > DEEDS_MS) {
       this.#deedsAsked = Date.now();
       queueMicrotask(() => void this.#loadDeeds());
     }
     return this.#deeds[id] ?? { owner: null, price: null, earned: 0, landings: 0 };
   }
 
-  async #loadDeeds() {
+  reloadDeeds() {
+    this.#deedsAsked = Date.now();
+    void this.#loadDeeds();
+  }
+
+  /** Straight from the two contracts. A market that can't be read shows owners with no prices, and says so. */
+  async #loadDeeds(): Promise<void> {
     try {
-      const rows = await view<{ token_id: string; owner: string | null; price: number | null; earned: number; landings: number }[]>('get_nfts', { from: 0, limit: 36 });
-      for (const row of rows) this.#deeds[row.token_id] = { owner: row.owner, price: row.price, earned: row.earned, landings: row.landings };
+      const [nfts, listings] = await Promise.all([
+        view<NftRow[] | null>('get_nfts', { from: 0, limit: 36 }),
+        marketView<ListingRow[] | null>('get_listings', { from: 0, limit: 36 }).catch(() => null),
+      ]);
+      this.#applyDeeds(nfts ?? [], listings ?? []);
+      this.deedsReady = true;
+      this.deedsError = listings ? '' : "Can't read the market's prices right now, so nothing shows as for sale. Coins are safe.";
     } catch {
       this.#deedsAsked = Date.now() - DEEDS_MS + RETRY_READ_MS;
+      this.deedsError = this.deedsReady
+        ? "Can't reach the market right now, so this may be a little out of date."
+        : "Can't reach the market right now. It tries again by itself.";
+    }
+  }
+
+  #applyMarketFrame(market: MarketFrame) {
+    this.#marketSeen = Date.now();
+    this.deedsReady = true;
+    this.deedsError = '';
+    if (market.version === this.#marketVersion) return;
+    this.#marketVersion = market.version;
+    this.#applyDeeds(market.nfts, market.listings);
+    this.#newsAsked = 0;
+  }
+
+  #applyDeeds(nfts: NftRow[], listings: ListingRow[]) {
+    const { deeds, yocto } = deedsFrom(nfts, listings);
+    let waitingOnRead = false;
+    for (const [id, local] of this.#localDeeds) {
+      const read = deeds[id];
+      const shown = read && Object.entries(local.deed).every(([field, value]) => (read as Record<string, unknown>)[field] === value);
+      if (shown || Date.now() - local.at > LOCAL_MOVE_MS) {
+        this.#localDeeds.delete(id);
+      } else {
+        deeds[id] = { ...(read ?? { owner: null, price: null, earned: 0, landings: 0 }), ...local.deed };
+        if (local.yocto) yocto.set(id, local.yocto);
+        else if (local.deed.price === null) yocto.delete(id);
+        waitingOnRead = true;
+      }
+    }
+    this.#deeds = deeds;
+    this.#listingYocto = yocto;
+    if (waitingOnRead) setTimeout(() => void this.#loadDeeds(), SALE_CHECK_GAP_MS * 2);
+  }
+
+  /** Shows our own move at once. The next read that agrees takes over from it. */
+  #movedDeed(id: string, deed: Partial<Deed>, yocto?: string) {
+    this.#localDeeds.set(id, { deed, yocto, at: Date.now() });
+    this.#deeds[id] = { ...(this.#deeds[id] ?? { owner: null, price: null, earned: 0, landings: 0 }), ...deed };
+    if (yocto) this.#listingYocto.set(id, yocto);
+    else if (deed.price === null) this.#listingYocto.delete(id);
+    delete this.#histories[id];
+    this.#historyAsked.delete(id);
+    this.#newsAsked = 0;
+    void this.#loadDeeds();
+  }
+
+  get deedNews(): DeedEvent[] | null {
+    if (Date.now() - this.#newsAsked > NEWS_MS) {
+      this.#newsAsked = Date.now();
+      queueMicrotask(() => void this.#loadNews());
+    }
+    return this.#news;
+  }
+
+  async #loadNews() {
+    try {
+      const body = await getJson<{ activity: ActivityRow[] }>('/api/market-activity?limit=30');
+      this.#news = body.activity.flatMap(activityOf);
+    } catch {
+      // Keeping what we had beats wiping it for one missed read, and no backend at all stays as "can't say".
+    }
+  }
+
+  deedHistory(id: string): DeedEvent[] | null {
+    if (Date.now() - (this.#historyAsked.get(id) ?? 0) > HISTORY_MS) {
+      this.#historyAsked.set(id, Date.now());
+      queueMicrotask(() => void this.#loadHistoryOf(id));
+    }
+    return this.#histories[id] ?? null;
+  }
+
+  async #loadHistoryOf(id: string) {
+    try {
+      const body = await getJson<{ activity: ActivityRow[] }>(`/api/nfts/${id}/activity?limit=30`);
+      this.#histories[id] = body.activity.flatMap(activityOf);
+    } catch {
+      // As above. The chain facts on the page don't depend on this.
     }
   }
 
@@ -519,6 +634,11 @@ class NearBackend implements GameBackend {
       }
       const account = await viewAccount(session.accountId);
       if (this.#session === session) this.#wallet = account ? spendable(account) : 0;
+      // A separate look, because the game must carry on working if the market can't be read.
+      void marketView<string | null>('get_unclaimed', { account_id: session.accountId }).then(
+        (held) => { if (this.#session === session) this.marketClaim = held ? toMilli(held) : 0; },
+        () => undefined,
+      );
       return true;
     } catch {
       return false;
@@ -541,6 +661,7 @@ class NearBackend implements GameBackend {
     this.#balance = 0;
     this.#wallet = 0;
     this.#hasRecord = true;
+    this.marketClaim = 0;
     saveSession(session);
     this.identity = session ? { kind: session.kind, accountId: session.accountId } : { kind: 'none' };
     this.#firstRead = session ? this.#readBalancesPatiently() : Promise.resolve();
@@ -669,10 +790,10 @@ class NearBackend implements GameBackend {
     return outcome;
   }
 
-  async #walletCall(accountId: string, call: Call, deposit: string) {
+  async #walletCall(accountId: string, call: Call, deposit: string, receiver: string = CONTRACT) {
     const wallet = await import('../near/wallet');
     try {
-      return await wallet.callWithDeposit(accountId, call.method, call.args, call.gasTgas, deposit);
+      return await wallet.callWithDeposit(accountId, call.method, call.args, call.gasTgas, deposit, receiver);
     } catch (e) {
       const text = errorText(e);
       // The wallet has forgotten this site. Holding on to the session would fail the same way every time.
@@ -824,37 +945,101 @@ class NearBackend implements GameBackend {
     }, CLUE_HINT_MS);
   }
 
+  /** Minting needs a yocto so a browser key can't spend a balance on it, so the wallet always signs. */
   async mintDeed(id: string, attach = 0): Promise<void> {
-    await this.#needAccount();
-    const call: Call = { method: 'mint_nft', args: { token_id: id }, gasTgas: GAS_TGAS.mint_nft };
-    await (attach > 0 ? this.#callPaying(call, attach) : this.#call(call));
-    await this.#loadDeeds();
+    const session = await this.#needAccount();
+    const deposit = attach > 0 ? milliToYocto(attach) : '1';
+    const raw = await this.#walletCall(session.accountId, { method: 'mint_nft', args: { token_id: id }, gasTgas: GAS_TGAS.mint_nft }, deposit);
+    this.#finishCall(session, raw);
+    this.refreshBalances();
+    this.#movedDeed(id, { owner: session.accountId, price: null });
   }
 
   /**
-   * Buying needs a yocto, which only a wallet can attach, so it never goes through a key this browser holds.
-   * The same approval carries whatever the game balance is short of. Anything over stays in the balance.
+   * Wallet to wallet: the buyer attaches the listing's exact price and the seller is paid directly, so the game
+   * balance plays no part. A price raised meanwhile fails on the contract, and one lowered refunds the difference.
    */
   async buyDeed(id: string, seenPrice: number): Promise<void> {
     const session = await this.#needAccount();
-    const raw = await this.#walletCall(session.accountId, { method: 'buy_nft', args: { token_id: id, seen_price: seenPrice }, gasTgas: GAS_TGAS.buy_nft }, buyDeposit(seenPrice, this.#balance));
-    this.#finishCall(session, raw);
-    this.refreshBalances();
+    // The page can be 20 seconds old, and approving a purchase that's bound to fail is a waste of a wallet window.
     await this.#loadDeeds();
+    const deed = this.#deeds[id];
+    if (deed && deed.owner === session.accountId) throw new GameError('You already own this NFT.');
+    if (!deed || deed.owner === null || deed.price === null) throw new GameError('That listing has just ended, so nothing was spent.');
+    if (deed.saleInProgress) throw new GameError("Someone else's purchase is on its way. Try again in a moment.");
+    if (deed.price !== seenPrice) throw new GameError(`The price just changed to ${near(deed.price)}, so nothing was spent. Check it and try again.`);
+    const yocto = this.#listingYocto.get(id);
+    if (!yocto) throw new GameError('That listing has just ended, so nothing was spent.');
+
+    let outcome: Outcome;
+    try {
+      const raw = await this.#walletCall(session.accountId, { method: 'buy', args: { token_id: id }, gasTgas: GAS_TGAS.market_buy }, yocto, MARKET);
+      outcome = this.#finishCall(session, raw);
+    } catch (e) {
+      void this.#loadDeeds();
+      throw e;
+    }
+    this.refreshBalances();
+    if (outcome.events.some((e) => e.event === 'nft_sale_failed')) {
+      void this.#loadDeeds();
+      throw new GameError('The seller no longer has this NFT, so the sale fell through. All your coins came back to your wallet.');
+    }
+    if (!outcome.events.some((e) => e.event === 'nft_sold') && !(await this.#ownsAfterAll(id, session.accountId))) {
+      throw new GameError("The sale didn't go through. If any coins left your wallet they're on their way back.");
+    }
+    this.#movedDeed(id, { owner: session.accountId, price: null, saleInProgress: false });
   }
 
-  async listDeed(id: string, price: number | null): Promise<void> {
-    await this.#needAccount();
-    if (price !== null && (!Number.isInteger(price) || price <= 0)) throw new GameError('Set a price above 0.');
-    await this.#call({ method: 'list_nft', args: { token_id: id, price }, gasTgas: GAS_TGAS.list_nft });
-    await this.#loadDeeds();
+  /** Not every wallet hands back the logs, so the chain's own record is the fallback for how a sale went. */
+  async #ownsAfterAll(id: string, account: string): Promise<boolean> {
+    for (let check = 0; check < SALE_CHECKS; check++) {
+      if (check) await new Promise((resolve) => setTimeout(resolve, SALE_CHECK_GAP_MS));
+      await this.#loadDeeds();
+      if (this.#deeds[id]?.owner === account) return true;
+    }
+    return false;
+  }
+
+  #needPrice(price: number) {
+    if (!Number.isInteger(price) || price <= 0) throw new GameError('Set a price above 0.');
+  }
+
+  /** NEP-178: the owner approves the market on the NFT contract, and `msg` tells the market what to ask. */
+  async listDeed(id: string, price: number): Promise<void> {
+    const session = await this.#needAccount();
+    this.#needPrice(price);
+    const yocto = milliToYocto(price);
+    const args = { token_id: id, account_id: MARKET, msg: JSON.stringify({ price: yocto }) };
+    this.#finishCall(session, await this.#walletCall(session.accountId, { method: 'nft_approve', args, gasTgas: GAS_TGAS.nft_approve }, APPROVE_DEPOSIT));
+    this.#movedDeed(id, { price }, yocto);
+  }
+
+  async changeDeedPrice(id: string, price: number): Promise<void> {
+    const session = await this.#needAccount();
+    this.#needPrice(price);
+    const yocto = milliToYocto(price);
+    this.#finishCall(session, await this.#walletCall(session.accountId, { method: 'update_price', args: { token_id: id, price: yocto }, gasTgas: GAS_TGAS.market_update_price }, '1', MARKET));
+    this.#movedDeed(id, { price }, yocto);
+  }
+
+  async delistDeed(id: string): Promise<void> {
+    const session = await this.#needAccount();
+    this.#finishCall(session, await this.#walletCall(session.accountId, { method: 'delist', args: { token_id: id }, gasTgas: GAS_TGAS.market_delist }, '1', MARKET));
+    this.#movedDeed(id, { price: null });
+  }
+
+  async claimFromMarket(): Promise<void> {
+    const session = await this.#needAccount();
+    this.#finishCall(session, await this.#walletCall(session.accountId, { method: 'claim_unclaimed', args: {}, gasTgas: GAS_TGAS.market_claim }, '1', MARKET));
+    this.marketClaim = 0;
+    this.refreshBalances();
   }
 
   async transferDeed(id: string, to: string): Promise<void> {
     const session = await this.#needAccount();
     const raw = await this.#walletCall(session.accountId, { method: 'nft_transfer', args: { receiver_id: to.trim(), token_id: id }, gasTgas: GAS_TGAS.nft_transfer }, '1');
     this.#finishCall(session, raw);
-    await this.#loadDeeds();
+    this.#movedDeed(id, { owner: to.trim(), price: null });
   }
 }
 

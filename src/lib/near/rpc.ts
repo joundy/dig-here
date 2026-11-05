@@ -1,5 +1,5 @@
 // Bare JSON-RPC over fetch: a player who only watches should never have to download a signing library.
-import { ARCHIVE_URLS, CONTRACT, READ_URLS, SEND_URL } from './config';
+import { ARCHIVE_URLS, CONTRACT, MARKET, READ_URLS, SEND_URL } from './config';
 import type { BlockRead, ChainReader, TxLookup } from '../verifyChain';
 import type { ChainRoom } from './rooms';
 
@@ -81,7 +81,7 @@ function encodeArgs(args: unknown): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(args))));
 }
 
-const viewParams = (method: string, args: unknown, finality: Finality) => ({ request_type: 'call_function', finality, account_id: CONTRACT, method_name: method, args_base64: encodeArgs(args) });
+const viewParams = (method: string, args: unknown, finality: Finality, contract = CONTRACT) => ({ request_type: 'call_function', finality, account_id: contract, method_name: method, args_base64: encodeArgs(args) });
 
 function viewAnswer<T>(result: any): T {
   if (result.error) throw new RpcError(String(result.error), 'VIEW_FAILED');
@@ -90,6 +90,11 @@ function viewAnswer<T>(result: any): T {
 
 export async function view<T>(method: string, args: unknown = {}, finality: Finality = 'optimistic'): Promise<T> {
   return viewAnswer<T>(await read('query', viewParams(method, args, finality), 4000));
+}
+
+/** A view on the market contract rather than the game's. */
+export async function marketView<T>(method: string, args: unknown = {}): Promise<T> {
+  return viewAnswer<T>(await read('query', viewParams(method, args, 'optimistic', MARKET), 4000));
 }
 
 /** The same view from one named node, for comparing nodes rather than getting past a busy one. */

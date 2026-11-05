@@ -1,5 +1,7 @@
 // Everything here is testnet. A mainnet build would change this file and nothing else.
 export const CONTRACT = 'v1.dighere.testnet';
+/** Sells NFTs that live in `CONTRACT`, through NEP-178 approvals. */
+export const MARKET = 'market.dighere.testnet';
 export const BOT_SUFFIX = '.bots.dighere.testnet';
 
 // FastNEAR first. dRPC ends every free request at about 2 s, so it only backs up reads, never sends.
@@ -30,21 +32,27 @@ export const GAS_TGAS = {
   join: 10,
   leave: 10,
   start: 10,
-  list_nft: 10,
   deposit: 10,
   withdraw: 10,
   poke: 30,
   mint_nft: 30,
-  buy_nft: 30,
   nft_transfer: 30,
+  nft_approve: 30,
+  market_buy: 60,
+  market_update_price: 10,
+  market_delist: 10,
+  market_claim: 30,
   create_room: 60,
 } as const;
 
-/** The methods a browser key may call. `buy_nft` needs 1 yocto, which a function-call key can't attach. */
-export const GAME_METHODS = ['join', 'leave', 'start', 'dig', 'create_room', 'mint_nft', 'list_nft', 'poke'];
+/** The methods a browser key may call. Anything to do with an NFT needs a yocto, which only a wallet can attach. */
+export const GAME_METHODS = ['join', 'leave', 'start', 'dig', 'create_room', 'poke'];
 
 /** The visible dig window closes this long before the contract's own end, because a dig takes 1.4 to 2.6 s to run. */
 export const DIG_CLOSE_MS = 2500;
+
+/** Attached to `nft_approve` for its storage. The contract hands back what it doesn't use. */
+export const APPROVE_DEPOSIT = '1000000000000000000000';
 
 /** Testnet fee choices in the host form, in milliNEAR. */
 export const FEE_CHOICES = [10, 50, 100, 250];

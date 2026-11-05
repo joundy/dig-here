@@ -152,6 +152,11 @@ a {
   margin: 0 auto;
 }
 
+/* The market's art needs the room. */
+.stage.full .rail.wide {
+  max-width: 1240px;
+}
+
 .stage.full.short {
   padding: 0 calc(0.5rem + env(safe-area-inset-right)) 0 calc(0.5rem + env(safe-area-inset-left));
 }

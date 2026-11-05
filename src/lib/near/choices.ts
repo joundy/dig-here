@@ -41,15 +41,6 @@ export function topUpPlan(cost: number, balance: number, wallet: number, setup: 
   return { short, setup, choices, picked: Math.min(1, choices.length - 1) };
 }
 
-/**
- * What a wallet attaches to `buy_nft`: the yocto the contract demands, plus what the game balance is short of.
- * With no balance there may be no record yet, and its cost would come out of the top-up.
- */
-export function buyDeposit(price: number, balance: number): string {
-  const short = Math.max(0, price - balance) + (balance === 0 ? RECORD_MILLI : 0);
-  return (1n + BigInt(short) * YOCTO_PER_MILLI).toString();
-}
-
 /** From `/api/health`. Anything not understood means no line on the form rather than a wrong one. */
 export function botLimitsFrom(health: Record<string, unknown>): BotLimits | null {
   const raw = health.bot_join_limits as { max_fee_milli?: unknown; max_host_cut_bps?: unknown } | null | undefined;
