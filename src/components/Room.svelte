@@ -10,7 +10,7 @@
   import { bonus, near, percent } from '../lib/format';
   import { clueText } from '../lib/game/copy';
   import { currentBonus, isCrowded, isOpen, potOf, secondsLeft, splitPot } from '../lib/game/engine';
-  import { isLand, W } from '../lib/game/map';
+  import { H, isLand, nearestLand, W } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Game, Point } from '../lib/game/types';
   import { buzz, showBanner, ui } from '../lib/ui.svelte';
@@ -62,9 +62,11 @@
   $effect(() => {
     untrack(enterRoom);
     world.onPick = pick;
+    world.onStep = step;
     return () => {
       alive = false;
       world.onPick = null;
+      world.onStep = null;
       world.setTension(0);
       ui.heldBalance = null;
       ui.focus = null;
@@ -240,6 +242,18 @@
     if (!quiet) audio.pick();
   }
 
+  /** The arrow keys: the first press lands on the middle of the island, and later ones walk, crossing water to the far shore. */
+  function step(dx: number, dy: number) {
+    if (!game || !canPick || busy) return;
+    if (!spot) return pick(nearestLand(game.mapId, { x: W >> 1, y: H >> 1 }));
+    const next = { x: spot.x + dx, y: spot.y + dy };
+    while (next.x >= 0 && next.x < W && next.y >= 0 && next.y < H) {
+      if (isLand(game.mapId, next)) return pick({ ...next });
+      next.x += dx;
+      next.y += dy;
+    }
+  }
+
   const tooLate = $derived(game?.stage === 'live' && secondsLeft(game) <= backend.lastDigSec);
   /** Between a roll's lock and its reveal the contract turns digs away. Usually 2 to 4 seconds. */
   const clueComing = $derived(!!game && game.stage === 'live' && backend.clueArriving(game.id));
@@ -302,7 +316,7 @@
         {#if rolling}
           <p class="prompt">Time's up! The treasure is on its way…</p>
         {:else if !joined}
-          <p class="prompt">This round has started. You're watching.</p>
+          <p class="prompt">You're watching this round. <a href="#/">Find one to join</a></p>
         {:else if myDig}
           {#key me}<Standing {game} {me} />{/key}
         {:else}

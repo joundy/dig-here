@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bakeLand } from '../world/terrain';
-import { canStand, distanceField, getGrids, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, rollLayout, rosterOf, spotsOf, spotTags, TAG_ORDER, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA } from './map';
+import { canStand, distanceField, getGrids, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, nearestLand, rollLayout, rosterOf, spotsOf, spotTags, TAG_ORDER, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA } from './map';
 import { FOOTPRINT } from './mapDefs';
 import { sha256, streamRng } from './random';
 
@@ -48,7 +48,16 @@ describe.each(MAP_IDS)('map %s', (id) => {
     for (const set of kinds.values()) expect(set.size).toBeGreaterThanOrEqual(2);
   });
 
-  describe('layouts over 500 games', () => {
+  describe('nearestLand', () => {
+  it('walks out of the oasis in the middle of the desert to the nearest land', () => {
+    const middle = { x: 160, y: 112 };
+    const found = nearestLand('desert', middle);
+    expect(isLand('desert', found)).toBe(true);
+    for (const id of MAP_IDS) expect(isLand(id, nearestLand(id, middle))).toBe(true);
+  });
+});
+
+describe('layouts over 500 games', () => {
     const SEEDS = 500;
     const layouts = Array.from({ length: SEEDS }, (_, game) => rollLayout(id, streamRng(sha256(new TextEncoder().encode(`layout-test/${id}/${game}`)))));
 

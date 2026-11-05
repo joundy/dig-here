@@ -583,6 +583,19 @@ export function getMap(id: MapId): GameMap {
   return found;
 }
 
+/** The closest land to a point, looking outwards. A lake can sit right at the middle of a map. */
+export function nearestLand(id: MapId, from: Point): Point {
+  for (let r = 0; r < W; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (const dy of dx === -r || dx === r ? Array.from({ length: 2 * r + 1 }, (_, i) => i - r) : [-r, r]) {
+        const p = { x: from.x + dx, y: from.y + dy };
+        if (p.x >= 0 && p.x < W && p.y >= 0 && p.y < H && isLand(id, p)) return p;
+      }
+    }
+  }
+  return from;
+}
+
 export function isLand(id: MapId, p: Point): boolean {
   if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return false;
   return getGrids(id).land[p.y * W + p.x] === 1;

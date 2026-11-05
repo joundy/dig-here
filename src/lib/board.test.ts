@@ -74,6 +74,13 @@ describe('boardView', () => {
 });
 
 describe('quickPlayRoom', () => {
+  it('sends someone paying from their wallet to the cheapest room, not the best-scored', () => {
+    const dear = room('dear', { fee: 100, players: 3 });
+    const cheap = room('cheap', { fee: 10 });
+    expect(quickPlayRoom([dear, cheap], 500, 'me', hosts)?.id).toBe('dear');
+    expect(quickPlayRoom([dear, cheap], 500, 'me', hosts, true)?.id).toBe('cheap');
+  });
+
   it('skips full, unaffordable, already-joined and started rooms', () => {
     const full = room('full', { maxPlayers: 2, players: 2 });
     const dear = room('dear', { fee: 99999, players: 3 });

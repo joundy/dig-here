@@ -77,8 +77,8 @@ export function boardView(games: Game[], options: BoardOptions, hosts: Hosts) {
   return { rooms: sorted.slice(current * perPage, (current + 1) * perPage), pages, page: current, counts, total: sorted.length };
 }
 
-/** The best waiting room this player can join right now, or null. */
-export function quickPlayRoom(games: Game[], balance: number, account: string, hosts: Hosts): Game | null {
+/** The best waiting room this player can join right now, or null. Someone paying from their wallet gets the cheapest. */
+export function quickPlayRoom(games: Game[], balance: number, account: string, hosts: Hosts, cheapest = false): Game | null {
   const options = games.filter((g) => g.stage === 'waiting' && g.fee <= balance && g.players.length < g.maxPlayers && !g.players.includes(account));
-  return [...options].sort((a, b) => roomScore(b, hosts) - roomScore(a, hosts) || a.id.localeCompare(b.id))[0] ?? null;
+  return [...options].sort((a, b) => (cheapest ? a.fee - b.fee : 0) || roomScore(b, hosts) - roomScore(a, hosts) || a.id.localeCompare(b.id))[0] ?? null;
 }

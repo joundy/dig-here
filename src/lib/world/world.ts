@@ -143,6 +143,8 @@ function makeCloudShadow(w: number, h: number, seed: number): HTMLCanvasElement 
 class World {
   /** `quiet` is for a dragged X: the spot follows the finger, with no sound or water warning. */
   onPick: ((point: Point, quiet?: boolean) => void) | null = null;
+  /** An arrow key on the map, as a move in art pixels. */
+  onStep: ((dx: number, dy: number) => void) | null = null;
   onHover: ((hover: Hover) => void) | null = null;
 
   #canvas: HTMLCanvasElement | null = null;

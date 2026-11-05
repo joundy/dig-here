@@ -277,11 +277,7 @@
     if (!delta) return;
     event.preventDefault();
     audio.unlock();
-    const from = spot ?? { x: W / 2, y: H / 2 };
-    world.onPick?.({
-      x: Math.max(0, Math.min(W - 1, from.x + delta[0])),
-      y: Math.max(0, Math.min(H - 1, from.y + delta[1])),
-    });
+    world.onStep?.(delta[0], delta[1]);
   }
 
   function zoom(direction: 1 | -1) {
