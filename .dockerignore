@@ -6,4 +6,9 @@ dist
 config
 .kamal
 *.local
+contract/target
+contract/tests
 server/data
+*.sqlite
+*.sqlite-*
+docs
