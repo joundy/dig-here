@@ -27,13 +27,19 @@ let fastnearCoolUntil = 0;
 
 export const rpcStats = { fastnear: 0, drpc: 0, rate_limited: 0, failovers: 0 };
 
+/** Server only. The key must never reach a browser or any provider other than FastNEAR. */
+export function fastnearAuth(): Record<string, string> {
+  const key = process.env.FASTNEAR_API_KEY;
+  return key ? { authorization: `Bearer ${key}` } : {};
+}
+
 async function post(url: string, method: string, params: unknown, timeoutMs: number): Promise<any> {
   let res: Response;
   try {
     // fetch asks for gzip by itself, which matters: view results are JSON arrays of bytes, three times their size.
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(url === FASTNEAR ? fastnearAuth() : {}) },
       body: JSON.stringify({ jsonrpc: '2.0', id: 'dig-here', method, params }),
       signal: AbortSignal.timeout(timeoutMs),
     });

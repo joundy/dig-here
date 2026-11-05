@@ -1,6 +1,7 @@
 import type { Config } from './config.ts';
 import type { Db } from './db.ts';
 import { errorText, log, sleep } from './log.ts';
+import { fastnearAuth } from './rpc.ts';
 
 const LOOP_MS = 5000;
 const RATE_LIMIT_WAIT_MS = 15_000;
@@ -135,7 +136,8 @@ export class Indexer {
   async #post(path: string, body: unknown): Promise<any> {
     const res = await fetch(`${this.#config.txApi}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // TX_API can point elsewhere in tests, and the key is only for FastNEAR.
+      headers: { 'content-type': 'application/json', ...(this.#config.txApi.includes('.fastnear.com') ? fastnearAuth() : {}) },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(20_000),
     });

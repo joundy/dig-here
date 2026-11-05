@@ -220,3 +220,11 @@ Bots are **demand-driven**, to save coins and RPC calls: with no browser connect
 The guest function-call key allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `poke`.
 
 Lost sends are real on testnet (see research): a client stops waiting after 8 seconds, checks the hash, and only then re-signs. Close the visible dig window 2.5 seconds before the on-chain end.
+
+## Notes from the user's review (not built yet)
+
+- **NFT owner share:** stays 2% of the pot, but must become configurable: a contract config value, read by the UI and Verify, rather than a fixed constant.
+- **FastNEAR API key:** the user will sign up and send it. Then add it to the server's secrets and redeploy.
+- **Jackpot seeding from mint money (25% suggested):** still to confirm with the user.
+
+Making the share configurable changes the contract's stored config, so it needs a state migration or a new contract. Do it between test sessions, not while someone's playing.
