@@ -202,3 +202,21 @@ Frontend reads the backend first, and falls back to direct RPC views if it's unr
 7. Security review against NEAR's checklist. README update.
 
 Report honestly at the end: what ran, what didn't, and what a human must try, especially a real wallet round.
+
+## Backend API (fixed, so backend and frontend can be built side by side)
+
+JSON fields are snake_case. Local dev server: `http://localhost:8787`. Vite proxies `/api` to it.
+
+- `GET /api/health`: `{ ok, contract, oracle_pool, root_balance, last_state_ms, bots_enabled }`
+- `GET /api/state`: `{ version, fetched_ms, live: <exact contract live_state result> }`, gzip, with ETag.
+- `GET /api/live`: SSE. `event: state` with the same body whenever `version` changes, comment heartbeat every 15 seconds.
+- `POST /api/guest-accounts` `{ public_key }`: `{ account_id, created }`. The same key returns the same account. Errors: `{ error }` with 429 or 503.
+- `GET /api/finished-games?before=<id>&limit=<n>`: `{ games: [...] }`, newest first.
+- `GET /api/games/:id/proof`: every event for the room, in order, including seeds and block heights.
+- `GET /api/players/:id/history`.
+
+Bots are **demand-driven**, to save coins and RPC calls: with no browser connected for 5 minutes they stop hosting and digging beyond finishing what's open, and they start within seconds when one connects. A lone juror must see players in a waiting room within about 15 seconds.
+
+The guest function-call key allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `buy_nft`, `poke`.
+
+Lost sends are real on testnet (see research): a client stops waiting after 8 seconds, checks the hash, and only then re-signs. Close the visible dig window 2.5 seconds before the on-chain end.
