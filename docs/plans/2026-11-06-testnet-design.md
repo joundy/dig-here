@@ -17,7 +17,7 @@ Date: 2026-11-06. Testnet only. Research behind this: `docs/research/`. Game rul
 1. **The contract decides everything.** Every rule, roll and coin lives on chain.
 2. **The backend can't change an outcome.** It triggers, reveals, caches and records. If it dies, coins stay safe and refundable, and the game can still be read directly from chain.
 3. **Same rules in TypeScript and Rust**, proven by shared test vectors, because players recheck rounds in their browser.
-4. **Testnet extras are switched off in production:** bots and guest accounts. They're config, not contract rules.
+4. **Testnet extras are switched off in production:** bots. They're config, not contract rules.
 
 ## Accounts
 
@@ -28,7 +28,6 @@ Date: 2026-11-06. Testnet only. Research behind this: `docs/research/`. Game rul
 | `oracle.dighere.testnet` | Tops up commitments, triggers and reveals |
 | `treasury.dighere.testnet` | Receives NFT mint money |
 | `<name>.bots.dighere.testnet` | Bots, testnet only |
-| `g-xxxxxx.guests.dighere.testnet` | Guests: browser function-call key plus backend sweep key |
 
 ## Money
 
@@ -54,7 +53,7 @@ Testnet values: `mint_price` 500 (0.5 NEAR, **production 20,000 = 20 NEAR, the u
 ```
 new(config)
 deposit()                        payable
-deposit_for(account_id)          payable, used for guest coins
+deposit_for(account_id)          payable, no longer called by the game
 withdraw(amount)                 exactly 1 yocto, promise with private callback
 
 create_room(name, map, fee, duration_sec, host_cut_bps, min_players, max_players, countdown_sec) -> room_id   payable
@@ -171,10 +170,8 @@ At least 50 cases per area. TS and Rust must agree exactly.
 | **Static** | Serves the built game, with the same caching as `deploy/nginx.conf` |
 | **Oracle** | Keeps at least 50 commitments in the pool. Watches open rooms, calls `poke` when due, `reveal` a block after each lock |
 | **Bots** | Testnet only (`BOTS_ENABLED`). Host rooms, join, dig with public data, keep the lobby alive. Budgeted, and pause if the root runs low |
-| **Guests** | `POST /api/guest-accounts`, per `docs/research/onboarding-and-payments.md` section 3 |
 | **Live state** | Polls one batched contract view about once a second, serves everyone: `GET /api/state`, `GET /api/live` (SSE) |
 | **Indexer** | Reads our contract's transactions from the FastNEAR Transactions API into `node:sqlite` (not tailing blocks: anonymous Neardata is too rate limited, see `docs/research/realtime-and-indexing.md`). `GET /api/finished-games`, `GET /api/games/:id/proof`, `GET /api/players/:id/history`. Decides nothing. Live play works without it |
-| **Sweeper** | Reclaims idle guests' coins per research section 3.5 |
 
 Secrets in environment only. Signer queues per account so nonces never collide (the research recommends one gas key with several nonce lanes for the oracle). RPC: FastNEAR, with dRPC read failover, never `rpc.testnet.near.org`. Retries check status first, because a timed-out transaction may still land. Log with no keys. A `GET /api/health` shows pool size, root balance and last block.
 
@@ -184,20 +181,20 @@ Frontend reads the backend first, and falls back to direct RPC views if it's unr
 
 - `src/lib/backend/near.svelte.ts` implements `GameBackend`, mapping contract rooms to the existing `Game` type so the screens barely change.
 - `src/lib/backend/index.ts` picks it by `VITE_BACKEND` (`near` default, `dummy` for tests and playtest).
-- **First action asks once:** "Play as guest" (instant, no wallet) or "Connect NEAR wallet" (`@hot-labs/near-connect` pinned 0.11.x, `function-call-key-plugin` 2.2, `near-api-js` 7.4, loaded on click).
+- **The first action that needs an account asks once:** "Connect NEAR wallet" (`@hot-labs/near-connect` pinned 0.11.x, `function-call-key-plugin` 2.2, `near-api-js` 7.4, loaded on click). Watching loads no wallet code.
 - Optimistic: the X appears at once and confirms in the background, sent with `wait_until: EXECUTED_OPTIMISTIC`, never `NONE`. Clear errors, and roll back on failure.
 - Time comes from chain time plus a measured offset. Never trust the local clock alone.
-- Labels: bots are clearly marked. Guests shown short.
+- Labels: bots are clearly marked.
 - **"Verify this round"** on results (section above), with links to the testnet explorer.
-- Screens must say plainly that these are testnet coins. Playtest controls are hidden on `near`. Guests can't withdraw or transfer NFTs: explain and offer "Connect a wallet".
+- Screens must say plainly that these are testnet coins. Playtest controls are hidden on `near`.
 
 ## Build order
 
 1. Map data, layout, number stream, TS rules alignment, vectors.
 2. Contract, with sandbox tests. Measure gas and storage. Deploy `v1` to testnet.
 3. Backend: oracle first, a full round on testnet driven from a script.
-4. Frontend: guest path, a full round in a real browser on testnet. Then wallet path, then verify screen.
-5. Bots, indexer, sweeper.
+4. Frontend: wallet path, a full round in a real browser on testnet, then verify screen.
+5. Bots, indexer.
 6. Deploy to dig.joundy.dev, and test the live site.
 7. Security review against NEAR's checklist. README update.
 
@@ -210,14 +207,13 @@ JSON fields are snake_case. Local dev server: `http://localhost:8787`. Vite prox
 - `GET /api/health`: `{ ok, contract, oracle_pool, root_balance, last_state_ms, bots_enabled, bot_join_limits: { max_fee_milli, max_host_cut_bps } }`. Bots only join a human's room within those limits, and a few such rooms per host per hour.
 - `GET /api/state`: `{ version, fetched_ms, live: <exact contract live_state result> }`, gzip, with ETag.
 - `GET /api/live`: SSE. `event: state` with the same body whenever `version` changes, comment heartbeat every 15 seconds.
-- `POST /api/guest-accounts` `{ public_key }`: `{ account_id, created }`. The same key returns the same account. Errors: `{ error }` with 429 or 503.
 - `GET /api/finished-games?before=<id>&limit=<n>`: `{ games: [...] }`, newest first.
 - `GET /api/games/:id/proof`: every event for the room, in order, including seeds and block heights.
 - `GET /api/players/:id/history`.
 
 Bots are **demand-driven**, to save coins and RPC calls: with no browser connected for 5 minutes they stop hosting and digging beyond finishing what's open, and they start within seconds when one connects. A lone juror must see players in a waiting room within about 15 seconds.
 
-The guest function-call key allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `poke`.
+The function-call key a wallet adds at sign-in allows: `join`, `leave`, `start`, `dig`, `create_room`, `mint_nft`, `list_nft`, `poke`.
 
 Lost sends are real on testnet (see research): a client stops waiting after 8 seconds, checks the hash, and only then re-signs. Close the visible dig window 2.5 seconds before the on-chain end.
 
@@ -228,3 +224,24 @@ Lost sends are real on testnet (see research): a client stops waiting after 8 se
 - **Jackpot seeding from mint money (25% suggested):** still to confirm with the user.
 
 Making the share configurable changes the contract's stored config, so it needs a state migration or a new contract. Do it between test sessions, not while someone's playing.
+
+## Decision: no guest accounts
+
+Every player, including jurors, uses a real testnet wallet, by the user's decision. This replaces every mention of guests above. Watching needs no account. Bots stay, testnet only.
+
+**Signing in.** The first action needing an account opens the connect dialog, with no wallet code loaded before that. NEAR Connect shows wallets flagged for testnet and for function-call keys. The plugin adds a key for the eight game methods with a 0.25 NEAR allowance. The game checks the key is really on chain, and says so if the wallet skipped it.
+
+**First payment.** `join`, `create_room` and `mint_nft` from a short balance show what they need before the wallet is asked: the cost, a 0.002 NEAR setup if the account has no record yet, and a choice of no extra, about 5 games or about 20 games. A choice with extra must leave at least 0.1 NEAR in the wallet, and any choice at least 0.02 NEAR for gas. If none fits, the dialog shows the faucet steps instead.
+
+**Signing moves.** With nothing attached, the game signs in `KeySender` using the plugin's stored key, because `KeySender` handles lost sends and the plugin doesn't. If that key is out of allowance or gone, the move goes through the plugin to the wallet. Coins attached always go to the wallet. Disconnecting removes the key from this browser, but it stays on the account until the owner deletes it.
+
+**Onboarding links, tried 2026-11-05 from one machine:**
+
+| Link | What happened |
+|---|---|
+| `wallet.meteorwallet.app` | A headless browser got a Cloudflare block, so it wasn't tried further. Its connect dialog does load through NEAR Connect. Creating a testnet account there is untested |
+| `wallet.intear.tech` | Loads, and asks for a password. Testnet support past that is untested |
+| `wallet.near.org` | Loads, and lists Meteor and Intear among others |
+| `docs.near.org/getting-started/faucet` | Loads, and its form calls `helper.testnet.near.org`, which answered 429 "retry in 6 hours" because this machine had used up its share. That same service funded this project earlier, but delivery wasn't seen today |
+| `near-faucet.io` | Loads, but the one proper request (1 NEAR) came back "Error occured", so the game doesn't offer it |
+| `testnet.mynearwallet.com` | Loads, but no longer creates accounts, so the game doesn't offer it |
