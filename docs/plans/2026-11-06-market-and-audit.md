@@ -51,8 +51,8 @@ Go through the whole live site as a stranger, on phone and desktop, including fi
 All tests, deploy, live check, README and notes updated, `main` updated. Report honestly what ran and what a human must try.
 
 ## Status
-- [ ] Part 1
-- [ ] Part 2
-- [ ] Part 3
+- [x] Part 1: `market.dighere.testnet` is live. See `contract-market/README.md`
+- [x] Part 2: `v1` upgraded in place, balances kept. Closeness numbers are in `docs/research/closeness-range.md`
+- [ ] Part 3: the backend half is done and committed, but not yet deployed
 - [ ] Part 4
 - [ ] Part 5

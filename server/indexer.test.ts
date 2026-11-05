@@ -132,7 +132,8 @@ test('the market\'s events are read along with the game\'s, and only theirs', ()
 
 test('activity covers every kind of move, in one price unit, newest first', async () => {
   const db = openDb(':memory:');
-  storeEvents(db, marketHistory().flatMap((t) => eventsOfTransaction(t, [CONTRACT, MARKET])));
+  // Stored out of order, as the indexer really does, because its batches come back in no fixed order.
+  storeEvents(db, marketHistory().reverse().flatMap((t) => eventsOfTransaction(t, [CONTRACT, MARKET])));
   const app = new App();
   addHistoryRoutes(app, db, { height: 200 } as Indexer);
   const server = await app.listen(0);

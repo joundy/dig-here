@@ -322,7 +322,7 @@ To redeploy code to the same account, keeping its state, with a change that does
 The upgrade to the market had to run its one-time step in the same transaction, so it used `with-init-call upgrade_to_market json-args '{}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR'` in place of `without-init-call`. Stored layouts didn't change, so the state stayed as it was, apart from clearing old listings and the new `closeness_new_from` key.
 
 
-Live on `v1` since 2026-11-05, block 276329338: code hash `7byeeAYY4bRdGSXTbcDsyXAoMzezpBWu6oeBQjAeUpQB`, sha256 `621bec19...`, from `BpqDsfNS...`. Struct layouts didn't change. Every view matched one block either side of the deploy, and the upgrade cost 0.0028 NEAR.
+Live on `v1` since 2026-11-05, block 276351982 at the latest: code hash `HeyyJyAWDijgD738tEAoKtydeQpHjtFygyz8uU8emjiA`, sha256 `f775e5dd...`, from `7byeeAYY...`, which the sandbox's upgrade test ran on byte for byte. Transaction `Hc4uscCvwpoewBhmwQC1kbo3aiAuvevXGva9QBARNhaM`. Rooms from 175 on use the range of 96. Three old listings ended, with `market_moved`. Read before and after with no round open: `get_totals`, every other view, 25 accounts' balances and 30 rooms were all identical, apart from `closeness_range` added and `price` dropped. The total owed stayed 8.2010 NEAR, with 1.27 NEAR free above that and storage. The upgrade cost 0.0033 NEAR.
 
 The commitment pool's next index on `v1` is 1, because the testnet smoke test used index 0 with a throwaway secret. The oracle reads it from `commitments_next_index()`.
 

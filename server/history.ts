@@ -108,9 +108,11 @@ export function activityRow(r: any) {
   }
 }
 
+/** `seq` only says when the indexer stored a row, and it reads transactions in no fixed order, so time comes from the block. */
 function activity(db: Db, url: URL, filter: string, ...params: Array<string | number>) {
-  const before = Number(url.searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
-  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} AND seq < ? ${filter} ORDER BY seq DESC LIMIT ?`).all(before, ...params, limitOf(url, 30));
+  const before = Number(url.searchParams.get('before'));
+  const page = before > 0 ? 'AND (block_height, seq) < (SELECT block_height, seq FROM events WHERE seq = ?)' : '';
+  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} ${page} ${filter} ORDER BY block_height DESC, seq DESC LIMIT ?`).all(...(before > 0 ? [before] : []), ...params, limitOf(url, 30));
   return rows.map(activityRow);
 }
 
@@ -122,7 +124,7 @@ export function deedActivity(db: Db, events: Array<{ event: string; block_height
   const finished = events.find((e) => e.event === 'finished');
   const token = finished?.data.deed?.token_id;
   if (!token) return [];
-  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} AND ${TOKEN_OF} = ? AND block_height <= ? ORDER BY seq`).all(token, finished!.block_height);
+  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} AND ${TOKEN_OF} = ? AND block_height <= ? ORDER BY block_height, seq`).all(token, finished!.block_height);
   return rows.map(activityRow);
 }
 
