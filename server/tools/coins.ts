@@ -3,7 +3,7 @@ import { viewAccount, viewFunction } from '../rpc.ts';
 import { toNear } from '../units.ts';
 import { c, config } from './lib.ts';
 
-const fixed = [config.rootAccount, config.oracleAccount, config.runnerAccount, config.guestsParent, config.botsParent, `treasury.${config.rootAccount}`, c];
+const fixed = [config.rootAccount, config.oracleAccount, config.runnerAccount, config.botsParent, `treasury.${config.rootAccount}`, c];
 const bots = ['vega', 'willow', 'wren', 'yarrow', 'zinnia', 'umber', 'vesper', 'wisp'].map((n) => `${n}.${config.botsParent}`);
 let botWallets = 0n;
 let botGame = 0n;

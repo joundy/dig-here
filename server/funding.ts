@@ -4,7 +4,7 @@ import { listAccessKeys, viewAccount } from './rpc.ts';
 import type { NearAccount } from './signer.ts';
 import { toNear } from './units.ts';
 
-export type Floors = { oracle: bigint; guests: bigint; bots: bigint };
+export type Floors = { oracle: bigint; bots: bigint };
 
 export function availableBalance(account: { amount: string; storage_usage: number } | null): bigint {
   if (!account) return 0n;

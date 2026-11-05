@@ -1,5 +1,6 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
+import { isIPv6 } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { errorText, log } from './log.ts';
 
@@ -7,6 +8,24 @@ export type Handler = (req: IncomingMessage, res: ServerResponse, params: string
 type Route = { method: string; pattern: RegExp; handler: Handler };
 
 const GZIP_FROM_BYTES = 512;
+
+export function clientIp(req: IncomingMessage, trustCf: boolean): string {
+  const forwarded = req.headers['cf-connecting-ip'];
+  if (trustCf && typeof forwarded === 'string' && forwarded) return forwarded;
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+/** Someone with one IPv6 connection usually holds a whole /64, so a limit on exact addresses wouldn't limit them. */
+export function ipBucket(ip: string): string {
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  if (!isIPv6(ip)) return ip;
+  const [head, tail = ''] = ip.split('%')[0].split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
+  return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
+}
 
 export function sendJson(req: IncomingMessage, res: ServerResponse, status: number, body: unknown): void {
   const json = Buffer.from(JSON.stringify(body));

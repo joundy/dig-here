@@ -60,30 +60,18 @@ export function loadConfig() {
     poolTarget: num('ORACLE_POOL_TARGET', 50),
     poolBatch: num('ORACLE_POOL_BATCH', 30),
 
-    /** The root stops paying each role at its own floor, lowest for the oracle, so bots and guests run out first. */
+    /** The root stops paying each role at its own floor, lowest for the oracle, so bots run out first. */
     rootFloors: {
       oracle: coins('ROOT_FLOOR_ORACLE_NEAR', '1'),
-      guests: coins('ROOT_FLOOR_GUESTS_NEAR', '6'),
       bots: coins('ROOT_FLOOR_BOTS_NEAR', '10'),
     },
 
-    guestsEnabled: flag('GUESTS_ENABLED', true),
-    guestsParent: process.env.GUESTS_PARENT ?? `guests.${root}`,
-    guestLanes: num('GUEST_LANES', 6),
-    guestGas: coins('GUEST_GAS_NEAR', '0.08'),
-    guestCredit: coins('GUEST_CREDIT_NEAR', '0.6'),
-    guestsPerIpPerHour: num('GUESTS_PER_IP_PER_HOUR', 3),
-    guestDailyCap: num('GUEST_DAILY_CAP', 25),
-    /** Guests being made right now, however they got past the limits. Each one is two sends on six lanes. */
-    guestMaxInFlight: num('GUEST_MAX_IN_FLIGHT', 10),
     /** Every state change writes a frame of up to 247 KB to each stream. */
     sseMaxClients: num('SSE_MAX_CLIENTS', 500),
     /** High enough for a room of people behind one router. Anyone over it falls back to polling `/api/state`. */
     sseMaxPerIp: num('SSE_MAX_PER_IP', 20),
     /** Only safe when every request really arrives through Cloudflare. Otherwise a client can forge the header. */
     trustCfIp: flag('TRUST_CF_CONNECTING_IP', false),
-    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-    allowLocalOrigins: flag('ALLOW_LOCAL_ORIGINS', process.env.NODE_ENV !== 'production'),
 
     botsEnabled: flag('BOTS_ENABLED', false),
     demandWindowSec: num('DEMAND_WINDOW_SEC', 300),
@@ -97,8 +85,5 @@ export function loadConfig() {
 
     indexerEnabled: flag('INDEXER_ENABLED', true),
     txApi: process.env.TX_API ?? 'https://tx.test.fastnear.com',
-
-    sweeperEnabled: flag('SWEEPER_ENABLED', true),
-    guestIdleHours: num('GUEST_IDLE_HOURS', 12),
   };
 }

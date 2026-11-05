@@ -4,17 +4,15 @@ import { BOT_JOIN_LIMITS } from './bot-brain.ts';
 import { Bots } from './bots.ts';
 import { loadConfig } from './config.ts';
 import { openDb } from './db.ts';
-import { clientIp, Guests, ipBucket } from './guests.ts';
 import { addHistoryRoutes } from './history.ts';
-import { App, sendJson } from './http.ts';
+import { App, clientIp, ipBucket, sendJson } from './http.ts';
 import { Indexer } from './indexer.ts';
 import { Demand, LiveState } from './live.ts';
 import { errorText, log, sleep } from './log.ts';
 import { Oracle, oracleStats } from './oracle.ts';
 import { finalBlock, rpcStats } from './rpc.ts';
 import { staticHandler } from './static.ts';
-import { Sweeper } from './sweeper.ts';
-import { prepareParent, prepareRunner, rootAndOracle } from './team.ts';
+import { prepareRunner, rootAndOracle } from './team.ts';
 import { toNear } from './units.ts';
 
 // A background task's bad moment shouldn't stop the board and the oracle for everyone.
@@ -68,11 +66,6 @@ addLiveRoutes(app, state, { maxClients: config.sseMaxClients, maxPerIp: config.s
 const indexer = new Indexer(config, db);
 addHistoryRoutes(app, db, indexer);
 
-let guests: Guests | null = null;
-app.route('POST', /^\/api\/guest-accounts$/, async (req, res, params, url) => {
-  if (!guests) return sendJson(req, res, 503, { error: config.guestsEnabled ? 'Guest accounts are starting up. Try again in a moment.' : 'Guest accounts are switched off.' });
-  await guests.handle(req, res, params, url);
-});
 app.fallback(staticHandler(config.distDir));
 
 // Listening first means a second copy dies on the busy port before its oracle can fight the first.
@@ -103,15 +96,7 @@ if (config.oracleEnabled) {
     new Oracle(config, team.oracle, runner, state, team.funding).start();
   });
 }
-if (config.guestsEnabled) {
-  void untilItWorks('guests', async () => {
-    const funder = await prepareParent(config, team, config.guestsParent, 'guests', config.guestLanes, '3');
-    guests = new Guests(config, db, funder, team.funding);
-  });
-}
 if (config.indexerEnabled) void indexer.run();
-// The indexer loops every 5 s, or 15 s when rate limited, so a few minutes without a sync means real trouble.
-if (config.sweeperEnabled) new Sweeper(config, db, state, () => Date.now() - indexer.lastSyncMs < 300_000).start();
 if (config.botsEnabled) {
   void untilItWorks('bots', async () => {
     const engine = new Bots(config, db, state, team.funding, team.root);

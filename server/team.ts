@@ -28,13 +28,3 @@ export async function prepareRunner(config: Config, team: Team): Promise<NearAcc
   runner.setLanes(lanes);
   return runner;
 }
-
-/** A parent account pays directly for its children, so it needs full-access lanes, and those can't be limited. */
-export async function prepareParent(config: Config, team: Team, parentId: string, role: string, lanes: number, startingCoins: string): Promise<NearAccount> {
-  const keys = Array.from({ length: lanes }, (_, i) => deriveKeyPair(config.keySeed, `${parentId}:lane:${i}`));
-  await ensureAccount(team.root, parentId, near(startingCoins), keys.slice(0, 1));
-  const parent = new NearAccount(parentId, role, keys.slice(0, 1));
-  await ensureLaneKeys(parent, keys);
-  parent.setLanes(keys);
-  return parent;
-}

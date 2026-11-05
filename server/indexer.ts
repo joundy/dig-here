@@ -58,26 +58,6 @@ export function eventsOfTransaction(tx: any, contract: string): ParsedEvent[] {
   return out;
 }
 
-/** Who took an action. Credits don't count: a refund landing isn't the player being active. */
-export function activeAccounts(e: ParsedEvent): string[] {
-  const d = e.data;
-  switch (e.event) {
-    case 'joined':
-    case 'left':
-    case 'dig':
-      return [d.account];
-    case 'room_created':
-      return [d.host];
-    case 'nft_minted':
-    case 'nft_listed':
-      return [d.owner];
-    case 'nft_sold':
-      return [d.buyer, d.seller];
-    default:
-      return [];
-  }
-}
-
 /** Returns how many rows were new, since a reread of the overlap repeats most of them. */
 export function storeEvents(db: Db, events: ParsedEvent[]): number {
   let added = 0;
@@ -85,12 +65,10 @@ export function storeEvents(db: Db, events: ParsedEvent[]): number {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const game = db.prepare('INSERT OR REPLACE INTO games(room_id, status, ended_ms, block_height) VALUES (?, ?, ?, ?)');
   const player = db.prepare('INSERT OR IGNORE INTO player_games(account, room_id) VALUES (?, ?)');
-  const active = db.prepare('INSERT INTO player_activity(account, last_ms) VALUES (?, ?) ON CONFLICT(account) DO UPDATE SET last_ms = MAX(last_ms, excluded.last_ms)');
   db.exec('BEGIN');
   try {
     for (const e of events) {
       added += Number(insert.run(e.receipt_id, e.log_index, e.outcome_index, e.block_height, e.block_ms, e.tx_hash, e.standard, e.event, e.room_id, JSON.stringify(e.data)).changes);
-      for (const account of activeAccounts(e)) active.run(account, e.block_ms);
       if (e.event === 'finished' || e.event === 'refunded') {
         game.run(e.room_id, e.event, e.data.ended_ms, e.block_height);
         for (const account of new Set<string>([...e.data.players, e.data.host])) player.run(account, e.room_id);
@@ -109,7 +87,6 @@ export class Indexer {
   readonly #db: Db;
   height = 0;
   lastError: string | null = null;
-  lastSyncMs = 0;
 
   constructor(config: Config, db: Db) {
     this.#config = config;
@@ -123,7 +100,6 @@ export class Indexer {
       try {
         await this.syncOnce();
         this.lastError = null;
-        this.lastSyncMs = Date.now();
         await sleep(LOOP_MS);
       } catch (e) {
         this.lastError = errorText(e);

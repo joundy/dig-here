@@ -6,7 +6,7 @@ import { c, removeAccount, team, throwaway } from './lib.ts';
 const COUNT = Number(process.argv[2] ?? 12);
 const near = await throwaway('warden-probe', '0.1'); // 'w' sorts into the contract's own shard
 const far = await throwaway('rt-probe', '0.1'); // 'r' sorts into the shard the oracle is on
-const mid = await throwaway('go-probe', '0.1'); // 'go' sorts into the shard guests' g- names are next to
+const mid = await throwaway('go-probe', '0.1'); // 'go' sorts into the shard wallets named g- are next to
 
 async function probe(label: string, account: NearAccount, n: number) {
   const times: number[] = [];
@@ -27,5 +27,5 @@ async function probe(label: string, account: NearAccount, n: number) {
   console.log(label, { sent: n, lost, p50: times[times.length >> 1], max: times.at(-1) });
 }
 
-await Promise.all([probe('same shard as contract', near, COUNT), probe('oracle shard', far, COUNT), probe('guest-ish shard', mid, COUNT), probe('oracle itself', team.oracle, COUNT)]);
+await Promise.all([probe('same shard as contract', near, COUNT), probe('oracle shard', far, COUNT), probe('g- shard', mid, COUNT), probe('oracle itself', team.oracle, COUNT)]);
 for (const a of [near, far, mid]) await removeAccount(a);

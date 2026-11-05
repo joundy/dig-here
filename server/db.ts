@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 export type Db = DatabaseSync;
 
-/** Events can all be rebuilt from the chain. Guests and the coin ledger can't, so back those up if they ever matter. */
+/** Events can all be rebuilt from the chain. The coin ledger can't, so back it up if it ever matters. */
 export function openDb(path: string): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
@@ -25,19 +25,11 @@ export function openDb(path: string): Db {
     CREATE INDEX IF NOT EXISTS events_by_kind ON events(event, block_height);
     CREATE TABLE IF NOT EXISTS games(room_id INTEGER PRIMARY KEY, status TEXT NOT NULL, ended_ms INTEGER NOT NULL, block_height INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS player_games(account TEXT NOT NULL, room_id INTEGER NOT NULL, PRIMARY KEY(account, room_id));
-    CREATE TABLE IF NOT EXISTS player_activity(account TEXT PRIMARY KEY, last_ms INTEGER NOT NULL);
-
-    CREATE TABLE IF NOT EXISTS guests(
-      public_key TEXT PRIMARY KEY, account_id TEXT NOT NULL, ip_hash TEXT NOT NULL, created_ms INTEGER NOT NULL,
-      created_ok INTEGER NOT NULL DEFAULT 0, credit_ok INTEGER NOT NULL DEFAULT 0, swept_ms INTEGER);
-    CREATE INDEX IF NOT EXISTS guests_by_ip ON guests(ip_hash, created_ms);
 
     CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY AUTOINCREMENT, at_ms INTEGER NOT NULL, kind TEXT NOT NULL, account TEXT NOT NULL, yocto TEXT NOT NULL);
   `);
-  // Older databases have the table without these.
-  const columns = (db.prepare('PRAGMA table_info(guests)').all() as Array<{ name: string }>).map((c) => c.name);
-  if (!columns.includes('attempts')) db.exec('ALTER TABLE guests ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
-  if (!columns.includes('last_attempt_ms')) db.exec('ALTER TABLE guests ADD COLUMN last_attempt_ms INTEGER NOT NULL DEFAULT 0');
+  // Older databases still hold hashed visitor addresses from the guest accounts we no longer have.
+  db.exec('DROP TABLE IF EXISTS guests; DROP TABLE IF EXISTS player_activity;');
   return db;
 }
 

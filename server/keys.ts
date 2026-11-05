@@ -9,7 +9,7 @@ export function hmacHex(secret: string, message: string): string {
 
 /**
  * Every backend key comes from one seed plus a label, so a new deploy works out the same keys
- * for bots, lanes and sweeps with no key store to lose or leak.
+ * for bots and lanes with no key store to lose or leak.
  */
 export function deriveKeyPair(seed: string, label: string): KeyPair {
   const secret = createHmac('sha256', seed).update(label).digest();
