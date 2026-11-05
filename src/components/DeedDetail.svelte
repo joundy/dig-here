@@ -152,24 +152,38 @@
   };
 </script>
 
+{#snippet trouble()}
+  {#if backend.deedsError}
+    <p class="short" role="status">{backend.deedsError} <button class="link" onclick={() => backend.reloadDeeds()}>Try again</button></p>
+  {/if}
+{/snippet}
+
 <article class="detail {row.map}">
   <a class="back" href="#/deeds">‹ All NFTs</a>
 
   <div class="top">
     <figure class="hero" class:won>
-      <DeedArt map={row.map} kind={row.kind} scale={ui.compact ? 6 : 8} live alt="{title}, {mapName(row.map)}" />
+      <DeedArt map={row.map} kind={row.kind} scale={ui.compact ? 6 : ui.short ? 5 : 8} live alt="{title}, {mapName(row.map)}" />
     </figure>
 
     <div class="side">
-      <p class="set"><MapBadge mapId={row.map} /> <span>{island.minted} of {island.total} minted</span></p>
+      <p class="set"><MapBadge mapId={row.map} /> {#if backend.deedsReady}<span>{island.minted} of {island.total} minted</span>{/if}</p>
       <h1 bind:this={heading} tabindex="-1">{title}</h1>
       <p class="owner">
-        {#if mine}<span class="you">You own this</span>{:else if deed.owner}Owned by <Who account={deed.owner} {me} />{:else}Nobody owns this yet{/if}
+        {#if !backend.deedsReady}Looking up who owns this…{:else if mine}<span class="you">You own this</span>{:else if deed.owner}Owned by <Who account={deed.owner} {me} />{:else}Nobody owns this yet{/if}
       </p>
       <p class="pitch">Whoever owns it earns {percent(RULES.deedBps)} of the pot each time the treasure lands by {withArticle(kindName(row.kind))} on this island.</p>
 
-      <div class="deal" class:waiting aria-busy={waiting}>
-        {#if waiting}
+      <div class="deal" class:waiting aria-busy={waiting || !backend.deedsReady}>
+        {#if !backend.deedsReady}
+          {#if backend.deedsError}
+            <p class="short" role="alert">{backend.deedsError}</p>
+            <button class="btn alt" onclick={() => backend.reloadDeeds()}>Try again</button>
+          {:else}
+            <p class="tagline">Reading the chain</p>
+            <div class="reading" aria-hidden="true"><span></span><span></span></div>
+          {/if}
+        {:else if waiting}
           <div class="wait" role="status">
             <span class="dig"><Sprite name="shovel" scale={3} /></span>
             <div>
@@ -178,6 +192,7 @@
             </div>
           </div>
         {:else if form === 'list' || form === 'price'}
+          {@render trouble()}
           <form onsubmit={submitPrice}>
             <label>
               <span class="label">{form === 'list' ? 'Your price' : 'New price'}, in NEAR</span>
@@ -221,6 +236,7 @@
             <button class="plain" onclick={delist}>Take off market</button>
           </div>
         {:else if mine}
+          {@render trouble()}
           <p class="tagline">Not on the market</p>
           <p class="fine">Keep it and carry on earning, or set a price. Sales pay straight to your wallet.</p>
           <div class="buttons">
@@ -252,6 +268,9 @@
             <button class="btn" onclick={mint}>{signedIn ? `Mint for ${near(backend.prices.mintPrice)}` : 'Connect and mint'}</button>
           {/if}
           <p class="fine">Comes out of your game balance, and your wallet tops it up if it's short. There's only ever one of these.</p>
+        {:else if backend.deedsError}
+          <p class="tagline">Price unknown</p>
+          {@render trouble()}
         {:else}
           <p class="tagline">Not for sale</p>
           <p class="fine">Its owner is keeping it for now. If they list it, it shows up under For sale.</p>
@@ -524,6 +543,32 @@
     from { transform: rotate(-16deg); }
     to { transform: rotate(16deg) translateY(4px); }
   }
+  .link {
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .reading {
+    display: grid;
+    gap: 0.4rem;
+    animation: reading 1.2s steps(4) infinite alternate;
+  }
+  .reading span {
+    height: 1.4rem;
+    background: rgb(247 247 238 / 0.14);
+  }
+  .reading span:first-child {
+    width: 55%;
+    height: 2.6rem;
+  }
+  @keyframes reading {
+    from { opacity: 0.45; }
+    to { opacity: 0.95; }
+  }
   .note {
     margin: 0;
     padding: 0.3rem 0.5rem;
@@ -663,7 +708,7 @@
     max-width: 100%;
   }
 
-  @media (max-width: 760px) {
+  @media (max-width: 760px) and (orientation: portrait) {
     .top,
     .lower {
       grid-template-columns: minmax(0, 1fr);

@@ -30,7 +30,7 @@
     <h3>{title}</h3>
     <p class="facts">
       <span class="set">{mapName(row.map).split(' ')[0]}</span>
-      <span title="Roughly how often the treasure lands by this kind">{chance}%<span class="word"> chance</span></span>
+      <span title="Roughly how often the treasure lands by this kind">{chance}%{' '}<span class="word">chance</span></span>
     </p>
     <p class="owner">
       {#if mine}You own this{:else if deed.owner}Owner <span class="who"><Who account={deed.owner} {me} link={false} /></span>{:else}No owner yet{/if}

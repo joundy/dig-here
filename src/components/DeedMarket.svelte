@@ -68,11 +68,13 @@
     world.showMap(selected?.map ?? (mapFilter === 'all' ? 'tropical' : mapFilter));
   });
 
-  // Coming back from an NFT puts you where you were. The hash change has already scrolled to the top.
+  /** Sideways on a phone the rail scrolls rather than the page. */
+  const scroller = () => (ui.short ? document.querySelector('.rail') : document.scrollingElement);
+
+  // An NFT opens at its top, and coming back puts you where you were.
   $effect(() => {
-    if (id) return;
-    const to = listScroll;
-    void tick().then(() => window.scrollTo(0, to));
+    const to = id ? 0 : listScroll;
+    void tick().then(() => scroller()?.scrollTo(0, to));
   });
 
   function chooseTab(next: MarketTab) {
@@ -219,7 +221,7 @@
             {#if group.map}{@render lineup(group.map)}{/if}
             <ul class="cards">
               {#each group.rows as row (row.id)}
-                <li><DeedCard {row} onopen={() => (listScroll = window.scrollY)} /></li>
+                <li><DeedCard {row} onopen={() => (listScroll = scroller()?.scrollTop ?? 0)} /></li>
               {/each}
             </ul>
           {/each}
