@@ -67,9 +67,10 @@ export async function read(method: string, params: unknown, timeoutMs = 6000): P
       return await post(FASTNEAR, method, params, timeoutMs);
     } catch (e) {
       if (!(e instanceof RpcError) || !e.transient) throw e;
-      if (e.status === 429) fastnearCoolUntil = Date.now() + COOL_OFF_MS;
+      const limited = e.status === 429 || /rate limit/i.test(e.message);
+      if (limited) fastnearCoolUntil = Date.now() + COOL_OFF_MS;
       rpcStats.failovers++;
-      log('rpc', `FastNEAR read failed, trying dRPC: ${e.message}`);
+      if (!limited) log('rpc', `FastNEAR read failed, trying dRPC: ${e.message}`);
     }
   }
   rpcStats.drpc++;

@@ -161,6 +161,8 @@ export class NearAccount {
 
   async #execute(lane: Lane, receiver: string, acts: Action[], opts: SendOptions): Promise<TxResult> {
     let staleNonces = 0;
+    let stuck = 0;
+    const earlier: string[] = [];
     for (let lost = 0; ; ) {
       // A lost transaction keeps its nonce used up locally, so the next one is higher and kills it if it ever turns up.
       const nonce = await lane.nextNonce(this.id);
@@ -173,13 +175,27 @@ export class NearAccount {
         const outcome = await deliver(bytes, hash, this.id, opts);
         const result = parseOutcome(hash, outcome);
         addBurn(this.role, result.burnt);
+        if (!result.ok && earlier.length) {
+          // The copy we gave up on can land after all, and then this one fails only because it's a repeat.
+          for (const old of earlier) {
+            const late = await checkByHash(old, this.id, 'EXECUTED_OPTIMISTIC');
+            if (late) return parseOutcome(old, late);
+          }
+        }
         return result;
       } catch (e) {
         if (e instanceof LostTransaction && opts.resign !== false && ++lost <= 3) {
+          earlier.push(hash);
           log('signer', `${this.id}: send lost, signing again`, { hash, lost });
           continue;
         }
         lane.nonce = null;
+        // Testnet shards do stall for a while. Refused outright, so nothing was sent.
+        if (e instanceof RpcError && /ShardStuck/.test(JSON.stringify(e.data ?? '')) && ++stuck <= 4) {
+          log('signer', `${this.id}: a shard is stuck, waiting`, { receiver });
+          await sleep(4000);
+          continue;
+        }
         // A stale view of the nonce: nothing was sent, so signing again can't pay twice.
         if (e instanceof RpcError && /InvalidNonce/.test(JSON.stringify(e.data ?? '') + e.message) && ++staleNonces <= 4) {
           log('signer', `${this.id}: stale nonce, signing again`);

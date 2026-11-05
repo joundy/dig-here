@@ -35,7 +35,7 @@ const refused = await fetch(`${API}/api/guest-accounts`, { method: 'POST', heade
 console.log('other origin', refused.status);
 
 const guest = new NearAccount(body.account_id, 'guest', [key]);
-const host = await throwaway(`gt${Date.now().toString(36).slice(-5)}`, '0.25');
+const host = await throwaway(`wg${Date.now().toString(36).slice(-5)}`, '0.25');
 try {
   const created = await host.call(c, 'create_room', { name: 'Guest test', map: 'snowy', fee: 10, duration_sec: 60, host_cut_bps: 0, min_players: 2, max_players: 4, countdown_sec: 0 }, 60, near('0.13'));
   if (!created.ok) throw new Error(created.failure);

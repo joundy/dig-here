@@ -78,6 +78,9 @@ export function loadConfig() {
     botCount: num('BOT_COUNT', 8),
     botsBudget: coins('BOTS_BUDGET_NEAR', '8'),
     botNftMints: num('BOT_NFT_MINTS', 3),
+    /** A bot room stays open this long for a visitor to join. This is what sets rounds per hour, and so the burn rate. */
+    botHoldMinSec: num('BOT_HOLD_MIN_SEC', 60),
+    botHoldMaxSec: num('BOT_HOLD_MAX_SEC', 300),
 
     indexerEnabled: flag('INDEXER_ENABLED', true),
     txApi: process.env.TX_API ?? 'https://tx.test.fastnear.com',

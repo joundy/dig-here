@@ -14,17 +14,17 @@ export function openDb(path: string): Db {
     PRAGMA busy_timeout = 2000;
 
     CREATE TABLE IF NOT EXISTS cursor(id INTEGER PRIMARY KEY CHECK(id = 1), height INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS indexed_txs(hash TEXT PRIMARY KEY) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS events(
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
-      receipt_id TEXT NOT NULL, log_index INTEGER NOT NULL,
+      receipt_id TEXT NOT NULL, log_index INTEGER NOT NULL, outcome_index INTEGER NOT NULL DEFAULT 0,
       block_height INTEGER NOT NULL, block_ms INTEGER, tx_hash TEXT NOT NULL,
       standard TEXT NOT NULL, event TEXT NOT NULL, room_id INTEGER, data TEXT NOT NULL,
       UNIQUE(receipt_id, log_index));
     CREATE INDEX IF NOT EXISTS events_by_room ON events(room_id, block_height, seq);
     CREATE INDEX IF NOT EXISTS events_by_kind ON events(event, block_height);
-    CREATE TABLE IF NOT EXISTS games(
-      room_id INTEGER PRIMARY KEY, status TEXT NOT NULL, ended_ms INTEGER NOT NULL, block_height INTEGER NOT NULL, summary TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS player_events(account TEXT NOT NULL, room_id INTEGER NOT NULL, PRIMARY KEY(account, room_id));
+    CREATE TABLE IF NOT EXISTS games(room_id INTEGER PRIMARY KEY, status TEXT NOT NULL, ended_ms INTEGER NOT NULL, block_height INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS player_games(account TEXT NOT NULL, room_id INTEGER NOT NULL, PRIMARY KEY(account, room_id));
     CREATE TABLE IF NOT EXISTS player_activity(account TEXT PRIMARY KEY, last_ms INTEGER NOT NULL);
 
     CREATE TABLE IF NOT EXISTS guests(

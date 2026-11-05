@@ -19,6 +19,8 @@ if systemctl --user is-active --quiet "$unit.scope"; then
   exit 1
 fi
 cd "$here/.."
+# Everything local comes from one IP, so the production limit of 3 an hour would stop testing almost at once.
+export GUESTS_PER_IP_PER_HOUR="${GUESTS_PER_IP_PER_HOUR:-40}"
 setsid nohup systemd-run --user --scope --unit="$unit" -p MemoryMax=1G -p CPUQuota=100% \
   node --disable-warning=ExperimentalWarning server/main.ts >>"$log" 2>&1 </dev/null &
 disown

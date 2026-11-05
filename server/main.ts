@@ -1,15 +1,20 @@
 import { addLiveRoutes } from './api-live.ts';
 import { startBurnLog, burnReport } from './burn.ts';
+import { Bots } from './bots.ts';
 import { loadConfig } from './config.ts';
 import { openDb } from './db.ts';
 import { Guests } from './guests.ts';
+import { addHistoryRoutes } from './history.ts';
 import { App, sendJson } from './http.ts';
+import { Indexer } from './indexer.ts';
 import { Demand, LiveState } from './live.ts';
 import { errorText, log, sleep } from './log.ts';
 import { Oracle } from './oracle.ts';
 import { finalBlock, rpcStats } from './rpc.ts';
 import { staticHandler } from './static.ts';
+import { Sweeper } from './sweeper.ts';
 import { prepareParent, prepareRunner, rootAndOracle } from './team.ts';
+import { toNear } from './units.ts';
 
 const config = loadConfig();
 const demand = new Demand();
@@ -19,6 +24,7 @@ const team = rootAndOracle(config);
 const db = openDb(config.dbPath);
 
 let rootBalance = 0n;
+let bots: Bots | null = null;
 let lastBlock = 0;
 
 async function refreshHealth(): Promise<void> {
@@ -44,11 +50,16 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
     oracle_enabled: config.oracleEnabled,
     sse_clients: demand.sseClients,
     missed_reveals: current?.frame.live.missed_reveals ?? null,
+    indexer_height: indexer.height,
+    indexer_error: indexer.lastError,
+    bots_spent: bots ? toNear(bots.spent()) : null,
     rpc: rpcStats,
     burn: burnReport(),
   });
 });
 addLiveRoutes(app, state);
+const indexer = new Indexer(config, db);
+addHistoryRoutes(app, db, indexer);
 
 let guests: Guests | null = null;
 app.route('POST', /^\/api\/guest-accounts$/, async (req, res, params, url) => {
@@ -89,5 +100,14 @@ if (config.guestsEnabled) {
   void untilItWorks('guests', async () => {
     const funder = await prepareParent(config, team, config.guestsParent, 'guests', config.guestLanes, '3');
     guests = new Guests(config, db, funder, team.funding);
+  });
+}
+if (config.indexerEnabled) void indexer.run();
+if (config.sweeperEnabled) new Sweeper(config, db, state).start();
+if (config.botsEnabled) {
+  void untilItWorks('bots', async () => {
+    const engine = new Bots(config, db, state, team.funding, team.root);
+    await engine.start();
+    bots = engine;
   });
 }

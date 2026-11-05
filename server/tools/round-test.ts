@@ -10,7 +10,8 @@ import { balances, c, config, removeAccount, rollTimings, room, team, throwaway 
 
 const restart = process.argv.includes('--restart');
 const missed = process.argv.includes('--missed');
-const tag = `rt${Date.now().toString(36).slice(-5)}`;
+// 'w' sorts into the contract's shard. Names from k to t land on the shard that was stuck when this was written.
+const tag = `wt${Date.now().toString(36).slice(-5)}`;
 const before = await balances([config.rootAccount, config.oracleAccount]);
 console.log('before', before);
 
