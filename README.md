@@ -217,11 +217,11 @@ Winnings are credited to balances inside the contract, not pushed out, so one ba
 
 ## Try it
 
-1. Get a testnet wallet. [Meteor Wallet](https://wallet.meteorwallet.app) runs in your browser. Choose testnet and create an account ending in `.testnet`. Then paste its name into the [NEAR faucet](https://docs.near.org/getting-started/faucet) for free test coins. The game shows these same steps under **No testnet wallet yet?**
+1. Get a testnet wallet. [Meteor Wallet](https://wallet.meteorwallet.app) runs in your browser. Choose testnet and create an account ending in `.testnet`. Then paste its name into the [NEAR faucet](https://docs.near.org/getting-started/faucet) for free test coins. The game shows these same steps under **No testnet wallet yet?** That faucet allows about 10 requests per connection every 12 hours, so a shared network can run out: the help says what to do then.
 2. Open https://dig.joundy.dev. See a short how-to-play. Tap through or skip it. You can watch any round and open **Verify this round** without a wallet.
 3. Press **Quick Play**, then **Connect NEAR wallet**, and approve the sign-in. This adds a limited key to your account, which can play but can't withdraw or touch NFTs.
 4. Choose how many coins to add, and approve that once. It pays this game's fee, and the rest stays in your game balance. The next games and every dig then need no popup.
-5. Wait a few seconds. See labelled bots join and the round start on clue 1, YOLO, at ×2.5.
+5. Wait a few seconds. See labelled bots join and the round start on clue 1, YOLO, at ×2.5. Or press **Host a game** instead: you join your own room with the same approval, bots arrive in seconds, and you press **Start now**.
 6. Tap the map, then press **Dig here**. See your X land at once, then "You'd win on N of N spots right now".
 7. Watch clues arrive, the bonus fall, and your winning spots change.
 8. When the timer ends, see the spots flash, the chest drop, the scores, and the pot split.
@@ -246,7 +246,8 @@ The contract builds in Docker: `docker/near cargo near build non-reproducible-wa
   - We see a roll's result before revealing it, so refusing to reveal is a free way to cancel a round we dislike. It's public, counted by the contract (`missed_reveals`) and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal.
   - Reveals don't currently wait for the lock to be final, so in theory a validator could drop the lock's block after seeing the link. `ORACLE_REVEAL_FINAL=1` closes this, for about 2 seconds more per roll.
   - A validator working together with us would know both seeds.
-- **A stolen browser key** can't withdraw or touch NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap.
+- **A stolen browser key** can't withdraw or touch NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap. Disconnecting offers to remove the key through the wallet. If you decline or the wallet refuses, it stays on the account, unusable by anyone since this browser has forgotten it, until you remove it in your wallet.
+- **The contract can't tell a deleted account from any other,** so one that scored stays on the season list and its prize stays parked under its name. The list marks them. Season 1 holds this game's own deleted test accounts: `server/tools/reclaim.ts` can recover those coins, because the names are ours.
 - **Scripts:** clues and landmarks are public, so a script can work out the exact spots that still fit.
 - **Multiple wallets:** one person can dig from several, and farm seasons, though every dig costs a fee. Rules alone can't prevent this.
 - **The contract deployer still holds a full-access key.** It should be removed before any real use.

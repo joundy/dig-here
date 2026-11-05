@@ -164,7 +164,7 @@
 {/snippet}
 
 <article class="detail {row.map}">
-  <a class="back" href="#/deeds">‹ All NFTs</a>
+  <a class="back" href="#/nfts">‹ All NFTs</a>
 
   <div class="top">
     <figure class="hero" class:won>
@@ -284,7 +284,7 @@
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         {#if note}<p class="note" role="status">{note}</p>{/if}
         {#if backend.marketClaim > 0 && !waiting}
-          <a class="held" href="#/deeds">The market is holding {near(backend.marketClaim)} for you. Collect it</a>
+          <a class="held" href="#/nfts">The market is holding {near(backend.marketClaim)} for you. Collect it</a>
         {/if}
       </div>
 
@@ -296,17 +296,17 @@
         <div>
           <dt>Chance</dt>
           <dd>{Math.round(chance * 100)}%</dd>
-          <p>{count} of the {LANDMARKS_PER_MAP} landmarks on this island</p>
+          <dd class="sub">{count} of the {LANDMARKS_PER_MAP} landmarks on this island</dd>
         </div>
         <div>
           <dt>Landings</dt>
           <dd>{deed.landings}</dd>
-          <p>times the treasure landed by one</p>
+          <dd class="sub">times the treasure landed by one</dd>
         </div>
         <div>
           <dt>Earned</dt>
           <dd>{near(deed.earned)}</dd>
-          <p>paid to its owners so far</p>
+          <dd class="sub">paid to its owners so far</dd>
         </div>
       </dl>
     </div>
@@ -349,7 +349,7 @@
         {#each siblings as other (other.id)}
           {@const sibling = backend.deedOf(other.id)}
           <li>
-            <a href="#/deeds/{other.id}" title={kindName(other.kind)}>
+            <a href="#/nfts/{other.id}" title={kindName(other.kind)}>
               <span class="thumb"><Sprite name={other.kind} scale={2} /></span>
               <span class="tiny">
                 {#if sibling.owner !== null && sibling.price !== null}{near(sibling.price)}{:else if sibling.owner === null}Mint{:else}Owned{/if}
@@ -608,14 +608,14 @@
     line-height: 1;
     color: var(--mist);
   }
-  .stats dd {
+  .stats dd:not(.sub) {
     margin: 0.1rem 0;
     font-family: var(--display);
-    font-size: 2.1rem;
+    font-size: clamp(1.4rem, 6.5vw, 2.1rem);
     line-height: 1;
     white-space: nowrap;
   }
-  .stats p {
+  .stats .sub {
     margin: 0;
     font-size: 1.05rem;
     line-height: 1.1;
@@ -743,10 +743,10 @@
     .price {
       font-size: 2.6rem;
     }
-    .stats p {
+    .stats .sub {
       display: none;
     }
-    .stats dd {
+    .stats dd:not(.sub) {
       font-size: 1.65rem;
     }
   }

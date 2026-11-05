@@ -32,9 +32,9 @@
         {@const row = parseDeedId(sale.id)}
         {#if row}
           <li>
-            <a class="thumb" href="#/deeds/{sale.id}" aria-label="See the {kindName(row.kind)} NFT"><Sprite name={row.kind} scale={2} /></a>
+            <a class="thumb" href="#/nfts/{sale.id}" aria-label="See the {kindName(row.kind)} NFT"><Sprite name={row.kind} scale={2} /></a>
             <div class="what">
-              <a href="#/deeds/{sale.id}">{kindName(row.kind).replace(/^./, (c) => c.toUpperCase())}</a>
+              <a href="#/nfts/{sale.id}">{kindName(row.kind).replace(/^./, (c) => c.toUpperCase())}</a>
               <span class="who">to <Who account={sale.to ?? ''} {me} you="you" link={false} /></span>
             </div>
             <div class="sum">

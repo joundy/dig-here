@@ -26,7 +26,8 @@
     if (game) return { name: 'game' as const, id: game[1], key: path };
     if (path === '/new') return { name: 'new' as const, id: '', key: path };
     // One key for the market and its NFTs, because the list has to still be there, as it was, on the way back.
-    const deed = path.match(/^\/deeds(?:\/(.+))?$/);
+    // `deeds` is what these pages were once called, and old links still work.
+    const deed = path.match(/^\/(?:nfts|deeds)(?:\/(.+))?$/);
     if (deed) return { name: 'deeds' as const, id: deed[1] ?? '', key: '/deeds' };
     if (path === '/season') return { name: 'season' as const, id: '', key: path };
     return { name: 'lobby' as const, id: '', key: '/' };
@@ -37,6 +38,21 @@
   const full = $derived(route.name === 'lobby' || route.name === 'season' || route.name === 'deeds');
 
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const SITE = 'Dig Here';
+  const title = $derived.by(() => {
+    if (route.name === 'game') {
+      const game = backend.games.find((g) => g.id === route.id);
+      return game ? `${game.name} | ${SITE}` : SITE;
+    }
+    if (route.name === 'new') return `Host a game | ${SITE}`;
+    if (route.name === 'season') return `Season ${backend.season.number} | ${SITE}`;
+    if (route.name === 'deeds') return `NFT market | ${SITE}`;
+    return `${SITE}: a treasure-digging game on NEAR testnet`;
+  });
+  $effect(() => {
+    document.title = title;
+  });
 
   // The Room tells the board what it needs. Other screens leave the island idle.
   let board = $state<{ pickable: boolean; spot: Point | null; label: string }>({ pickable: false, spot: null, label: 'Map of the island' });
@@ -83,6 +99,9 @@
 <div class="app" class:locked={ui.short || (ui.compact && inGame)}>
 <Header current={route.name} />
 <div class="tray"><DigTray /></div>
+{#if backend.lost}
+  <p class="lost" role="status">Can't reach the island right now, so this may be out of date. Trying again…</p>
+{/if}
 <main
   class="stage"
   class:compact={ui.compact}
@@ -122,3 +141,15 @@
 {#if ui.topUp}<TopUpDialog request={ui.topUp} />{/if}
 {#if backend.accountPrompt}<AccountDialog prompt={backend.accountPrompt} />{/if}
 {#if ui.tutorial}<Tutorial />{/if}
+
+<style>
+  .lost {
+    margin: 0 var(--px) 0.3rem;
+    padding: 0.25rem 0.6rem;
+    font-size: 1.2rem;
+    line-height: 1.15;
+    text-align: center;
+    color: var(--ink);
+    background: #ffc2d9;
+  }
+</style>

@@ -141,6 +141,7 @@ describe('the backend', () => {
   const listing = (seller: string, price = 1000n * YOCTO, id = 'snowy:penguin') => ({ token_id: id, seller, price: price.toString(), approval_id: 1, in_progress: false });
   const walletCalls: any[][] = [];
   const keySends: any[] = [];
+  const removedKeys: string[] = [];
   let sources: { emit: (data: unknown) => void }[] = [];
   const storage = new Map<string, string>();
   const WALLET = { kind: 'wallet', accountId: 'me.testnet' };
@@ -181,6 +182,11 @@ describe('the backend', () => {
         },
         connectWallet: () => signIn(),
         disconnectWallet: async (id: string) => { storage.delete(`access_key::plugin::testnet::${id}`); },
+        removeGameKey: async (id: string) => {
+          if (walletThrows) throw walletThrows;
+          removedKeys.push(id);
+          return storage.has(`access_key::plugin::testnet::${id}`);
+        },
       };
     });
     vi.doMock('../near/signer', () => ({
@@ -200,6 +206,7 @@ describe('the backend', () => {
   beforeEach(() => {
     walletCalls.length = 0;
     keySends.length = 0;
+    removedKeys.length = 0;
     keyAnswer = SUCCESS;
     walletAnswer = SUCCESS;
     views = {};
@@ -230,6 +237,68 @@ describe('the backend', () => {
     vi.unstubAllGlobals();
     vi.doUnmock('../near/wallet');
     vi.doUnmock('../near/signer');
+  });
+
+  it('takes the game key off the account through the wallet, and says so if the wallet refuses', async () => {
+    const backend = await load(WALLET, WITH_KEY);
+    expect(backend.hasGameKey).toBe(true);
+    expect(await backend.removeGameKey()).toBe(true);
+    expect(removedKeys).toEqual(['me.testnet']);
+    walletThrows = new Error('User rejected the request');
+    await expect(backend.removeGameKey()).rejects.toThrow(/said no/);
+  });
+
+  it('has no key to remove for a wallet that never added one, or nobody at all', async () => {
+    const backend = await load(WALLET);
+    expect(backend.hasGameKey).toBe(false);
+    expect(await backend.removeGameKey()).toBe(false);
+    const watcher = await load(null);
+    expect(await watcher.removeGameKey()).toBe(false);
+    expect(removedKeys).toEqual(['me.testnet']);
+  });
+
+  it('says it has lost touch only after a real silence, and takes it back with the next frame', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const backend = await load(null);
+    expect(backend.lost).toBe(false);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(backend.lost).toBe(true);
+    sources[0].emit(frame(null, 3));
+    expect(backend.lost).toBe(false);
+    expect(backend.ready).toBe(true);
+  });
+
+  it('marks an account gone only when a node says so, not when nodes cannot be reached', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: { body?: string }) => {
+      const id = init?.body ? JSON.parse(init.body).params?.account_id : null;
+      if (id === 'flaky.testnet') throw new TypeError('Failed to fetch');
+      if (id === 'gone.testnet') return new Response(JSON.stringify({ jsonrpc: '2.0', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' }, data: 'nope' } }));
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: { amount: '0', storage_usage: 100, result: [...new TextEncoder().encode('null')] } }));
+    }));
+    const backend = await load(null);
+    for (const id of ['gone.testnet', 'here.testnet', 'flaky.testnet']) expect(backend.accountGone(id)).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(backend.accountGone('gone.testnet')).toBe(true);
+    expect(backend.accountGone('here.testnet')).toBe(false);
+    expect(backend.accountGone('flaky.testnet')).toBe(false);
+  });
+
+  it('asks the faucet contract once an hour, through the wallet, for the player themselves', async () => {
+    views[`${CHAIN}.get_account`] = { balance: '0' };
+    const fetchOk = vi.fn(async (_url: string, init?: { body?: string }) => {
+      const params = init?.body ? JSON.parse(init.body).params : null;
+      const answer = params?.method_name ? views[`${params.account_id}.${params.method_name}`] ?? null : null;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', result: { amount: (100n * YOCTO).toString(), storage_usage: 100, result: [...new TextEncoder().encode(JSON.stringify(answer))] } }));
+    });
+    vi.stubGlobal('fetch', fetchOk);
+    const backend = await load(WALLET);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(backend.canAskFaucet).toBe(true);
+    await backend.askFaucet();
+    const [account, method, args, , deposit, receiver] = walletCalls[0];
+    expect([account, method, deposit, receiver]).toEqual(['me.testnet', 'request_near', '0', 'v2.faucet.nonofficial.testnet']);
+    expect(args.receiver_id).toBe('me.testnet');
+    expect(backend.canAskFaucet).toBe(false);
   });
 
   it('buys through the market with the exact price attached, and never through a browser key', async () => {

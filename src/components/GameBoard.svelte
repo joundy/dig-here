@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Coming back from a room lands where you left off, because the board is rebuilt on the way.
+  const remembered: { tab: 'waiting' | 'live' | 'finished'; page: number } = { tab: 'waiting', page: 0 };
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte';
   import { flip } from 'svelte/animate';
@@ -10,6 +15,7 @@
   import { MAP_IDS } from '../lib/game/map';
   import type { MapId } from '../lib/game/types';
   import { attachFor } from '../lib/pay';
+  import { tabArrows } from '../lib/tabs';
   import { ui } from '../lib/ui.svelte';
   import GameCard from './GameCard.svelte';
   import JackpotBadge from './JackpotBadge.svelte';
@@ -33,12 +39,12 @@
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const hosts = (account: string) => backend.hostRecord(account);
 
-  let tab = $state<BoardTab>('waiting');
+  let tab = $state<BoardTab>(remembered.tab);
   let sort = $state<SortId>('best');
   let map = $state<MapId | 'all'>('all');
   let maxFee = $state<number | null>(null);
   let hideFull = $state(false);
-  let page = $state(0);
+  let page = $state(remembered.page);
   let rerank = $state(0);
   let busy = $state(false);
   let error = $state('');
@@ -53,6 +59,11 @@
     return untrack(() => boardView(backend.games, options, hosts));
   });
   const numbered = $derived(view.pages <= (compact ? 5 : 9));
+
+  $effect(() => {
+    remembered.tab = tab;
+    remembered.page = page;
+  });
 
   $effect(() => {
     const timer = setInterval(() => rerank++, RERANK_MS);
@@ -79,8 +90,8 @@
       const balance = backend.balanceOf(me);
       // Short of coins, it picks something the wallet could pay for before anything dearer.
       const room = quickPlayRoom(backend.games, balance, me, hosts)
-        ?? quickPlayRoom(backend.games, backend.walletOf(me), me, hosts)
-        ?? quickPlayRoom(backend.games, Infinity, me, hosts);
+        ?? quickPlayRoom(backend.games, backend.walletOf(me), me, hosts, true)
+        ?? quickPlayRoom(backend.games, Infinity, me, hosts, true);
       if (!room) {
         error = 'No room left to join. Host one!';
         return;
@@ -99,19 +110,26 @@
 </script>
 
 <section class="panel board">
+  <h1 class="sr-only">Dig Here: open games</h1>
+  {#if backend.identity.kind === 'none'}
+    <p class="pitch">
+      One dig each on the same island. <b>The treasure doesn't exist until the timer ends</b>, and the best dig takes the pot.
+      <button class="how" onclick={() => (ui.tutorial = true)}>How it works</button>
+    </p>
+  {/if}
   <div class="actions">
     <button class="btn" disabled={busy} onclick={quickPlay}>{busy ? 'Finding a hole…' : 'Quick Play'}</button>
     <a class="btn alt" href="#/new">Host a game</a>
     <div class="jackpot"><JackpotBadge compact={compact || ui.short} /></div>
     <div class="links">
-      <a href="#/deeds">NFTs</a>
+      <a href="#/nfts">NFTs</a>
       <a href="#/season">Season</a>
     </div>
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  {#if backend.offline}<p class="offline" role="status">The game server is away, so this is coming straight from the chain.</p>{/if}
+  {#if backend.offline && !backend.lost && backend.ready}<p class="offline" role="status">The game server is away, so this is coming straight from the chain.</p>{/if}
 
-  <div class="tabs" role="tablist" aria-label="Games by stage">
+  <div class="tabs" role="tablist" aria-label="Games by stage" tabindex="-1" onkeydown={tabArrows}>
     {#each TABS as item}
       <button role="tab" aria-selected={tab === item.id} class:on={tab === item.id} onclick={() => { tab = item.id; firstPage(); }}>
         {item.label} <span class="count">{view.counts[item.id]}</span>
@@ -151,7 +169,9 @@
     </label>
   </div>
 
-  {#if view.rooms.length}
+  {#if !backend.ready}
+    <div class="empty" aria-busy="true"><p>Rowing out to the island…</p></div>
+  {:else if view.rooms.length}
     <ul class="cards" class:compact>
       {#each view.rooms as game (game.id)}
         <li animate:flip={{ duration: calm ? 0 : 240 }}><GameCard {game} /></li>
@@ -184,6 +204,26 @@
 </section>
 
 <style>
+  .pitch {
+    margin: 0;
+    font-size: 1.3rem;
+    line-height: 1.15;
+    color: var(--mist);
+  }
+  .pitch b {
+    font-weight: 400;
+    color: var(--foam);
+  }
+  .how {
+    padding: 0.2rem 0;
+    font: inherit;
+    color: var(--sun);
+    text-decoration: underline;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    white-space: nowrap;
+  }
   .offline {
     margin: 0;
     font-size: 1.15rem;
@@ -378,12 +418,13 @@
       gap: 0.3rem;
     }
     .filters .select {
+      height: 2.75rem;
       padding: 0 0 0 0.25rem;
       font-size: 1.1rem;
     }
     .check {
       grid-column: 1 / -1;
-      min-height: 1.75rem;
+      min-height: 2.25rem;
     }
     .board {
       gap: 0.45rem;

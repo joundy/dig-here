@@ -21,13 +21,13 @@
   const amount = (milli: number) => near(milli).replace(' NEAR', '');
 </script>
 
-<a class="card {row.map}" class:mine href="#/deeds/{row.id}" onclick={onopen}>
+<a class="card {row.map}" class:mine href="#/nfts/{row.id}" onclick={onopen}>
   <div class="frame">
     <DeedArt map={row.map} kind={row.kind} {scale} alt="{title}, {mapName(row.map)}" />
     {#if mine}<span class="tag">{listed ? 'Your listing' : 'Yours'}</span>{/if}
   </div>
   <div class="info">
-    <h3>{title}</h3>
+    <h2>{title}</h2>
     <p class="facts">
       <span class="set">{mapName(row.map).split(' ')[0]}</span>
       <span title="Roughly how often the treasure lands by this kind">{chance}%{' '}<span class="word">chance</span></span>
@@ -100,7 +100,7 @@
     padding: 0.35rem 0.5rem 0.5rem;
     border-top: var(--frame) solid var(--ink);
   }
-  h3 {
+  h2 {
     margin: 0;
     min-width: 0;
     font-family: var(--display);

@@ -23,6 +23,15 @@ export function spendable(account: { amount: string; storage_usage: number }): n
   return free > 0n ? Number(free / YOCTO_PER_MILLI) : 0;
 }
 
+/** What it takes to call the faucet contract: 30 Tgas is bought up front at about 0.03 NEAR, most of it refunded. */
+const FAUCET_MIN_WALLET_MILLI = 35;
+const FAUCET_GAP_MS = 3_600_000;
+
+/** Its contract only pays plain names like `you.testnet`, and asks for an hour between requests. */
+export function faucetAllows(account: string, walletMilli: number, askedAtMs: number, nowMs: number): boolean {
+  return /^[^.]+\.testnet$/.test(account) && walletMilli >= FAUCET_MIN_WALLET_MILLI && nowMs - askedAtMs >= FAUCET_GAP_MS;
+}
+
 export type TopUpChoice = { extra: number; rounds: number; total: number; left: number };
 export type TopUpPlan = { short: number; setup: number; choices: TopUpChoice[]; picked: number };
 

@@ -82,9 +82,11 @@
   });
 
   const deedLine = $derived.by(() => {
-    if (!result.deedOwner) return `Nobody has minted the ${kind} NFT yet, so the share went to the jackpot.`;
-    if (result.deedOwner === me) return `You own the ${kind} NFT, so you earned ${near(result.split.deed)}.`;
-    return `${shortName(result.deedOwner)} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
+    if (!result.deedOwner) return `Nobody has minted the ${kind} NFT yet, so its share went to the jackpot.`;
+    const owner = result.deedOwner === me ? 'You own' : `${shortName(result.deedOwner)} owns`;
+    // Shares are whole milliNEAR, so a small pot can leave nothing to pass on.
+    if (!result.split.deed) return `${owner} the ${kind} NFT, but this pot was too small for its 2% to come to anything.`;
+    return result.deedOwner === me ? `You own the ${kind} NFT, so you earned ${near(result.split.deed)}.` : `${owner} the ${kind} NFT and earned ${near(result.split.deed)}.`;
   });
 
   const refundLine = $derived(
@@ -143,8 +145,10 @@
     {#if myPoints}<p class="line points">You earned {myPoints} season points.</p>{/if}
   {/if}
 
-  {#if backend.testnet}<button class="verify-link" onclick={() => (verifying = true)}>Verify this round</button>{/if}
-  <a class="btn" href="#/">Find another game</a>
+  <div class="after">
+    {#if backend.testnet}<button class="btn alt" onclick={() => (verifying = true)}>Verify this round</button>{/if}
+    <a class="btn" href="#/">Find another game</a>
+  </div>
 </div>
 
 {#if verifying}<VerifyRound gameId={game.id} onclose={() => (verifying = false)} />{/if}
@@ -158,17 +162,22 @@
 {/if}
 
 <style>
-  .verify-link {
-    justify-self: center;
-    padding: 0.4rem 0.6rem;
-    font: inherit;
-    font-size: 1.25rem;
-    line-height: 1.1;
-    color: var(--sun);
-    text-decoration: underline;
-    background: none;
-    border: 0;
-    cursor: pointer;
+  /* Stays on screen however long the table runs, because proving the round is half the point of this game. */
+  .after {
+    position: sticky;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+    padding: 0.35rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
+    background: var(--ink);
+  }
+  .after :global(.btn) {
+    padding-left: 0.2rem;
+    padding-right: 0.2rem;
+    font-size: 1.45rem;
+    line-height: 1.05;
   }
   table {
     width: 100%;
@@ -188,6 +197,13 @@
   td {
     padding: 0.14rem 0;
     overflow-wrap: anywhere;
+  }
+  td:first-child {
+    max-width: 0;
+    width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   tbody tr {
     opacity: 0;
@@ -218,11 +234,6 @@
   }
   .win.me td {
     color: var(--sun);
-  }
-  .results :global(.btn) {
-    position: sticky;
-    bottom: 0;
-    margin-top: 0.75rem;
   }
   .split {
     margin: 0 0 0.5rem;

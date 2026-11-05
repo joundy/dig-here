@@ -391,7 +391,7 @@
   }
   .hint {
     margin: 0.25rem 0 0;
-    color: var(--mist);
+    color: var(--foam);
     font-size: 1.15rem;
     line-height: 1.1;
   }

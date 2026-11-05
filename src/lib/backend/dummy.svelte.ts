@@ -135,6 +135,12 @@ class DummyBackend implements GameBackend, PlaytestControls {
   clueArriving() { return false; }
   refreshBalances() {}
   async disconnectWallet() {}
+  readonly hasGameKey = false;
+  async removeGameKey() { return false; }
+  accountGone() { return false; }
+  readonly canAskFaucet = false;
+  async askFaucet() {}
+  readonly lost = false;
   reloadDeeds() {}
   refreshDeeds() {}
   readonly walletKnown = true;

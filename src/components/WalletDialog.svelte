@@ -4,9 +4,13 @@
   import { near } from '../lib/format';
   import { shortName } from '../lib/names';
   import { explorer } from '../lib/near/config';
+  import { tabArrows } from '../lib/tabs';
   import { ui } from '../lib/ui.svelte';
   import Sprite from './Sprite.svelte';
+  import WalletHelp from './WalletHelp.svelte';
 
+  /** A move's gas is bought at ten times its burn price, so a wallet needs some spare to do anything. */
+  const GAS_ROOM = 20;
   const need = ui.wallet?.need ?? null;
   const quick = backend.prices.walletAmounts;
   const controls = backend.playtest;
@@ -53,6 +57,17 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     error = note = '';
+    // Plain words now, rather than a wallet window or a contract refusal a moment later.
+    if (mode === 'deposit' && onChain && backend.walletKnown && milli > wallet - GAS_ROOM) {
+      error = `Your wallet has ${near(wallet)}, and needs a little left over for gas. Try a smaller amount.`;
+      audio.error();
+      return;
+    }
+    if (mode === 'withdraw' && onChain && milli > backend.balanceOf(backend.account)) {
+      error = `Your game balance is ${near(backend.balanceOf(backend.account))}, so you can withdraw up to that.`;
+      audio.error();
+      return;
+    }
     busy = true;
     try {
       if (mode === 'deposit') {
@@ -74,10 +89,32 @@
     }
   }
 
-  async function disconnect() {
+  /** Asking first, because taking the key off the account costs a wallet window that not everyone wants. */
+  let leaving = $state<'ask' | 'working' | 'done' | null>(null);
+  let keyIs = $state<'removed' | 'left' | 'none'>('none');
+  let walletRefused = $state(false);
+  let needCoins = $state(false);
+
+  function startLeaving() {
+    if (backend.hasGameKey) leaving = 'ask';
+    else void disconnect(false);
+  }
+
+  async function disconnect(removeKey: boolean) {
     error = note = '';
-    await backend.disconnectWallet();
-    close();
+    keyIs = backend.hasGameKey ? 'left' : 'none';
+    leaving = 'working';
+    busy = removeKey;
+    if (removeKey) {
+      try {
+        if (await backend.removeGameKey()) keyIs = 'removed';
+      } catch {
+        walletRefused = true;
+      }
+    }
+    busy = false;
+    await backend.disconnectWallet().catch(() => undefined);
+    leaving = 'done';
   }
 </script>
 
@@ -96,6 +133,20 @@
       <button class="x" aria-label="Close" onclick={close}>×</button>
     </div>
 
+    {#if leaving === 'done'}
+      <p class="note" role="status">You've disconnected, and this browser has forgotten the game's key.</p>
+      {#if keyIs === 'left'}
+        <p class="hint">
+          {walletRefused ? "Your wallet didn't remove the key, so it's" : 'The key is'} still listed on your account. It can only play this game: it can't withdraw, touch NFTs or spend your wallet's coins, and nobody holds a copy of it now.
+          To remove it, look under your wallet's security or access key settings. Your game balance stays yours, ready for next time.
+        </p>
+      {:else if keyIs === 'removed'}
+        <p class="hint">The key is off your account too. Your game balance stays yours, ready for next time.</p>
+      {:else}
+        <p class="hint">Your game balance stays yours, ready for next time.</p>
+      {/if}
+      <button class="btn" onclick={close}>Close</button>
+    {:else}
     {#if backend.testnet}
       <p class="testnet">NEAR testnet. These are test coins with no real value.</p>
     {/if}
@@ -122,7 +173,7 @@
       <p class="need">You need {near(need)} more for that.</p>
     {/if}
 
-    <div class="modes" role="tablist">
+    <div class="modes" role="tablist" aria-label="Move coins" tabindex="-1" onkeydown={tabArrows}>
       <button type="button" role="tab" aria-selected={mode === 'deposit'} class:on={mode === 'deposit'} onclick={() => switchMode('deposit')}>Top up</button>
       <button type="button" role="tab" aria-selected={mode === 'withdraw'} class:on={mode === 'withdraw'} onclick={() => switchMode('withdraw')}>Withdraw</button>
     </div>
@@ -151,8 +202,22 @@
       </button>
     </form>
 
+    {#if onChain && backend.walletKnown && mode === 'deposit'}
+      <button class="plain-link" aria-expanded={needCoins} onclick={() => (needCoins = !needCoins)}>{needCoins ? 'Hide' : 'Need test coins?'}</button>
+      {#if needCoins}<WalletHelp coinsOnly />{/if}
+    {/if}
+
     {#if onChain}
-      <button class="plain-link" onclick={disconnect}>Disconnect this wallet</button>
+      {#if leaving === 'ask'}
+        <div class="leave" role="group" aria-label="Disconnect">
+          <p>Sign-in added a limited key to your account so digs need no popup. Remove it too? Your wallet will ask once.</p>
+          <button class="btn alt" disabled={busy} onclick={() => disconnect(true)}>Remove the key and disconnect</button>
+          <button class="plain-link" disabled={busy} onclick={() => disconnect(false)}>Disconnect, and leave the key</button>
+          <button class="plain-link" disabled={busy} onclick={() => (leaving = null)}>Stay connected</button>
+        </div>
+      {:else}
+        <button class="plain-link" onclick={startLeaving}>Disconnect this wallet</button>
+      {/if}
     {/if}
 
     {#if controls}
@@ -164,6 +229,7 @@
           {/each}
         </select>
       </label>
+    {/if}
     {/if}
   </div>
 </dialog>
@@ -221,6 +287,17 @@
   }
   .who a {
     color: var(--foam);
+  }
+  .leave {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--deep);
+  }
+  .leave p {
+    margin: 0;
+    font-size: 1.2rem;
+    line-height: 1.15;
   }
   .plain-link {
     justify-self: center;

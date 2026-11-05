@@ -4,7 +4,7 @@
 export type WalletSession = { kind: 'wallet'; accountId: string };
 export type Session = WalletSession;
 
-const SESSION_KEY = 'dig-here-near-session';
+export const SESSION_KEY = 'dig-here-near-session';
 // Left by the guest accounts this game used to make. The accounts are gone, so their keys are of no use to anyone.
 const OLD_GUEST_KEYS = ['dig-here-near-guest', 'dig-here-near-choice'];
 const walletKeyName = (accountId: string) => `access_key::plugin::testnet::${accountId}`;
@@ -46,3 +46,12 @@ export function walletKey(accountId: string): { secretKey: string } | null {
 
 /** The plugin clears this on a clean sign-out, but a wallet that fails to answer mustn't leave a spending key behind. */
 export const forgetWalletKey = (accountId: string) => saveJson(walletKeyName(accountId), null);
+
+const FAUCET_ASKED_KEY = 'dig-here-faucet-asked';
+
+/** When this browser last asked the public faucet contract for coins, in ms. Its published rule is once an hour. */
+export function faucetAskedAt(): number {
+  return loadJson<number>(FAUCET_ASKED_KEY) ?? 0;
+}
+
+export const noteFaucetAsked = (atMs: number) => saveJson(FAUCET_ASKED_KEY, atMs);

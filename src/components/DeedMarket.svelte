@@ -10,6 +10,7 @@
   import type { Kind, MapId } from '../lib/game/types';
   import { ALL_DEEDS, DEFAULT_SORT, islandStats, marketRows, parseDeedId, SORTS, tabCounts } from '../lib/market';
   import type { DeedRow, MarketSort, MarketTab } from '../lib/market';
+  import { tabArrows } from '../lib/tabs';
   import { ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
   import DeedCard from './DeedCard.svelte';
@@ -123,7 +124,7 @@
         <Sprite name="parrot" scale={4} />
         <h2>There's no such NFT</h2>
         <p>That link doesn't match any landmark on our islands.</p>
-        <a class="btn alt small" href="#/deeds">See all NFTs</a>
+        <a class="btn alt small" href="#/nfts">See all NFTs</a>
       </div>
     {/if}
   {:else}
@@ -136,9 +137,10 @@
         </select>
       </label>
       <p>Own a landmark and earn {percent(RULES.deedBps)} of the pot whenever the treasure lands by one.</p>
+      {#if ui.compact || ui.short}<a class="home" href="#/">Back to games</a>{/if}
     </header>
 
-    <div class="tabs" role="tablist" aria-label="NFTs">
+    <div class="tabs" role="tablist" aria-label="NFTs" tabindex="-1" onkeydown={tabArrows}>
       {#each TABS as item}
         <button role="tab" aria-selected={tab === item.id} class:on={tab === item.id} onclick={() => chooseTab(item.id)}>
           {item.label} {#if backend.deedsReady && (item.id !== 'mine' || me)}<span class="count">{counts[item.id]}</span>{/if}
@@ -228,7 +230,7 @@
         {/if}
       </div>
 
-      <aside class="side"><DeedNews /></aside>
+      <section class="side" aria-label="Recent sales"><DeedNews /></section>
     </div>
   {/if}
 </section>
@@ -252,6 +254,11 @@
     align-items: center;
     gap: 0.25rem 1rem;
     margin-bottom: 0.6rem;
+  }
+  .home {
+    grid-column: 1 / -1;
+    padding: 0.25rem 0;
+    font-size: 1.2rem;
   }
   .head .sort {
     grid-column: 3;
@@ -308,6 +315,7 @@
   }
   .islands {
     display: flex;
+    flex-wrap: wrap;
     flex: 1 1 auto;
     gap: 0.2rem;
     min-width: 0;

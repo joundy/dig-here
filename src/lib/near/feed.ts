@@ -74,6 +74,11 @@ export class LiveFeed {
     await this.#poll();
   }
 
+  /** A phone waking up: its stream may have died quietly, and five seconds is a long look at an old screen. */
+  wake(): void {
+    void this.#probe();
+  }
+
   #setMode(mode: FeedMode) {
     if (mode === this.#mode) return;
     this.#mode = mode;

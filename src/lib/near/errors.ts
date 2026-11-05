@@ -51,5 +51,7 @@ export function plainError(raw: string): string {
   if (/closed|didn't complete|cancel|Failed to sign in/i.test(raw)) return 'The wallet window closed before it finished. Nothing happened, so try again when you\'re ready.';
   if (/reject|declin|denied/i.test(raw)) return 'Your wallet said no, so nothing happened. Try again when you\'re ready.';
   if (/Failed to fetch|NetworkError|Load failed|TimeoutError|aborted|BUSY|RPC answered/i.test(raw)) return "Can't reach the island right now. Check your connection and try again.";
+  // Worth finding in a report: the player only gets the line below.
+  console.warn('Unrecognised error:', raw);
   return 'Something went wrong on the way there. Your coins are safe, so try again.';
 }

@@ -7,8 +7,8 @@
   import Sprite from './Sprite.svelte';
 
   const CARDS = [
+    { title: 'Dig for treasure', text: "Everyone gets one dig on the same island. The treasure doesn't exist until the timer ends, so nobody can know where it is. The best dig takes the pot." },
     { title: 'Read the clues', text: 'The first clue is nothing: YOLO, for the biggest bonus. Three more follow, and each one narrows it down.' },
-    { title: 'Mark your spot', text: 'Put your X on land. You get one dig per round.' },
     { title: 'Dig early or wait', text: 'Score = closeness × bonus, and the bonus drops with each clue. 90 close at ×1.5 beats a perfect dig at ×1. Don\'t dig right next to someone else.' },
     { title: 'The treasure appears', text: 'Only when the timer ends. Highest score wins the pot. The exact pixel wins the jackpot.' },
     { title: 'Bring a testnet wallet', text: 'Watching is free. To dig, connect a NEAR testnet wallet: one approval to sign in, one to add coins when you join, then no more popups. Wallet and coins are free, and the game shows you how.' },
@@ -91,15 +91,16 @@
 
     <div class="show" aria-hidden="true">
       {#if card === 0}
+        <span class="x">X</span>
+        <Sprite name="shovel" scale={4} />
+        <Sprite name="chest" scale={3} />
+      {:else if card === 1}
         <div class="face"><Sprite name="parrot" scale={3} /></div>
         <div class="trail">
           {#each RULES.clueSchedule as stop, i}
             <span class="stop" class:yolo={i === 0}>{i === 0 ? 'YOLO' : `Clue ${i + 1}`}<b>{bonus(stop.bonusBps)}</b></span>
           {/each}
         </div>
-      {:else if card === 1}
-        <span class="x">X</span>
-        <Sprite name="shovel" scale={4} />
       {:else if card === 2}
         <div class="sums">
           <span class="sum win">90 × 1.5 = 135</span>

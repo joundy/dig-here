@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { rollLayout, rosterOf, spotsOf } from '../game/map';
 import { fromBase58ToHex } from '../base58';
 import { sha256, streamRng, toHex } from '../game/random';
+import { faucetAllows } from './choices';
 import { ChainClock } from './clock';
 import { isMissingKey, panicMessage, plainError } from './errors';
 import { LiveFeed } from './feed';
@@ -12,6 +13,17 @@ import type { LiveState } from './rooms';
 import { sendReliably, STOP_WAITING_MS } from './send';
 import type { SendDeps } from './send';
 import { RpcError } from './rpc';
+
+describe('faucet help', () => {
+  const HOUR = 3_600_000;
+  it('only offers it to a plain testnet name with gas for the call, an hour apart', () => {
+    expect(faucetAllows('you.testnet', 40, 0, HOUR)).toBe(true);
+    expect(faucetAllows('sub.you.testnet', 40, 0, HOUR)).toBe(false);
+    expect(faucetAllows('', 40, 0, HOUR)).toBe(false);
+    expect(faucetAllows('you.testnet', 10, 0, HOUR)).toBe(false);
+    expect(faucetAllows('you.testnet', 40, HOUR, HOUR + 1000)).toBe(false);
+  });
+});
 
 describe('rooms', () => {
   it('expands compact landmarks into what the layout roll makes', () => {

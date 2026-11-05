@@ -18,6 +18,13 @@ export const ARCHIVE_HOSTS = ARCHIVE_URLS.map((url) => new URL(url).host);
 export const WALLET_URL = 'https://wallet.meteorwallet.app';
 export const WALLET_LIST_URL = 'https://wallet.near.org';
 export const FAUCET_URL = 'https://docs.near.org/getting-started/faucet';
+/** Where NEAR's faucet page itself sends people when it isn't working. */
+export const NEAR_HELP_URL = 'https://t.me/neardev';
+/** The public contract behind near-faucet.io, whose page didn't deliver when tried on 2026-11-05. Holds about 988 NEAR. */
+export const FAUCET_CONTRACT = 'v2.faucet.nonofficial.testnet';
+/** It refuses more than 2 NEAR a call, and any receiver with a dot before `.testnet`. */
+export const FAUCET_YOCTO = (2n * 10n ** 24n).toString();
+export const FAUCET_GAS_TGAS = 30;
 
 const EXPLORER = 'https://testnet.nearblocks.io';
 export const explorer = {

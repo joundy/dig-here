@@ -60,6 +60,8 @@ export interface GameBackend {
   readonly testnet: boolean;
   /** Reading straight from the chain, because the backend went quiet. */
   readonly offline: boolean;
+  /** Neither the backend nor the chain has answered for a while, so what's on screen is out of date. */
+  readonly lost: boolean;
   /** Asks a watcher to connect a wallet, while it's waiting for an answer. */
   readonly accountPrompt: AccountPrompt | null;
   /** The clock the rules run on. Screens must not count down from the local clock. */
@@ -71,8 +73,18 @@ export interface GameBackend {
   /** Everything needed to recheck a round, or null if nobody has it. Throws if nodes can't be reached to say. */
   proofOf(id: string): Promise<RoundProof | null>;
   refreshBalances(): void;
-  /** Leaves the wallet and goes back to watching. */
+  /** Leaves the wallet and goes back to watching. The game's key stays on the account unless `removeGameKey` ran first. */
   disconnectWallet(): Promise<void>;
+  /** This browser holds the game's limited key, so moves can go through with no popup. */
+  readonly hasGameKey: boolean;
+  /** Asks the wallet to take the game's limited key off the account. False if there's no key here to remove. */
+  removeGameKey(): Promise<boolean>;
+  /** True once an account has been looked up and doesn't exist any more. False while nobody can say. */
+  accountGone(account: string): boolean;
+  /** Whether this wallet can ask the public faucet contract for coins right now. */
+  readonly canAskFaucet: boolean;
+  /** Asks the public faucet contract for coins, through the wallet. */
+  askFaucet(): Promise<void>;
   /** False until the first read of who owns what has come back, or if it never has. */
   readonly deedsReady: boolean;
   /** Why the market can't be read right now, in words for the player. Empty when all is well. */

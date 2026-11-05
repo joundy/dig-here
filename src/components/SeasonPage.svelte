@@ -21,6 +21,9 @@
   const rank = $derived(ranking.findIndex((row) => row.account === me) + 1);
   const top = $derived(ranking.slice(0, TOP).map((row, i) => ({ ...row, place: i + 1 })));
   const prizes = $derived(RULES.seasonPrizeBps.map((bps) => Math.floor((season.pool * bps) / 10000)));
+  const closing = $derived(backend.ready && season.endsAt > 0 && now >= season.endsAt);
+  /** The contract can't tell a deleted account from any other, so its list and its prizes still count them. */
+  const goneInPrizes = $derived(top.slice(0, RULES.seasonPrizeBps.length).filter((row) => backend.accountGone(row.account)).length);
   const [first, second, third] = RULES.seasonPointsPerNear;
 </script>
 
@@ -33,11 +36,11 @@
   <div class="stats">
     <div class="stat pool">
       <span class="label">Prize pool</span>
-      <span class="value big"><Sprite name="coin" scale={4} /> {near(season.pool)}</span>
+      <span class="value big"><Sprite name="coin" scale={4} /> {backend.ready ? near(season.pool) : '…'}</span>
     </div>
     <div class="stat">
       <span class="label">Time left</span>
-      <span class="value">{longTime((season.endsAt - now) / 1000)}</span>
+      <span class="value">{#if !backend.ready}…{:else if closing}Paying prizes…{:else}{longTime((season.endsAt - now) / 1000)}{/if}</span>
     </div>
     <div class="stat">
       <span class="label">Your rank</span>
@@ -47,7 +50,7 @@
 
   <ol class="prizes">
     {#each prizes as prize, i}
-      <li><span class="label">{PLACES[i]}</span> <span class="amount">{near(prize)}</span></li>
+      <li><span class="label">{PLACES[i]}</span> <span class="amount">{backend.ready ? near(prize) : '…'}</span></li>
     {/each}
   </ol>
 
@@ -65,7 +68,7 @@
             {#each top as row (row.account)}
               <tr class:me={row.account === me}>
                 <td class="place">{row.place}</td>
-                <td class="player"><Who account={row.account} {me} /></td>
+                <td class="player" class:gone={backend.accountGone(row.account)}><span class="name"><Who account={row.account} {me} /></span>{#if backend.accountGone(row.account)}<span class="gone-tag" title="This account has been deleted since it scored.">deleted</span>{/if}</td>
                 <td class="points">{row.points}</td>
               </tr>
             {/each}
@@ -78,6 +81,11 @@
             {/if}
           </tbody>
         </table>
+        {#if goneInPrizes}
+          <p class="gone-note">Deleted accounts were this game's test players. The contract can't see that an account has gone, so it still ranks them and parks their prize under their name when the season closes.</p>
+        {/if}
+      {:else if !backend.ready}
+        <p class="empty">Rowing out to the island…</p>
       {:else}
         <p class="empty">Nobody has scored yet. The podium is lonely.</p>
       {/if}
@@ -90,7 +98,7 @@
           {#each season.lastWinners as winner, i}
             <li class:me={winner.account === me}>
               <span class="label">{PLACES[i]}</span>
-              <span class="player"><Who account={winner.account} {me} /></span>
+              <span class="player" class:gone={backend.accountGone(winner.account)}><Who account={winner.account} {me} />{#if backend.accountGone(winner.account)}<span class="gone-tag">deleted</span>{/if}</span>
               <span class="amount">{near(winner.prize)}</span>
             </li>
           {/each}
@@ -101,8 +109,35 @@
 </section>
 
 <style>
+  .gone :global(a) {
+    text-decoration-line: line-through;
+  }
+  td.gone {
+    display: flex;
+    align-items: baseline;
+  }
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gone-tag {
+    flex: none;
+    margin-left: 0.3rem;
+    padding: 0 0.2rem;
+    font-size: 0.85em;
+    color: var(--ink);
+    background: #ffc2d9;
+  }
+  .gone-note {
+    margin: 0.4rem 0 0;
+    font-size: 1.15rem;
+    line-height: 1.15;
+    color: var(--mist);
+  }
   .season {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.75rem;
   }
   header {
@@ -132,7 +167,7 @@
   }
   .stats {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: 0.4rem;
   }
   .stat {
@@ -163,7 +198,7 @@
   }
   .prizes {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.4rem;
     margin: 0;
     padding: 0;
@@ -190,6 +225,7 @@
   }
   .columns {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
   }
   .columns.both {
@@ -262,7 +298,7 @@
   }
   @media (max-width: 760px) {
     .stats {
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     }
     .pool {
       grid-column: 1 / -1;

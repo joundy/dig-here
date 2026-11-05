@@ -7,8 +7,8 @@ import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Dig, Game, NewGameInput, Point } from '../game/types';
 import { ChainClock } from '../near/clock';
-import { botLimitsFrom, RECORD_MILLI, spendable } from '../near/choices';
-import { APPROVE_DEPOSIT, CONTRACT, FEE_CHOICES, GAS_TGAS, MARKET } from '../near/config';
+import { botLimitsFrom, faucetAllows, RECORD_MILLI, spendable } from '../near/choices';
+import { APPROVE_DEPOSIT, CONTRACT, FAUCET_CONTRACT, FAUCET_GAS_TGAS, FAUCET_YOCTO, FEE_CHOICES, GAS_TGAS, MARKET } from '../near/config';
 import { CLUE_REFUSAL } from '../digButton';
 import { activityOf, deedsFrom } from '../near/deeds';
 import type { ActivityRow, ListingRow, MarketFrame, NftRow } from '../near/deeds';
@@ -20,7 +20,7 @@ import type { Outcome } from '../near/outcome';
 import { clocksOf, digsOf, displayName, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
 import type { ChainRoom, FinishedSummary, LiveState } from '../near/rooms';
 import { isGoneRoom, marketView, RpcError, view, viewAccount } from '../near/rpc';
-import { loadSession, saveSession, walletKey } from '../near/session';
+import { faucetAskedAt, loadSession, noteFaucetAsked, saveSession, SESSION_KEY, walletKey } from '../near/session';
 import type { Session } from '../near/session';
 import type { Call, KeySender } from '../near/signer';
 import type { ProofEvent, RoundProof, TxLink } from '../verifyChain';
@@ -53,6 +53,10 @@ const POKE_GAP_MS = 15_000;
 /** Long enough for the reveal that normally follows within 4 s, if no frame has told us otherwise by then. */
 const CLUE_HINT_MS = 6000;
 const HEALTH_MS = 60_000;
+/** Frames can stop for a moment without anyone needing to know. Past this the numbers on screen could mislead. */
+const LOST_AFTER_MS = 15_000;
+/** Without this a first load that never gets an answer would just show an empty game. */
+const LOST_FIRST_LOAD_MS = 8000;
 
 const YOCTO_PER_MILLI = 10n ** 21n;
 const toMilli = (yocto: string | bigint) => Number(BigInt(yocto) / YOCTO_PER_MILLI);
@@ -91,6 +95,7 @@ class NearBackend implements GameBackend {
   season = $state<Season>({ number: 1, endsAt: 0, pool: 0, points: {}, lastWinners: [] });
   ready = $state(false);
   offline = $state(false);
+  lost = $state(false);
   identity = $state<Identity>({ kind: 'none' });
   accountPrompt = $state<AccountPrompt | null>(null);
   prices = $state<Prices>({
@@ -117,6 +122,12 @@ class NearBackend implements GameBackend {
   #clueArriving = $state<Record<string, boolean>>({});
   #botLimits = $state<BotLimits | null>(null);
   #healthAsked = 0;
+  /** What a lookup said about each account. Missing while nobody has asked, or a lookup failed. */
+  #gone = $state<Record<string, boolean>>({});
+  #goneAsked = new Set<string>();
+  #faucetAsked = $state(faucetAskedAt());
+  #lastHeard = Date.now();
+  #heardAny = false;
 
   readonly lastDigSec = 0;
   readonly testnet = true;
@@ -175,6 +186,14 @@ class NearBackend implements GameBackend {
       if (document.hidden) return;
       this.refreshBalances();
       void this.#readChainTime();
+      this.#feed.wake();
+    });
+    // Signing out in one tab shouldn't leave another playing as someone who has left.
+    globalThis.addEventListener?.('storage', (event) => {
+      const { key } = event as StorageEvent;
+      if (key !== SESSION_KEY && key !== null) return;
+      const next = loadSession();
+      if (next?.accountId !== this.#session?.accountId) this.#setSession(next);
     });
   }
 
@@ -215,6 +234,9 @@ class NearBackend implements GameBackend {
   }
 
   #applyLive(live: LiveState) {
+    this.#lastHeard = Date.now();
+    this.#heardAny = true;
+    this.lost = false;
     this.#clock.sample(live.now_ms);
     // Two sources can answer out of order. An older world must never overwrite a newer one.
     if (live.version < this.#version) return;
@@ -300,6 +322,8 @@ class NearBackend implements GameBackend {
 
   /** The clock keeps moving between frames, from chain time. */
   #tick() {
+    const quiet = Date.now() - this.#lastHeard;
+    if (!document.hidden && quiet > (this.#heardAny ? LOST_AFTER_MS : LOST_FIRST_LOAD_MS)) this.lost = true;
     if (!this.#clock.ready) return;
     const now = this.#clock.now();
     for (const game of this.games) {
@@ -394,6 +418,11 @@ class NearBackend implements GameBackend {
     this.#chainDigs.delete(id);
     this.#pendingDigs.delete(id);
     delete this.#clueArriving[id];
+    // A tab can stay open for days, and a room that's over needs none of these again.
+    this.#timing.delete(id);
+    this.#roomVersions.delete(id);
+    this.#localPlayers.delete(id);
+    this.#pokedAt.delete(id);
     if (wasOpen) {
       // Newest first in the finished tab, which keeps the array's order.
       this.games.splice(this.games.indexOf(game), 1);
@@ -610,6 +639,23 @@ class NearBackend implements GameBackend {
 
   seasonRanking() {
     return this.#top;
+  }
+
+  accountGone(account: string): boolean {
+    if (!this.#goneAsked.has(account)) {
+      this.#goneAsked.add(account);
+      queueMicrotask(() => void this.#lookUpAccount(account));
+    }
+    return this.#gone[account] === true;
+  }
+
+  async #lookUpAccount(account: string) {
+    try {
+      this.#gone[account] = (await viewAccount(account)) === null;
+    } catch {
+      // Not knowing isn't the same as gone. The next time this account is on screen looks again.
+      this.#goneAsked.delete(account);
+    }
   }
 
   clueArriving(gameId: string): boolean {
@@ -839,6 +885,35 @@ class NearBackend implements GameBackend {
     const balance = balanceFromEvents(outcome.events, session.accountId);
     if (balance !== null && this.#session === session) this.#balance = toMilli(balance);
     return outcome;
+  }
+
+  get hasGameKey(): boolean {
+    return !!this.#session && !!this.#keyFor(this.#session);
+  }
+
+  async removeGameKey(): Promise<boolean> {
+    const session = this.#session;
+    if (!session) return false;
+    const wallet = await import('../near/wallet');
+    try {
+      return await wallet.removeGameKey(session.accountId);
+    } catch (e) {
+      throw new GameError(plainError(errorText(e)));
+    }
+  }
+
+  get canAskFaucet(): boolean {
+    return faucetAllows(this.account, this.#wallet, this.#faucetAsked, Date.now());
+  }
+
+  async askFaucet(): Promise<void> {
+    const session = await this.#needAccount();
+    const call = { method: 'request_near', args: { receiver_id: session.accountId, request_amount: FAUCET_YOCTO }, gasTgas: FAUCET_GAS_TGAS };
+    const outcome = readOutcome(await this.#walletCall(session.accountId, call, '0', FAUCET_CONTRACT));
+    if (outcome.failure) throw new GameError("The faucet said no. Yours isn't the only request it gets, so try again later.");
+    this.#faucetAsked = Date.now();
+    noteFaucetAsked(this.#faucetAsked);
+    this.refreshBalances();
   }
 
   async #needAccount(): Promise<Session> {

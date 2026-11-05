@@ -19,6 +19,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-top: 0.6rem;
+  padding-bottom: 0;
 }
 
 .stage.compact.game .waiting-panel {

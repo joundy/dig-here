@@ -12,7 +12,7 @@
 
   const NAV = [
     { name: 'lobby', href: '#/', label: 'Games' },
-    { name: 'deeds', href: '#/deeds', label: 'NFTs' },
+    { name: 'deeds', href: '#/nfts', label: 'NFTs' },
     { name: 'season', href: '#/season', label: 'Season' },
   ];
 
@@ -221,19 +221,22 @@
   }
   @media (max-width: 400px) {
     header {
-      gap: 0.25rem 0.4rem;
-      padding-left: 0.5rem;
-      padding-right: 0.5rem;
+      gap: 0.25rem 0.3rem;
+      padding-left: 0.4rem;
+      padding-right: 0.4rem;
     }
     .brand {
-      font-size: 1.7rem;
+      font-size: 1.55rem;
     }
     .testnet {
-      font-size: 0.95rem;
-      padding: 0 0.2rem;
+      font-size: 0.9rem;
+      padding: 0 0.15rem;
+    }
+    .tools {
+      gap: 0.2rem;
     }
     .icon {
-      width: 2rem;
+      width: 2.5rem;
     }
     .money {
       gap: 0.25rem;
@@ -244,6 +247,18 @@
     }
     .plus {
       display: none;
+    }
+  }
+  /* The smallest phones still in use: the sound buttons give way, since the name and balance matter more. */
+  @media (max-width: 345px) {
+    .icon {
+      width: 2.1rem;
+    }
+    .testnet {
+      display: none;
+    }
+    .money {
+      min-width: 0;
     }
   }
 </style>

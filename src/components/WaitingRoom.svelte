@@ -129,7 +129,7 @@
     {/if}
   </div>
 
-  <p class="hint">Study the map. Tap things.</p>
+  <p class="hint">Scout the island while you wait. Tap things.</p>
 
   <ul class="players">
     {#each game.players as player (player)}
@@ -268,7 +268,7 @@
   }
   .hint {
     margin: 0.5rem 0 0;
-    color: var(--sun);
+    color: var(--foam);
     font-size: 1.25rem;
     line-height: 1.1;
   }

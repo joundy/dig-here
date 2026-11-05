@@ -58,7 +58,7 @@
 
   {#if !over || game.landmarks.length}<span class="small cut">Host keeps {percent(game.hostCutBps)}</span>{/if}
   <span class="small pot">Pot {near(potOf(game))}</span>
-  <span class="small record">{record.finished} finished, {record.expired} expired</span>
+  <span class="small record">Host: {record.finished} finished, {record.expired} expired</span>
 </a>
 
 <style>

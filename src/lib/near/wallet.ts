@@ -20,6 +20,8 @@ function getConnector(): Promise<NearConnector> {
     const near = new NearConnector({
       network: 'testnet',
       providers,
+      // Each wallet's code runs in an iframe that inherits the page's content security policy.
+      cspNonce: document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce || undefined,
       // A wallet that can't add a key would ask for an approval on every dig, which would kill the game.
       features: { signInWithFunctionCallKey: true },
     });
@@ -61,6 +63,24 @@ export async function disconnectWallet(accountId: string): Promise<void> {
   const near = await getConnector();
   await near.disconnect().catch(() => undefined);
   forgetWalletKey(accountId);
+}
+
+/**
+ * The game's key can't delete itself, because a function-call key can only make function calls, so the wallet signs.
+ * The plugin only signs by itself for calls to the game contract, so this always reaches the wallet.
+ */
+export async function removeGameKey(accountId: string): Promise<boolean> {
+  const stored = walletKey(accountId);
+  if (!stored) return false;
+  const publicKey = KeyPair.fromString(stored.secretKey as KeyPairString).getPublicKey().toString();
+  const near = await getConnector();
+  const { wallet } = await near.getConnectedWallet();
+  await wallet.signAndSendTransaction({
+    signerId: accountId,
+    receiverId: accountId,
+    actions: [{ type: 'DeleteKey', params: { publicKey } }],
+  });
+  return true;
 }
 
 /** A call the wallet has to approve, because it attaches coins or because the game's own key can't make it. */

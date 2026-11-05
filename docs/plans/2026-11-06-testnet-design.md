@@ -232,7 +232,7 @@ Every player, including jurors, uses a real testnet wallet, by the user's decisi
 
 **First payment.** `join`, `create_room` and `mint_nft` from a short balance show what they need before the wallet is asked: the cost, a 0.002 NEAR setup if the account has no record yet, and a choice of no extra, about 5 games or about 20 games. A choice with extra must leave at least 0.1 NEAR in the wallet, and any choice at least 0.02 NEAR for gas. If none fits, the dialog shows the faucet steps instead.
 
-**Signing moves.** With nothing attached, the game signs in `KeySender` using the plugin's stored key, because `KeySender` handles lost sends and the plugin doesn't. If that key is out of allowance or gone, the move goes through the plugin to the wallet. Coins attached always go to the wallet. Disconnecting removes the key from this browser, but it stays on the account until the owner deletes it.
+**Signing moves.** With nothing attached, the game signs in `KeySender` using the plugin's stored key, because `KeySender` handles lost sends and the plugin doesn't. If that key is out of allowance or gone, the move goes through the plugin to the wallet. Coins attached always go to the wallet. Disconnecting asks whether to remove the key from the account too, through the wallet. If they decline or the wallet refuses, the browser forgets it and it stays on the account until the owner deletes it.
 
 **Onboarding links, tried 2026-11-05 from one machine:**
 
@@ -250,4 +250,4 @@ Every player, including jurors, uses a real testnet wallet, by the user's decisi
 - **Closeness range:** in 40 real rounds, 16 ended with every dig scoring 0, because digs often land past the 48-pixel limit once landmarks are spread out. The closest dig still wins in those rounds. Idea: raise the range to about 80 pixels. It needs a re-run of the simulation on today's maps, a contract upgrade, and Verify keeping the old value for rounds already played.
 - **Starter coins:** the backend sends about 1 test NEAR once per real wallet, so a juror doesn't depend on outside faucets. The docs faucet refused this machine with a 429 and no faucet was confirmed delivering coins on 2026-11-05.
 - **Jackpot seeding:** 25% of each mint goes to the jackpot.
-- **Other known issues:** a lone host waiting on the default 30-second countdown takes 36 seconds, against a 15-second target. The season list can include deleted guest accounts until season 1 closes. Disconnecting leaves the game's limited key on the player's account.
+- **Other known issues:** all resolved or logged in `docs/research/user-audit.md`.
