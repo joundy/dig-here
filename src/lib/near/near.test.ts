@@ -111,6 +111,16 @@ describe('errors', () => {
     }
   });
 
+  it('tells someone what to do about each wallet problem, in plain words', () => {
+    for (const raw of ['User closed the window', 'Wallet closed', 'Failed to sign in', "User didn't complete the action"]) expect(plainError(raw)).toMatch(/window closed/);
+    for (const raw of ['User rejected', 'User rejected the connection', 'rejected the transaction']) expect(plainError(raw)).toMatch(/said no/);
+    expect(plainError('User refused to allow the popup window to open')).toMatch(/Allow pop-ups/);
+    expect(plainError('{"InvalidTxError":{"NotEnoughBalance":{}}}')).toMatch(/out of testnet coins/);
+    expect(plainError('WrongNetwork: me.near')).toBe("me.near isn't a testnet account. This game runs on NEAR testnet, so switch your wallet to testnet and pick an account ending in .testnet.");
+    expect(plainError('NoWallets')).toMatch(/list of wallets/);
+    expect(plainError('{"InvalidTxError":{"InvalidAccessKeyError":{"NotEnoughAllowance":{}}}}')).toMatch(/wallet will ask/);
+  });
+
   it('spots a key that has gone', () => {
     expect(isMissingKey('{"InvalidTxError":{"InvalidAccessKeyError":{"AccessKeyNotFound":{}}}}')).toBe(true);
     expect(isMissingKey('UNKNOWN_ACCESS_KEY')).toBe(true);

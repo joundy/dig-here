@@ -1,7 +1,6 @@
 // Everything here is testnet. A mainnet build would change this file and nothing else.
 export const CONTRACT = 'v1.dighere.testnet';
 export const BOT_SUFFIX = '.bots.dighere.testnet';
-export const GUEST_SUFFIX = '.guests.dighere.testnet';
 
 // FastNEAR first. dRPC ends every free request at about 2 s, so it only backs up reads, never sends.
 export const SEND_URL = 'https://test.rpc.fastnear.com';
@@ -12,6 +11,11 @@ export const READ_HOSTS = READ_URLS.map((url) => new URL(url).host);
 // and allow browsers. near.org takes over 3 s and rations hard, so it's the last resort.
 export const ARCHIVE_URLS = ['https://archival-rpc.testnet.fastnear.com', 'https://archival-rpc.testnet.near.org'];
 export const ARCHIVE_HOSTS = ARCHIVE_URLS.map((url) => new URL(url).host);
+
+// Help for someone with no testnet wallet yet. The plan's "no guest accounts" section says what was tried, and when.
+export const WALLET_URL = 'https://wallet.meteorwallet.app';
+export const WALLET_LIST_URL = 'https://wallet.near.org';
+export const FAUCET_URL = 'https://docs.near.org/getting-started/faucet';
 
 const EXPLORER = 'https://testnet.nearblocks.io';
 export const explorer = {

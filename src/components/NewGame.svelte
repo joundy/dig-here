@@ -8,7 +8,8 @@
   import { MAP_IDS, mathRng } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { MapId } from '../lib/game/types';
-  import { openWallet, ui } from '../lib/ui.svelte';
+  import { attachFor } from '../lib/pay';
+  import { ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
   import MapBadge from './MapBadge.svelte';
   import Parrot from './Parrot.svelte';
@@ -74,12 +75,8 @@
     busy = true;
     try {
       await backend.ensureAccount();
-      const balance = backend.balanceOf(backend.account);
-      const bond = backend.prices.hostBond;
-      if (balance < bond) {
-        openWallet(bond - balance);
-        return;
-      }
+      const attach = await attachFor('Hosting bond, back when the room ends', backend.prices.hostBond, feeMilli);
+      if (attach === null) return;
       const mapId = mapChoice === 'surprise' ? MAP_IDS[mathRng(MAP_IDS.length)] : mapChoice;
       const id = await backend.createGame({
         name,
@@ -90,7 +87,7 @@
         minPlayers,
         maxPlayers,
         countdownSec,
-      });
+      }, attach);
       location.hash = `#/game/${id}`;
     } catch (e) {
       error = (e as Error).message;

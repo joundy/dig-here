@@ -2,6 +2,8 @@
 
 Date: 2026-11-05. Testnet only. Network at test time: protocol 88, nearcore 2.14.0-rc.5.
 
+Guest accounts, recommended below, were later dropped by the user's decision. This stays as the record of what was measured. What the game does now is in `docs/plans/2026-11-06-testnet-design.md`.
+
 How to read the marks:
 - **[run]** I ran it. Node and Chromium in Docker, real transactions on testnet.
 - **[read]** It comes from docs or library source. I didn't run it.

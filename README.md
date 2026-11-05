@@ -2,7 +2,7 @@
 
 A multiplayer treasure-digging game on NEAR **testnet**, for the NEAR Hackathon, Games track. Coins here are test coins with no value.
 
-**Play it:** https://dig.joundy.dev (no wallet or install needed)
+**Play it:** https://dig.joundy.dev (watching needs nothing, playing needs a free NEAR testnet wallet)
 **Contract:** `v1.dighere.testnet`
 
 ## The problem
@@ -217,15 +217,16 @@ Winnings are credited to balances inside the contract, not pushed out, so one ba
 
 ## Try it
 
-1. Open https://dig.joundy.dev. See a short how-to-play. Tap through or skip it.
-2. Press **Quick Play**, then **Play as guest**. See a room within about 10 seconds. You now have a real testnet account with free test coins.
-3. Wait a few seconds. See labelled bots join and the round start on clue 1, YOLO, at ×2.5.
-4. Tap the map, then press **Dig here**. See your X land at once, then "You'd win on N of N spots right now".
-5. Watch clues arrive, the bonus fall, and your winning spots change.
-6. When the timer ends, see the spots flash, the chest drop, the scores, and the pot split.
-7. Press **Verify this round**. See each check recalculated in your browser.
-8. Go to **NFTs**, open **Mint**, and mint one. Then list it under **My NFTs**.
-9. To use your own account, choose **Connect NEAR wallet** instead. A testnet wallet such as Meteor works, and lets you withdraw and buy NFTs from other players.
+1. Get a testnet wallet. [Meteor Wallet](https://wallet.meteorwallet.app) runs in your browser. Choose testnet and create an account ending in `.testnet`. Then paste its name into the [NEAR faucet](https://docs.near.org/getting-started/faucet) for free test coins. The game shows these same steps under **No testnet wallet yet?**
+2. Open https://dig.joundy.dev. See a short how-to-play. Tap through or skip it. You can watch any round and open **Verify this round** without a wallet.
+3. Press **Quick Play**, then **Connect NEAR wallet**, and approve the sign-in. This adds a limited key to your account, which can play but can't withdraw or buy NFTs.
+4. Choose how many coins to add, and approve that once. It pays this game's fee, and the rest stays in your game balance. The next games and every dig then need no popup.
+5. Wait a few seconds. See labelled bots join and the round start on clue 1, YOLO, at ×2.5.
+6. Tap the map, then press **Dig here**. See your X land at once, then "You'd win on N of N spots right now".
+7. Watch clues arrive, the bonus fall, and your winning spots change.
+8. When the timer ends, see the spots flash, the chest drop, the scores, and the pot split.
+9. Press **Verify this round**. See each check recalculated in your browser.
+10. Go to **NFTs**, open **Mint**, and mint one. Then list it under **My NFTs**. Buying from another player, sending an NFT and withdrawing each ask your wallet once.
 
 ## Run it locally
 
@@ -240,7 +241,7 @@ The contract builds in Docker: `docker/near cargo near build non-reproducible-wa
 
 ## Known limits
 
-- **Testnet only.** Bots and guest accounts are test-only and won't exist in production. Going to mainnet needs the items below first.
+- **Testnet only.** Bots are test-only and won't exist in production. Going to mainnet needs the items below first.
 - **Randomness:**
   - We see a roll's result before revealing it, so refusing to reveal is a free way to cancel a round we dislike. It's public, counted by the contract (`missed_reveals`) and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal.
   - Reveals don't currently wait for the lock to be final, so in theory a validator could drop the lock's block after seeing the link. `ORACLE_REVEAL_FINAL=1` closes this, for about 2 seconds more per roll.
@@ -255,7 +256,7 @@ Full findings: `docs/research/security-review.md`.
 ## Code map
 
 - `contract/`: the Rust contract, shared vectors and map data.
-- `server/`: oracle, bots, guests, live state, indexer, sweeper.
+- `server/`: oracle, bots, live state, indexer.
 - `src/lib/game/`: the rules in whole-number maths. `random.ts` is the number stream and hashes.
 - `src/lib/backend/near.svelte.ts`: the game's connection to the chain. `dummy.svelte.ts` is the fake chain.
 - `src/lib/world/`: the pixel-art islands. `src/lib/audio/`: the original chiptune, synthesized in the browser. `src/components/`: the screens.

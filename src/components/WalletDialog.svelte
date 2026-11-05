@@ -15,7 +15,6 @@
   let mode = $state<'deposit' | 'withdraw'>('deposit');
   let amount = $state<number | null>(need ? need / 1000 : quick[1] / 1000);
   let busy = $state(false);
-  let connecting = $state(false);
   let error = $state('');
   let note = $state('');
 
@@ -24,14 +23,16 @@
   const wallet = $derived(backend.walletOf(backend.account));
   const milli = $derived(Math.round((Number(amount) || 0) * 1000));
   const identity = $derived(backend.identity);
-  const guest = $derived(identity.kind === 'guest');
   const onChain = $derived(identity.kind === 'wallet');
 
-  // The native dialog brings focus into itself, keeps it there, and hands it back when it closes.
+  // The native dialog brings focus into itself, keeps it there, and hands it back when it closes. It steps aside
+  // while the wallet is asking, because the wallet's own windows sit under anything modal, where nobody could click them.
   $effect(() => {
     const el = dialog;
-    el?.showModal();
-    return () => el?.close();
+    if (!el) return;
+    if (busy) el.close();
+    else if (!el.open) el.showModal();
+    return () => el.close();
   });
 
   // Winnings may have landed since the last look.
@@ -73,21 +74,6 @@
     }
   }
 
-  async function connect() {
-    error = note = '';
-    connecting = true;
-    try {
-      await backend.connectWallet();
-      audio.coin();
-      note = 'Wallet connected.';
-    } catch (e) {
-      error = (e as Error).message;
-      audio.error();
-    } finally {
-      connecting = false;
-    }
-  }
-
   async function disconnect() {
     error = note = '';
     await backend.disconnectWallet();
@@ -101,7 +87,7 @@
   bind:this={dialog}
   aria-labelledby="wallet-title"
   oncancel={(e) => { e.preventDefault(); if (!busy) close(); }}
-  onclose={close}
+  onclose={() => { if (!busy) close(); }}
   onclick={(e) => { if (e.target === dialog && !busy) close(); }}
 >
   <div class="panel body">
@@ -114,23 +100,21 @@
       <p class="testnet">NEAR testnet. These are test coins with no real value.</p>
     {/if}
 
-    {#if identity.kind === 'guest' || identity.kind === 'wallet'}
+    {#if identity.kind === 'wallet'}
       <p class="who">
         Playing as <a href={explorer.account(identity.accountId)} target="_blank" rel="noopener" title={identity.accountId}>{shortName(identity.accountId)}</a>
       </p>
     {/if}
 
-    <div class="pots" class:single={guest}>
+    <div class="pots">
       <div class="pot game">
-        <span class="label">{guest ? 'Test coins' : 'Game balance'}</span>
+        <span class="label">Game balance</span>
         <span class="value"><Sprite name="coin" scale={3} /> {near(balance)}</span>
       </div>
-      {#if !guest}
-        <div class="pot">
-          <span class="label">Wallet</span>
-          <span class="value">{near(wallet)}</span>
-        </div>
-      {/if}
+      <div class="pot">
+        <span class="label">Wallet</span>
+        <span class="value">{near(wallet)}</span>
+      </div>
     </div>
     <p class="hint">Balance leaves out coins locked in rooms. They come back when the room ends.</p>
 
@@ -138,42 +122,34 @@
       <p class="need">You need {near(need)} more for that.</p>
     {/if}
 
-    {#if error && guest}<p class="error" role="alert">{error}</p>{/if}
-    {#if note && guest}<p class="note" role="status">{note}</p>{/if}
+    <div class="modes" role="tablist">
+      <button type="button" role="tab" aria-selected={mode === 'deposit'} class:on={mode === 'deposit'} onclick={() => switchMode('deposit')}>Top up</button>
+      <button type="button" role="tab" aria-selected={mode === 'withdraw'} class:on={mode === 'withdraw'} onclick={() => switchMode('withdraw')}>Withdraw</button>
+    </div>
 
-    {#if guest}
-      <p class="guest-note">Guest coins stay in the game: they can't be withdrawn. To move coins or NFTs, connect a wallet.</p>
-      <button class="btn alt" disabled={connecting} onclick={connect}>{connecting ? 'Opening wallets…' : 'Connect a wallet'}</button>
-    {:else}
-      <div class="modes" role="tablist">
-        <button type="button" role="tab" aria-selected={mode === 'deposit'} class:on={mode === 'deposit'} onclick={() => switchMode('deposit')}>Top up</button>
-        <button type="button" role="tab" aria-selected={mode === 'withdraw'} class:on={mode === 'withdraw'} onclick={() => switchMode('withdraw')}>Withdraw</button>
+    <form onsubmit={submit}>
+      <div class="quick">
+        {#each quick as q}
+          <button type="button" class:on={milli === q} disabled={busy} onclick={() => (amount = q / 1000)}>{q / 1000}</button>
+        {/each}
+        {#if mode === 'withdraw'}
+          <button type="button" disabled={busy} onclick={() => (amount = backend.balanceOf(backend.account) / 1000)}>All</button>
+        {/if}
       </div>
-
-      <form onsubmit={submit}>
-        <div class="quick">
-          {#each quick as q}
-            <button type="button" class:on={milli === q} disabled={busy} onclick={() => (amount = q / 1000)}>{q / 1000}</button>
-          {/each}
-          {#if mode === 'withdraw'}
-            <button type="button" disabled={busy} onclick={() => (amount = backend.balanceOf(backend.account) / 1000)}>All</button>
-          {/if}
-        </div>
-        <label class="custom">
-          <span>Amount in NEAR</span>
-          <input class="input" type="number" bind:value={amount} min="0" step="any" inputmode="decimal" placeholder="0" disabled={busy} />
-        </label>
-        {#if error}<p class="error" role="alert">{error}</p>{/if}
-        {#if note}<p class="note" role="status">{note}</p>{/if}
-        <button class="btn" type="submit" disabled={busy}>
-          {#if busy}
-            Asking your wallet…
-          {:else}
-            {mode === 'deposit' ? 'Top up' : 'Withdraw'}{milli > 0 ? ` ${near(milli)}` : ''}
-          {/if}
-        </button>
-      </form>
-    {/if}
+      <label class="custom">
+        <span>Amount in NEAR</span>
+        <input class="input" type="number" bind:value={amount} min="0" step="any" inputmode="decimal" placeholder="0" disabled={busy} />
+      </label>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#if note}<p class="note" role="status">{note}</p>{/if}
+      <button class="btn" type="submit" disabled={busy}>
+        {#if busy}
+          Asking your wallet…
+        {:else}
+          {mode === 'deposit' ? 'Top up' : 'Withdraw'}{milli > 0 ? ` ${near(milli)}` : ''}
+        {/if}
+      </button>
+    </form>
 
     {#if onChain}
       <button class="plain-link" onclick={disconnect}>Disconnect this wallet</button>
@@ -228,9 +204,6 @@
     grid-template-columns: 1fr 1fr;
     gap: 0.4rem;
   }
-  .pots.single {
-    grid-template-columns: 1fr;
-  }
   .testnet {
     margin: 0;
     padding: 0.2rem 0.5rem;
@@ -248,11 +221,6 @@
   }
   .who a {
     color: var(--foam);
-  }
-  .guest-note {
-    margin: 0;
-    font-size: 1.25rem;
-    line-height: 1.15;
   }
   .plain-link {
     justify-self: center;

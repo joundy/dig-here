@@ -25,7 +25,7 @@ Identify players with their predecessor. Payable methods put whatever's attached
 
 The first credit to an account pays for its record out of that credit, at the exact measured cost. A deposit smaller than that fails.
 
-Attach gas per the table below. Gas is bought at 10× its burn price and the rest refunded later, so don't attach more than the table says from a low-balance guest.
+Attach gas per the table below. Gas is bought at 10× its burn price and the rest refunded later, so don't attach more than the table says from a low-balance account.
 
 | Method | Attach (Tgas) |
 |---|---|
@@ -54,7 +54,7 @@ Only the contract's own account can call it. There's no admin method afterwards.
 | Method | Notes |
 |---|---|
 | `deposit()` payable | Needs something attached |
-| `deposit_for({ account_id })` payable | Credits someone else. Used for guest coins. Their record, if new, is paid out of the amount |
+| `deposit_for({ account_id })` payable | Credits someone else. The game no longer calls it, since guest accounts went away, but it's part of the deployed code. Their record, if new, is paid out of the amount |
 | `withdraw({ amount })` exactly 1 yocto | `amount` is a yocto string. Deducts first. Returns `true`, or `false` after restoring the balance if the transfer failed. Needs a full-access key, because a function-call key can't attach the yocto. Needs at least 10 Tgas |
 
 ### Rooms
@@ -112,7 +112,7 @@ Token IDs are `<map>:<kind>`, like `snowy:penguin`: 36 in all, 12 per map, as li
 
 Standards: NEP-171 (`nft_transfer`, `nft_transfer_call`, `nft_token`, `nft_resolve_transfer`), NEP-177 (`nft_metadata`), NEP-178 (`nft_approve`, `nft_revoke`, `nft_revoke_all`, `nft_is_approved`) and NEP-181 (`nft_total_supply`, `nft_tokens`, `nft_supply_for_owner`, `nft_tokens_for_owner`), from `near-contract-standards`.
 
-- `nft_transfer` and `buy_nft` need a yocto, so **a guest's function-call key can't call them**. This is expected. Tested in the sandbox.
+- `nft_transfer` and `buy_nft` need a yocto, so **a function-call key can't call them**. This is expected. Tested in the sandbox.
 - **The receiver must already have a game record**, or the transfer fails with "The receiver needs a Dig Here balance first". `deposit_for` fixes that. Settlements and sales credit an NFT's owner and must never have to create a record.
 - Any transfer ends a listing, including one the owner had made before.
 

@@ -6,19 +6,19 @@ import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Dig, Game, NewGameInput, Point } from '../game/types';
 import { ChainClock } from '../near/clock';
-import { botLimitsFrom, buyDeposit } from '../near/choices';
+import { botLimitsFrom, buyDeposit, RECORD_MILLI, spendable } from '../near/choices';
 import { FEE_CHOICES, GAS_TGAS } from '../near/config';
 import { CLUE_REFUSAL } from '../digButton';
-import { isMissingKey, isOutOfAllowance, plainError } from '../near/errors';
+import { isMissingKey, isOutOfAllowance, isSignedOut, plainError } from '../near/errors';
 import { LiveFeed } from '../near/feed';
 import type { StateBody } from '../near/feed';
 import { balanceFromEvents, readOutcome } from '../near/outcome';
 import type { Outcome } from '../near/outcome';
 import { clocksOf, digsOf, displayName, gameFromSummary, gameOf, resultOf, roomFromEvents } from '../near/rooms';
 import type { ChainRoom, FinishedSummary, LiveState } from '../near/rooms';
-import { isGoneRoom, RpcError, view, viewAccessKey, viewAccount } from '../near/rpc';
-import { guestWasChosen, loadGuest, loadSession, rememberGuestChoice, saveGuest, saveSession, walletKey } from '../near/session';
-import type { GuestSession, Session } from '../near/session';
+import { isGoneRoom, RpcError, view, viewAccount } from '../near/rpc';
+import { loadSession, saveSession, walletKey } from '../near/session';
+import type { Session } from '../near/session';
 import type { Call, KeySender } from '../near/signer';
 import type { ProofEvent, RoundProof, TxLink } from '../verifyChain';
 import type { AccountPrompt, BotLimits, GameBackend, Identity, PlaytestControls, Prices } from './types';
@@ -33,7 +33,6 @@ const CHAIN_TIME_MS = 20_000;
 const SETTLE_RETRY_MS = 1500;
 const SETTLE_TRIES = 40;
 const FINISHED_KEPT = 40;
-const GUEST_COINS_WAIT_MS = 8000;
 const FIRST_READ_TRIES = 5;
 const FIRST_READ_GAP_MS = 800;
 /** How long a move of ours outranks a frame that doesn't show it yet, since reads lag a move by up to 2 s or so. */
@@ -95,6 +94,8 @@ class NearBackend implements GameBackend {
   #top = $state<{ account: string; points: number }[]>([]);
   #balance = $state(0);
   #wallet = $state(0);
+  /** Assumed until a read says otherwise, so a slow read can't add a setup line that isn't owed. */
+  #hasRecord = $state(true);
   #hosts = $state<Record<string, HostRecord>>({});
   #deeds = $state<Record<string, Deed>>({});
   /** Rooms with a roll locked and not yet revealed, when the contract turns digs away. */
@@ -125,7 +126,6 @@ class NearBackend implements GameBackend {
   #pokedAt = new Map<string, number>();
   #accountChoice: Promise<void> | null = null;
   #firstRead: Promise<void> = Promise.resolve();
-  #guestWasChosen = false;
 
   constructor() {
     this.#feed = new LiveFeed({
@@ -160,6 +160,10 @@ class NearBackend implements GameBackend {
 
   get canTransferDeeds() {
     return this.identity.kind === 'wallet';
+  }
+
+  get setupCost() {
+    return this.#hasRecord ? 0 : RECORD_MILLI;
   }
 
   nowMs() {
@@ -287,7 +291,8 @@ class NearBackend implements GameBackend {
 
   /** When a room has gone past what its helper should have done, a player can poke it themselves. */
   #nudgeOverdue(now: number) {
-    if (!this.#session) return;
+    // A nudge is a favour to everyone, not worth a wallet popup nobody asked for.
+    if (!this.#session || !this.#keyFor(this.#session)) return;
     for (const game of this.games) {
       if (!isOpen(game) || !game.players.includes(this.account)) continue;
       const timing = this.#timing.get(game.id);
@@ -508,11 +513,12 @@ class NearBackend implements GameBackend {
     if (!session) return true;
     try {
       const record = await view<{ balance: string } | null>('get_account', { id: session.accountId });
-      if (this.#session === session) this.#balance = record ? toMilli(record.balance) : 0;
-      if (session.kind === 'wallet') {
-        const account = await viewAccount(session.accountId);
-        if (this.#session === session) this.#wallet = account ? toMilli(account.amount) : 0;
+      if (this.#session === session) {
+        this.#balance = record ? toMilli(record.balance) : 0;
+        this.#hasRecord = record !== null;
       }
+      const account = await viewAccount(session.accountId);
+      if (this.#session === session) this.#wallet = account ? spendable(account) : 0;
       return true;
     } catch {
       return false;
@@ -534,57 +540,60 @@ class NearBackend implements GameBackend {
     this.#sender = null;
     this.#balance = 0;
     this.#wallet = 0;
+    this.#hasRecord = true;
     saveSession(session);
     this.identity = session ? { kind: session.kind, accountId: session.accountId } : { kind: 'none' };
     this.#firstRead = session ? this.#readBalancesPatiently() : Promise.resolve();
   }
 
   #restoreSession() {
-    this.#guestWasChosen = guestWasChosen();
-    const saved = loadSession();
-    if (!saved) return;
-    this.#setSession(saved);
-    if (saved.kind === 'guest') void this.#checkGuestKey(saved);
-  }
-
-  async #checkGuestKey(guest: GuestSession) {
-    try {
-      if (await viewAccessKey(guest.accountId, guest.publicKey)) return;
-      // Reads can lag a brand-new key by a block or two, so one "no" doesn't count.
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-      if (!(await viewAccessKey(guest.accountId, guest.publicKey)) && this.#session === guest) this.#forgetGuest();
-    } catch {
-      // Can't tell right now. If it's really gone, the next move will find out.
-    }
-  }
-
-  #forgetGuest() {
-    saveGuest(null);
-    this.#setSession(null);
+    this.#setSession(loadSession());
   }
 
   ensureAccount(): Promise<void> {
     // Waits for the first balance read too: right after a reload, "0" would look like being short of coins.
     if (this.#session) return this.#firstRead;
     if (this.#accountChoice) return this.#accountChoice;
-    // They already chose a guest once. A swept guest gets a new one without being asked again.
-    if (this.#guestWasChosen) {
-      this.#accountChoice = this.#startGuest().finally(() => (this.#accountChoice = null));
-      return this.#accountChoice;
-    }
     this.#accountChoice = new Promise<void>((resolve, reject) => {
-      const settle = (work: Promise<void>) => {
+      const finish = (settle: () => void) => {
         this.accountPrompt = null;
-        work.then(resolve, reject).finally(() => (this.#accountChoice = null));
+        this.#accountChoice = null;
+        settle();
       };
       this.accountPrompt = {
-        chooseGuest: () => settle(this.#startGuest()),
-        chooseWallet: () => settle(this.#signInWallet()),
-        cancel: () => settle(Promise.reject(new GameError(''))),
+        error: '',
+        busy: false,
+        noKey: false,
+        connect: () => {
+          const prompt = this.accountPrompt;
+          if (!prompt) return;
+          prompt.busy = true;
+          prompt.error = '';
+          this.#signInWallet().then(
+            (keyAdded) => {
+              prompt.busy = false;
+              if (keyAdded) finish(resolve);
+              else prompt.noKey = true;
+            },
+            (e) => {
+              prompt.busy = false;
+              prompt.error = (e as Error).message;
+            },
+          );
+        },
+        carryOn: () => finish(() => this.#firstRead.then(resolve, reject)),
+        chooseAgain: () => {
+          const prompt = this.accountPrompt;
+          void this.disconnectWallet().finally(() => {
+            if (prompt) prompt.noKey = false;
+          });
+        },
+        cancel: () => {
+          const leaving = this.#session ? this.disconnectWallet() : Promise.resolve();
+          void leaving.finally(() => finish(() => reject(new GameError(''))));
+        },
       };
     });
-    // A guest is one click away, so have the signing code ready before they press it.
-    void this.#signerCode();
     return this.#accountChoice;
   }
 
@@ -593,73 +602,32 @@ class NearBackend implements GameBackend {
     return this.#signer;
   }
 
-  async #startGuest(): Promise<void> {
-    this.#guestWasChosen = true;
-    rememberGuestChoice();
-    const stored = loadGuest();
-    if (stored && (await viewAccessKey(stored.accountId, stored.publicKey).catch(() => null))) {
-      this.#setSession(stored);
-      return;
-    }
-    const { newKeyPair } = await this.#signerCode();
-    const pair = newKeyPair();
-    let accountId: string;
+  /** Whether the game's key made it onto the account. */
+  async #signInWallet(): Promise<boolean> {
     try {
-      const res = await fetch('/api/guest-accounts', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ public_key: pair.publicKey }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.account_id) throw new GameError(body.error ?? "Couldn't make a guest right now. Try again in a moment.");
-      accountId = body.account_id;
-    } catch (e) {
-      if (e instanceof GameError) throw e;
-      throw new GameError("Couldn't make a guest right now. Try again in a moment, or connect a wallet.");
-    }
-    const guest: GuestSession = { kind: 'guest', accountId, publicKey: pair.publicKey, secretKey: pair.secretKey };
-    saveGuest(guest);
-    this.#setSession(guest);
-    await this.#waitForGuestCoins(guest);
-  }
-
-  /** The backend credits the new guest in its own transaction, and reads can lag that by a moment. */
-  async #waitForGuestCoins(guest: GuestSession) {
-    const until = Date.now() + GUEST_COINS_WAIT_MS;
-    while (Date.now() < until && this.#session === guest) {
-      await this.#readBalances();
-      if (this.#balance > 0) return;
-      await new Promise((resolve) => setTimeout(resolve, 600));
-    }
-  }
-
-  async connectWallet(): Promise<void> {
-    await this.#signInWallet();
-  }
-
-  async #signInWallet() {
-    const wallet = await import('../near/wallet');
-    try {
-      const accountId = await wallet.connectWallet();
+      const wallet = await import('../near/wallet');
+      const { accountId, keyAdded } = await wallet.connectWallet();
       this.#setSession({ kind: 'wallet', accountId });
+      await this.#firstRead;
+      return keyAdded;
     } catch (e) {
-      throw new GameError(plainError(String((e as Error)?.message ?? e)));
+      throw new GameError(plainError(errorText(e)));
     }
   }
 
   async disconnectWallet() {
-    if (this.#session?.kind === 'wallet') {
-      const wallet = await import('../near/wallet');
-      await wallet.disconnectWallet();
-    }
-    this.#setSession(loadGuest());
+    const session = this.#session;
+    // Forgetting comes first, so a wallet that never answers can't leave this browser signed in.
+    this.#setSession(null);
+    if (!session) return;
+    const wallet = await import('../near/wallet');
+    await wallet.disconnectWallet(session.accountId);
   }
 
   // Moving.
 
   #keyFor(session: Session): string | null {
-    return session.kind === 'guest' ? session.secretKey : (walletKey(session.accountId)?.secretKey ?? null);
+    return walletKey(session.accountId)?.secretKey ?? null;
   }
 
   #senderFor(session: Session, secretKey: string): Promise<KeySender> {
@@ -673,7 +641,7 @@ class NearBackend implements GameBackend {
    */
   async #call(call: Call, onSlow?: () => void): Promise<Outcome> {
     const session = this.#session;
-    if (!session) throw new GameError('Choose how to play first.');
+    if (!session) throw new GameError('Connect a wallet first.');
     const secretKey = this.#keyFor(session);
     let raw: any;
     try {
@@ -684,30 +652,38 @@ class NearBackend implements GameBackend {
       }
     } catch (e) {
       const text = errorText(e);
-      if (isMissingKey(text) && session.kind === 'guest') {
-        this.#forgetGuest();
-        throw new GameError('Your old guest pass expired after a long nap. Try that again and you get a new one.');
-      }
-      if (session.kind === 'wallet' && secretKey && (isOutOfAllowance(text) || isMissingKey(text))) {
-        raw = await this.#walletCall(session.accountId, call, '0');
-      } else {
-        throw new GameError(plainError(text));
-      }
+      if (e instanceof GameError) throw e;
+      // The key is spent or gone, and the wallet can still sign, with an approval each time.
+      if (!secretKey || !(isOutOfAllowance(text) || isMissingKey(text))) throw new GameError(plainError(text));
+      raw = await this.#walletCall(session.accountId, call, '0');
     }
     return this.#finishCall(session, raw);
   }
 
+  /** A move that attaches coins, which only the wallet can sign. Whatever the move doesn't cost stays in the balance. */
+  async #callPaying(call: Call, attach: number): Promise<Outcome> {
+    const session = this.#session;
+    if (!session) throw new GameError('Connect a wallet first.');
+    const outcome = this.#finishCall(session, await this.#walletCall(session.accountId, call, milliToYocto(attach)));
+    this.refreshBalances();
+    return outcome;
+  }
+
   async #walletCall(accountId: string, call: Call, deposit: string) {
     const wallet = await import('../near/wallet');
-    return wallet.callWithDeposit(accountId, call.method, call.args, call.gasTgas, deposit);
+    try {
+      return await wallet.callWithDeposit(accountId, call.method, call.args, call.gasTgas, deposit);
+    } catch (e) {
+      const text = errorText(e);
+      // The wallet has forgotten this site. Holding on to the session would fail the same way every time.
+      if (isSignedOut(text)) await this.disconnectWallet().catch(() => undefined);
+      throw new GameError(plainError(text));
+    }
   }
 
   #finishCall(session: Session, raw: any): Outcome {
     const outcome = readOutcome(raw);
-    if (outcome.failure) {
-      if (isMissingKey(outcome.failure) && session.kind === 'guest') this.#forgetGuest();
-      throw new GameError(plainError(outcome.failure));
-    }
+    if (outcome.failure) throw new GameError(plainError(outcome.failure));
     const balance = balanceFromEvents(outcome.events, session.accountId);
     if (balance !== null && this.#session === session) this.#balance = toMilli(balance);
     return outcome;
@@ -715,47 +691,31 @@ class NearBackend implements GameBackend {
 
   async #needAccount(): Promise<Session> {
     await this.ensureAccount();
-    if (!this.#session) throw new GameError('Choose how to play first.');
+    if (!this.#session) throw new GameError('Connect a wallet first.');
     return this.#session;
-  }
-
-  async #walletOnly(reason: string): Promise<Session> {
-    const session = await this.#needAccount();
-    if (session.kind !== 'wallet') throw new GameError(reason);
-    return session;
   }
 
   async deposit(amount: number): Promise<void> {
     if (!Number.isInteger(amount) || amount <= 0) throw new GameError('Enter an amount above 0.');
-    const session = await this.#walletOnly('Guests play with test coins from the game. Connect a wallet to add your own.');
-    try {
-      const raw = await this.#walletCall(session.accountId, { method: 'deposit', args: {}, gasTgas: GAS_TGAS.deposit }, milliToYocto(amount));
-      this.#finishCall(session, raw);
-    } catch (e) {
-      if (e instanceof GameError) throw e;
-      throw new GameError(plainError(errorText(e)));
-    }
+    const session = await this.#needAccount();
+    const raw = await this.#walletCall(session.accountId, { method: 'deposit', args: {}, gasTgas: GAS_TGAS.deposit }, milliToYocto(amount));
+    this.#finishCall(session, raw);
     this.refreshBalances();
   }
 
   async withdraw(amount: number): Promise<void> {
     if (!Number.isInteger(amount) || amount <= 0) throw new GameError('Enter an amount above 0.');
-    const session = await this.#walletOnly("Guest coins can't leave the game. Connect a wallet to withdraw.");
-    try {
-      const raw = await this.#walletCall(session.accountId, { method: 'withdraw', args: { amount: milliToYocto(amount) }, gasTgas: GAS_TGAS.withdraw }, '1');
-      const outcome = this.#finishCall(session, raw);
-      if (outcome.value === false) throw new GameError("The transfer didn't go through. Your coins are back in your balance.");
-    } catch (e) {
-      if (e instanceof GameError) throw e;
-      throw new GameError(plainError(errorText(e)));
-    }
+    const session = await this.#needAccount();
+    const raw = await this.#walletCall(session.accountId, { method: 'withdraw', args: { amount: milliToYocto(amount) }, gasTgas: GAS_TGAS.withdraw }, '1');
+    const outcome = this.#finishCall(session, raw);
+    if (outcome.value === false) throw new GameError("The transfer didn't go through. Your coins are back in your balance.");
     this.refreshBalances();
   }
 
-  async createGame(input: Omit<NewGameInput, 'host'>): Promise<string> {
-    const session = await this.#needAccount();
+  async createGame(input: Omit<NewGameInput, 'host'>, attach = 0): Promise<string> {
+    await this.#needAccount();
     if (!input.name.trim()) throw new GameError('Give the game a name.');
-    const outcome = await this.#call({
+    const call: Call = {
       method: 'create_room',
       args: {
         name: input.name.trim(),
@@ -767,8 +727,9 @@ class NearBackend implements GameBackend {
         max_players: input.maxPlayers,
         countdown_sec: input.countdownSec,
       },
-      gasTgas: await this.#createRoomGas(session),
-    });
+      gasTgas: GAS_TGAS.create_room,
+    };
+    const outcome = attach > 0 ? await this.#callPaying(call, attach) : await this.#call(call);
     const id = String(outcome.value);
     await this.loadGame(id);
     void this.#feed.refresh();
@@ -776,26 +737,11 @@ class NearBackend implements GameBackend {
     return id;
   }
 
-  /**
-   * A signer has to hold the price of all attached gas at once (10x burn), and a guest holds little.
-   * The typical layout burns under 20 Tgas and the worst seen about 47, so a lean guest attaches what it
-   * can, down to a floor that covers nearly every layout. A rare miss just fails, refunds, and rerolls.
-   */
-  async #createRoomGas(session: Session): Promise<number> {
-    if (session.kind !== 'guest') return GAS_TGAS.create_room;
-    const FLOOR = 40;
-    const account = await viewAccount(session.accountId).catch(() => null);
-    if (!account) return FLOOR;
-    // 0.001 NEAR buys a Tgas. Keep a little back, because the gas price itself can move.
-    const affordable = Math.floor((toMilli(account.amount) * 9) / 10);
-    return Math.max(FLOOR, Math.min(GAS_TGAS.create_room, affordable));
-  }
-
-  async join(gameId: string): Promise<void> {
+  async join(gameId: string, attach = 0): Promise<void> {
     await this.#needAccount();
-    const id = Number(gameId);
+    const call: Call = { method: 'join', args: { room_id: Number(gameId) }, gasTgas: GAS_TGAS.join };
     try {
-      await this.#call({ method: 'join', args: { room_id: id }, gasTgas: GAS_TGAS.join });
+      await (attach > 0 ? this.#callPaying(call, attach) : this.#call(call));
     } catch (e) {
       // A lost send that landed after all, then signed again.
       if (!/already joined/i.test((e as Error).message)) throw e;
@@ -878,9 +824,10 @@ class NearBackend implements GameBackend {
     }, CLUE_HINT_MS);
   }
 
-  async mintDeed(id: string): Promise<void> {
+  async mintDeed(id: string, attach = 0): Promise<void> {
     await this.#needAccount();
-    await this.#call({ method: 'mint_nft', args: { token_id: id }, gasTgas: GAS_TGAS.mint_nft });
+    const call: Call = { method: 'mint_nft', args: { token_id: id }, gasTgas: GAS_TGAS.mint_nft };
+    await (attach > 0 ? this.#callPaying(call, attach) : this.#call(call));
     await this.#loadDeeds();
   }
 
@@ -889,14 +836,9 @@ class NearBackend implements GameBackend {
    * The same approval carries whatever the game balance is short of. Anything over stays in the balance.
    */
   async buyDeed(id: string, seenPrice: number): Promise<void> {
-    const session = await this.#walletOnly('Connect a wallet to buy this.');
-    try {
-      const raw = await this.#walletCall(session.accountId, { method: 'buy_nft', args: { token_id: id, seen_price: seenPrice }, gasTgas: GAS_TGAS.buy_nft }, buyDeposit(seenPrice, this.#balance));
-      this.#finishCall(session, raw);
-    } catch (e) {
-      if (e instanceof GameError) throw e;
-      throw new GameError(plainError(errorText(e)));
-    }
+    const session = await this.#needAccount();
+    const raw = await this.#walletCall(session.accountId, { method: 'buy_nft', args: { token_id: id, seen_price: seenPrice }, gasTgas: GAS_TGAS.buy_nft }, buyDeposit(seenPrice, this.#balance));
+    this.#finishCall(session, raw);
     this.refreshBalances();
     await this.#loadDeeds();
   }
@@ -909,21 +851,19 @@ class NearBackend implements GameBackend {
   }
 
   async transferDeed(id: string, to: string): Promise<void> {
-    const session = await this.#walletOnly('Connect a wallet to transfer NFTs.');
-    try {
-      const raw = await this.#walletCall(session.accountId, { method: 'nft_transfer', args: { receiver_id: to.trim(), token_id: id }, gasTgas: GAS_TGAS.nft_transfer }, '1');
-      this.#finishCall(session, raw);
-    } catch (e) {
-      if (e instanceof GameError) throw e;
-      throw new GameError(plainError(errorText(e)));
-    }
+    const session = await this.#needAccount();
+    const raw = await this.#walletCall(session.accountId, { method: 'nft_transfer', args: { receiver_id: to.trim(), token_id: id }, gasTgas: GAS_TGAS.nft_transfer }, '1');
+    this.#finishCall(session, raw);
     await this.#loadDeeds();
   }
 }
 
 function errorText(e: unknown): string {
   if (e instanceof RpcError) return `${e.code} ${e.message} ${JSON.stringify(e.data ?? '')}`;
-  return String((e as Error)?.message ?? e);
+  const message = (e as Error)?.message;
+  if (typeof message === 'string') return message;
+  // Wallets answer across an iframe, and some send a bare object rather than an Error.
+  return typeof e === 'object' ? JSON.stringify(e) : String(e);
 }
 
 export const backend = new NearBackend();

@@ -5,7 +5,6 @@ import type { RoundProof } from '../verifyChain';
 /** How the player is known. `none` means watching: nothing has asked for an account yet. */
 export type Identity =
   | { kind: 'none' }
-  | { kind: 'guest'; accountId: string }
   | { kind: 'wallet'; accountId: string }
   | { kind: 'playtest'; accountId: string };
 
@@ -61,23 +60,25 @@ export interface GameBackend {
   readonly testnet: boolean;
   /** Reading straight from the chain, because the backend went quiet. */
   readonly offline: boolean;
-  /** The "how do you want to play" question, while it's waiting for an answer. */
+  /** Asks a watcher to connect a wallet, while it's waiting for an answer. */
   readonly accountPrompt: AccountPrompt | null;
   /** The clock the rules run on. Screens must not count down from the local clock. */
   nowMs(): number;
-  /** Asks once how to play, if nobody has said yet. Rejects with an empty message if they back out. */
+  /** Asks a watcher to connect a wallet. Rejects with an empty message if they back out. */
   ensureAccount(): Promise<void>;
   /** Fetches a room's details, if they aren't here yet. Resolves whether or not it exists. */
   loadGame(id: string): Promise<void>;
   /** Everything needed to recheck a round, or null if nobody has it. Throws if nodes can't be reached to say. */
   proofOf(id: string): Promise<RoundProof | null>;
   refreshBalances(): void;
-  connectWallet(): Promise<void>;
-  /** Leaves the wallet and goes back to watching, or to the guest this browser had. */
+  /** Leaves the wallet and goes back to watching. */
   disconnectWallet(): Promise<void>;
   /** Null unless the player's wallet can do it. */
   readonly canTransferDeeds: boolean;
   transferDeed(id: string, to: string): Promise<void>;
+
+  /** A first credit pays for the player's record out of itself, so this is what that adds, if they still need one. */
+  readonly setupCost: number;
 
   /** Coins outside the game. */
   walletOf(account: string): number;
@@ -89,10 +90,10 @@ export interface GameBackend {
 
   deposit(amount: number): Promise<void>;
   withdraw(amount: number): Promise<void>;
-  /** Locks the hosting bond and resolves to the new game's id. */
-  createGame(input: Omit<NewGameInput, 'host'>): Promise<string>;
-  /** Locks the entry fee. */
-  join(gameId: string): Promise<void>;
+  /** Locks the hosting bond and resolves to the new game's id. `attach` comes from the wallet, for a balance that's short. */
+  createGame(input: Omit<NewGameInput, 'host'>, attach?: number): Promise<string>;
+  /** Locks the entry fee. `attach` comes from the wallet, and anything over the fee stays in the game balance. */
+  join(gameId: string, attach?: number): Promise<void>;
   /** Before the start only. The fee comes back. */
   leave(gameId: string): Promise<void>;
   /** Host only, once the minimum is reached. */
@@ -101,8 +102,8 @@ export interface GameBackend {
   clueArriving(gameId: string): boolean;
   /** `seenClue` is how many clues the player could see, so a new clue can't quietly cost them bonus. */
   dig(gameId: string, spot: Point, seenClue: number): Promise<void>;
-  /** The first owner pays the project the mint price. */
-  mintDeed(id: string): Promise<void>;
+  /** The first owner pays the project the mint price. `attach` comes from the wallet, for a balance that's short. */
+  mintDeed(id: string, attach?: number): Promise<void>;
   /** Buys a listed NFT from its owner. `seenPrice` is the price the buyer agreed to. */
   buyDeed(id: string, seenPrice: number): Promise<void>;
   /** A null price takes it off the market. */
@@ -110,7 +111,16 @@ export interface GameBackend {
 }
 
 export type AccountPrompt = {
-  chooseGuest(): void;
-  chooseWallet(): void;
+  /** Why the last try failed, in words for the player. */
+  error: string;
+  /** The wallet's own windows are up. A modal dialog would block them, so this one steps aside. */
+  busy: boolean;
+  /** Signed in, but the wallet skipped the game's key, so every move would ask for an approval. */
+  noKey: boolean;
+  connect(): void;
+  /** Keep this wallet, popups and all. */
+  carryOn(): void;
+  /** Sign out of the wallet that skipped the key, and choose again. */
+  chooseAgain(): void;
   cancel(): void;
 };

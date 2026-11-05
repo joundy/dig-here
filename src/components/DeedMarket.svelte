@@ -7,7 +7,8 @@
   import { MAP_IDS } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Kind, MapId } from '../lib/game/types';
-  import { openWallet, ui } from '../lib/ui.svelte';
+  import { attachFor } from '../lib/pay';
+  import { ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
   import MapBadge from './MapBadge.svelte';
   import Sprite from './Sprite.svelte';
@@ -38,7 +39,6 @@
 
   const me = $derived(backend.account);
   const mintPrice = $derived(backend.prices.mintPrice);
-  const guest = $derived(backend.identity.kind === 'guest');
   const perPage = $derived(ui.compact ? 4 : PER_PAGE);
 
   const matching = $derived.by(() => {
@@ -100,29 +100,20 @@
     }
   }
 
-  /** True if the player can afford it. If not, the wallet opens with what's missing. */
-  async function canPay(cost: number): Promise<boolean> {
-    await backend.ensureAccount();
-    const balance = backend.balanceOf(backend.account);
-    if (balance >= cost) return true;
-    openWallet(cost - balance);
-    return false;
-  }
-
   function mint(row: Row) {
     void act(row.id, async () => {
-      if (!(await canPay(mintPrice))) return false;
-      await backend.mintDeed(row.id);
+      await backend.ensureAccount();
+      const attach = await attachFor(`Mint the ${title(row.kind)} NFT`, mintPrice, 50);
+      if (attach === null) return false;
+      await backend.mintDeed(row.id, attach);
     }, `You minted the ${title(row.kind)} NFT. Keep it, or list it under My NFTs.`);
   }
 
   function buy(row: Row, price: number) {
     void act(row.id, async () => {
       await backend.ensureAccount();
-      // They may have just become a guest, and the row now offers the wallet instead. A wallet's own approval
-      // tops up whatever's missing, so only the playtest has to have the coins first.
-      if (backend.identity.kind === 'guest') return false;
-      if (backend.identity.kind !== 'wallet' && !(await canPay(price))) return false;
+      // A wallet's own approval tops up whatever's missing, so only the playtest has to have the coins first.
+      if (backend.identity.kind !== 'wallet' && (await attachFor('', price, price)) === null) return false;
       await backend.buyDeed(row.id, price);
     }, `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
   }
@@ -138,10 +129,6 @@
     event.preventDefault();
     const price = Math.round((Number(priceNear) || 0) * 1000);
     void act(row.id, () => backend.listDeed(row.id, price), `Listed for ${near(price)}.`);
-  }
-
-  function connectInstead() {
-    void act('', () => backend.connectWallet(), 'Wallet connected.');
   }
 
   function send(event: SubmitEvent, row: Row) {
@@ -184,7 +171,6 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if note}<p class="note" role="status">{note}</p>{/if}
   {#if tab === 'mine' && matching.length}<p class="total">Earned so far: {near(myEarnings)}</p>{/if}
-  {#if tab === 'mine' && guest}<p class="guest">Guests can list and sell here. <button class="plain inline" onclick={connectInstead}>Connect a wallet to transfer NFTs</button></p>{/if}
 
   {#if rows.length}
     <ul class="cards">
@@ -241,9 +227,6 @@
             <button class="btn small" disabled={busyId === row.id} onclick={() => mint(row)}>
               {busyId === row.id ? 'Minting…' : `Mint for ${near(mintPrice)}`}
             </button>
-          {:else if deed.price !== null && guest}
-            <p class="selling">{near(deed.price)}</p>
-            <button class="plain" onclick={connectInstead}>Connect a wallet to buy this</button>
           {:else if deed.price !== null}
             <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, deed.price!)}>
               {busyId === row.id ? 'Signing…' : `Buy for ${near(deed.price)}`}
@@ -274,17 +257,6 @@
 </section>
 
 <style>
-  .guest {
-    margin: 0;
-    font-size: 1.15rem;
-    line-height: 1.1;
-    color: var(--mist);
-  }
-  .plain.inline {
-    display: inline;
-    padding: 0;
-    color: var(--sun);
-  }
   .market h1 {
     margin: 0;
     font-family: var(--display);

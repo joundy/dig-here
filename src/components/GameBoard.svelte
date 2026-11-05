@@ -9,7 +9,8 @@
   import { mapName } from '../lib/game/copy';
   import { MAP_IDS } from '../lib/game/map';
   import type { MapId } from '../lib/game/types';
-  import { openWallet, ui } from '../lib/ui.svelte';
+  import { attachFor } from '../lib/pay';
+  import { ui } from '../lib/ui.svelte';
   import GameCard from './GameCard.svelte';
   import JackpotBadge from './JackpotBadge.svelte';
 
@@ -76,14 +77,14 @@
       await backend.ensureAccount();
       const me = backend.account;
       const balance = backend.balanceOf(me);
-      const room = quickPlayRoom(backend.games, balance, me, hosts);
+      const room = quickPlayRoom(backend.games, balance, me, hosts) ?? quickPlayRoom(backend.games, Infinity, me, hosts);
       if (!room) {
-        const wanted = quickPlayRoom(backend.games, Infinity, me, hosts);
-        if (wanted) openWallet(wanted.fee - balance);
-        else error = 'No room left to join. Host one!';
+        error = 'No room left to join. Host one!';
         return;
       }
-      await backend.join(room.id);
+      const attach = await attachFor('Entry fee', room.fee, room.fee);
+      if (attach === null) return;
+      await backend.join(room.id, attach);
       location.hash = `#/game/${room.id}`;
     } catch (e) {
       error = (e as Error).message;

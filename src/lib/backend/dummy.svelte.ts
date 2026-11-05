@@ -92,6 +92,7 @@ class DummyBackend implements GameBackend, PlaytestControls {
   readonly testnet = false;
   readonly offline = false;
   readonly accountPrompt = null;
+  readonly setupCost = 0;
   readonly canTransferDeeds = false;
   readonly playableAccounts = PLAYABLE_ACCOUNTS;
   readonly prices: Prices = {
@@ -128,7 +129,6 @@ class DummyBackend implements GameBackend, PlaytestControls {
   readonly botLimits = null;
   clueArriving() { return false; }
   refreshBalances() {}
-  async connectWallet() {}
   async disconnectWallet() {}
   async transferDeed(): Promise<void> { throw new GameError('This stand-in has no wallet to send from.'); }
 

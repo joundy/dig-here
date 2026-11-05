@@ -4,6 +4,7 @@
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
   import { near } from '../lib/format';
+  import { shortName } from '../lib/names';
   import { openWallet, ui } from '../lib/ui.svelte';
   import Sprite from './Sprite.svelte';
 
@@ -58,12 +59,15 @@
       <Sprite name={audio.settings.sfx ? 'speakerOn' : 'speakerOff'} scale={2} />
     </button>
     <button class="icon help" aria-label="How to play" title="How to play" onclick={() => (ui.tutorial = true)}>?</button>
-    <button class="money" aria-label="Balance {near(balance)}. Open wallet" title="Open wallet" onclick={money}>
+    <button class="money" aria-label={watching ? 'Connect a wallet to play' : `${backend.account}, balance ${near(balance)}. Open wallet`} title={watching ? 'Connect a wallet' : backend.account} onclick={money}>
       <Sprite name="coin" scale={3} />
       {#if watching}
         <span class="amount">Play</span>
       {:else}
-        <span class="amount">{near(Math.round(shown.current)).replace(' NEAR', '')}<span class="unit">{' NEAR'}</span></span>
+        <span class="held">
+          <span class="who">{shortName(backend.account)}</span>
+          <span class="amount">{near(Math.round(shown.current)).replace(' NEAR', '')}<span class="unit">{' NEAR'}</span></span>
+        </span>
         <span class="plus" aria-hidden="true">+</span>
       {/if}
     </button>
@@ -160,6 +164,20 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .held {
+    display: grid;
+    justify-items: start;
+    line-height: 0.95;
+  }
+  /* Testnet names run long, and the name only has to be enough to know whose wallet this is. */
+  .who {
+    max-width: 9rem;
+    overflow: hidden;
+    font-size: 1rem;
+    color: var(--mist);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .plus {
     font-family: var(--display);
     color: var(--sun);
@@ -220,6 +238,9 @@
     .money {
       gap: 0.25rem;
       padding: 0 0.35rem;
+    }
+    .who {
+      max-width: 4.2rem;
     }
     .plus {
       display: none;

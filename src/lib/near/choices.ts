@@ -4,7 +4,42 @@ import type { BotLimits } from '../backend/types';
 
 const YOCTO_PER_MILLI = 10n ** 21n;
 /** A first credit pays for the player's record out of itself: 0.00146 NEAR at most, by the gas doc. */
-const RECORD_MILLI = 2;
+export const RECORD_MILLI = 2;
+/** A top-up choice leaves at least this in the wallet, for gas and whatever else they use it for. */
+const WALLET_KEEP_MILLI = 100;
+/** Below this left over, the wallet couldn't pay the gas for the moves that follow. */
+const WALLET_MIN_LEFT_MILLI = 20;
+const TOP_UP_ROUNDS = [5, 20];
+
+/** Testnet names end in `.testnet`. Implicit accounts are 64 hex characters, and exist on every network. */
+export function isTestnetAccount(account: string): boolean {
+  return account.endsWith('.testnet') || /^[0-9a-f]{64}$/.test(account);
+}
+
+/** What the account could actually send, in milliNEAR. Storage past the free 770 bytes has to stay put. */
+export function spendable(account: { amount: string; storage_usage: number }): number {
+  const locked = BigInt(Math.max(0, account.storage_usage - 770)) * 10n ** 19n;
+  const free = BigInt(account.amount) - locked;
+  return free > 0n ? Number(free / YOCTO_PER_MILLI) : 0;
+}
+
+export type TopUpChoice = { extra: number; rounds: number; total: number; left: number };
+export type TopUpPlan = { short: number; setup: number; choices: TopUpChoice[]; picked: number };
+
+/**
+ * What a wallet could attach to pay for a move, never more than leaves it able to carry on. No choices means it
+ * can't afford this at all. `perRound` is the entry fee the extra is counted in, so the offer reads as games.
+ */
+export function topUpPlan(cost: number, balance: number, wallet: number, setup: number, perRound: number): TopUpPlan {
+  const short = Math.max(0, cost - balance) + setup;
+  const choices: TopUpChoice[] = [];
+  if (wallet - short >= WALLET_MIN_LEFT_MILLI) choices.push({ extra: 0, rounds: 0, total: short, left: wallet - short });
+  for (const rounds of TOP_UP_ROUNDS) {
+    const extra = rounds * perRound;
+    if (wallet - short - extra >= WALLET_KEEP_MILLI) choices.push({ extra, rounds, total: short + extra, left: wallet - short - extra });
+  }
+  return { short, setup, choices, picked: Math.min(1, choices.length - 1) };
+}
 
 /**
  * What a wallet attaches to `buy_nft`: the yocto the contract demands, plus what the game balance is short of.

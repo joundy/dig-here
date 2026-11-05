@@ -1,4 +1,7 @@
 // Small bits of screen state shared across components.
+/** A wallet is about to be asked for coins. `answer` gets the amount to attach, or null if they back out. */
+export type TopUp = { what: string; cost: number; perRound: number; answer: (attach: number | null) => void };
+
 const COMPACT = '(orientation: portrait) and (max-width: 960px)';
 const SHORT = '(orientation: landscape) and (max-height: 500px)';
 const COARSE = '(pointer: coarse)';
@@ -19,6 +22,8 @@ export const ui = $state<{
   focus: { x: number; y: number } | null;
   /** The wallet dialog, if open. `need` is the coins missing for what the player just tried. */
   wallet: { need: number | null } | null;
+  /** The add-coins dialog, if open. */
+  topUp: TopUp | null;
   /** The how-to-play pop-up. */
   tutorial: boolean;
 }>({
@@ -30,6 +35,7 @@ export const ui = $state<{
   cameraReset: 0,
   focus: null,
   wallet: null,
+  topUp: null,
   tutorial: false,
 });
 

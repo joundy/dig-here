@@ -11,6 +11,7 @@
     { title: 'Mark your spot', text: 'Put your X on land. You get one dig per round.' },
     { title: 'Dig early or wait', text: 'Score = closeness × bonus, and the bonus drops with each clue. 90 close at ×1.5 beats a perfect dig at ×1. Don\'t dig right next to someone else.' },
     { title: 'The treasure appears', text: 'Only when the timer ends. Highest score wins the pot. The exact pixel wins the jackpot.' },
+    { title: 'Bring a testnet wallet', text: 'Watching is free. To dig, connect a NEAR testnet wallet: one approval to sign in, one to add coins when you join, then no more popups. Wallet and coins are free, and the game shows you how.' },
   ];
   const ROLL_STEPS = 13;
 
@@ -105,6 +106,8 @@
           <span class="vs">beats a perfect late dig</span>
           <span class="sum">100 × 1 = 100</span>
         </div>
+      {:else if card === 4}
+        <div class="face"><Sprite name="coin" scale={4} /></div>
       {:else}
         <div class="trees">
           {#each [0, 1, 2, 3] as tree}

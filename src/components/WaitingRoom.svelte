@@ -7,7 +7,8 @@
   import { clock, near, percent } from '../lib/format';
   import { RULES } from '../lib/game/rules';
   import type { Game } from '../lib/game/types';
-  import { openWallet, ui } from '../lib/ui.svelte';
+  import { attachFor } from '../lib/pay';
+  import { ui } from '../lib/ui.svelte';
   import MapBadge from './MapBadge.svelte';
   import Playtest from './Playtest.svelte';
   import Who from './Who.svelte';
@@ -58,12 +59,9 @@
   function join() {
     void run(async () => {
       await backend.ensureAccount();
-      const balance = backend.balanceOf(backend.account);
-      if (balance < game.fee) {
-        openWallet(game.fee - balance);
-        return;
-      }
-      await backend.join(game.id);
+      const attach = await attachFor('Entry fee', game.fee, game.fee);
+      if (attach === null) return;
+      await backend.join(game.id, attach);
     });
   }
 

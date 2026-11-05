@@ -114,7 +114,7 @@ export async function viewAccount(id: string): Promise<AccountView | null> {
 
 export type AccessKeyView = { nonce: number; block_hash: string };
 
-/** Null when the key isn't on the account, which is what a swept guest looks like. */
+/** Null when the key isn't on the account. */
 export async function viewAccessKey(id: string, publicKey: string): Promise<AccessKeyView | null> {
   try {
     const result = await read('query', { request_type: 'view_access_key', finality: 'optimistic', account_id: id, public_key: publicKey });

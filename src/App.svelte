@@ -13,6 +13,7 @@
   import NewGame from './components/NewGame.svelte';
   import RoomGate from './components/RoomGate.svelte';
   import SeasonPage from './components/SeasonPage.svelte';
+  import TopUpDialog from './components/TopUpDialog.svelte';
   import Tutorial from './components/Tutorial.svelte';
   import WalletDialog from './components/WalletDialog.svelte';
   import type { Point } from './lib/game/types';
@@ -116,5 +117,6 @@
 </div>
 
 {#if ui.wallet}<WalletDialog />{/if}
+{#if ui.topUp}<TopUpDialog request={ui.topUp} />{/if}
 {#if backend.accountPrompt}<AccountDialog prompt={backend.accountPrompt} />{/if}
 {#if ui.tutorial}<Tutorial />{/if}
