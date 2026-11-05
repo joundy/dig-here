@@ -103,7 +103,6 @@ export const gasReserve = (gasTgas: number): number => gasTgas;
 
 export type Afford = { ok: true } | { ok: false; short: number };
 
-/** Null wallet means nobody has read it yet, and that must not read as "you have nothing". */
 export function canAfford(cost: number, gasTgas: number, wallet: number): Afford {
   const short = cost + gasReserve(gasTgas) - wallet;
   return short <= 0 ? { ok: true } : { ok: false, short };

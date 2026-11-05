@@ -277,6 +277,18 @@ describe('the backend', () => {
     await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('All your coins came back to your wallet.');
   });
 
+  it('takes the answer the market gives, with no logs to go on', async () => {
+    const answer = (value: boolean) => ({ ...SUCCESS, status: { SuccessValue: btoa(JSON.stringify(value)) } });
+    views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('seller.testnet')];
+    const backend = await load(WALLET);
+    walletAnswer = answer(false);
+    await expect(backend.buyDeed('snowy:penguin', 1000)).rejects.toThrow('All your coins came back to your wallet.');
+    walletAnswer = answer(true);
+    await backend.buyDeed('snowy:penguin', 1000);
+    expect(backend.deedOf('snowy:penguin').owner).toBe('me.testnet');
+  });
+
   it("checks the chain when a wallet doesn't hand back the logs", async () => {
     views[`${CHAIN}.get_nfts`] = [nft('seller.testnet')];
     views[`${MARKET}.get_listings`] = [listing('seller.testnet')];

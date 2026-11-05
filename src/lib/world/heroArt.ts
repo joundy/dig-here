@@ -130,8 +130,3 @@ export function heroSize(kind: Kind): { w: number; h: number; overhang: number }
   const overhang = Math.max(0, ...layers.map((l) => -l.y));
   return { w: base[0].length, h: base.length + overhang, overhang };
 }
-
-/** Every filled cell turned one colour, for an NFT nobody has found yet. */
-export function silhouette(grid: Grid, color: string): Grid {
-  return grid.map((row) => row.map((cell) => (cell === '' ? '' : color)));
-}

@@ -1005,11 +1005,12 @@ class NearBackend implements GameBackend {
       throw e;
     }
     this.refreshBalances();
-    if (outcome.events.some((e) => e.event === 'nft_sale_failed')) {
+    // A failed sale is still a successful transaction: the contract answers false, and the coins have gone back.
+    if (outcome.value === false || outcome.events.some((e) => e.event === 'nft_sale_failed')) {
       void this.#loadDeeds();
       throw new GameError('The seller no longer has this NFT, so the sale fell through. All your coins came back to your wallet.');
     }
-    if (!outcome.events.some((e) => e.event === 'nft_sold') && !(await this.#ownsAfterAll(id, session.accountId))) {
+    if (outcome.value !== true && !outcome.events.some((e) => e.event === 'nft_sold') && !(await this.#ownsAfterAll(id, session.accountId))) {
       throw new GameError("The sale didn't go through. If any coins left your wallet they're on their way back.");
     }
     this.#movedDeed(id, { owner: session.accountId, price: null, saleInProgress: false });

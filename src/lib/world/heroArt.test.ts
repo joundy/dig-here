@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MAP_IDS } from '../game/map';
 import { deedKinds } from '../game/economy';
 import type { Grid } from './heroArt';
-import { heroFrames, heroGrid, heroLayers, heroSize, scale2x, shade, silhouette, thinOutline } from './heroArt';
+import { heroFrames, heroGrid, heroLayers, heroSize, scale2x, shade, thinOutline } from './heroArt';
 import { paintScene, seeded, surfaceOf } from './deedScene';
 import { PALETTE } from './sprites';
 
@@ -45,10 +45,6 @@ describe('the art at card size', () => {
     expect(shaded[0]).toEqual([K, K, K, K]);
     expect(shaded[1][1]).not.toBe(W);
     expect(shade(grid)[1][1]).toBe(W);
-  });
-
-  it('turns everything one colour for a silhouette, and keeps the holes', () => {
-    expect(silhouette([[K, ''], [W, W]], '#000000')).toEqual([['#000000', ''], ['#000000', '#000000']]);
   });
 
   for (const map of MAP_IDS) {
