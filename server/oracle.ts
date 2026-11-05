@@ -92,7 +92,8 @@ export class Oracle {
     if (!seasonDue(live.season, live.now_ms) || Date.now() - this.#seasonTried < CLOSE_SEASON_RETRY_MS) return;
     this.#seasonTried = Date.now();
     try {
-      const r = await this.#runner.call(this.#config.contract, 'close_season', {}, CLOSE_SEASON_TGAS, 0n);
+      // Not the runner, whose keys can only poke and reveal.
+      const r = await this.#oracle.call(this.#config.contract, 'close_season', {}, CLOSE_SEASON_TGAS, 0n);
       log('oracle', r.ok ? `closed season ${live.season.number}` : `closing season ${live.season.number} refused: ${r.failure}`, { hash: r.hash });
     } catch (e) {
       log('oracle', `closing season ${live.season.number} failed: ${errorText(e)}`);
