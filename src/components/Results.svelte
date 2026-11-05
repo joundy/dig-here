@@ -7,7 +7,11 @@
   import type { Game } from '../lib/game/types';
   import { buzz, ui } from '../lib/ui.svelte';
   import { world } from '../lib/world/world';
+  import { shortName } from '../lib/names';
+  import { backend } from '../lib/backend';
   import Parrot from './Parrot.svelte';
+  import VerifyRound from './VerifyRound.svelte';
+  import Who from './Who.svelte';
 
   const JACKPOT_MS = 4500;
 
@@ -22,12 +26,13 @@
   const kind = $derived(treasure ? kindName(game.landmarks[treasure.landmarkId].kind) : '');
   const myPoints = $derived(result.seasonPoints[me] ?? 0);
   const jackpotWin = $derived(result.jackpotWin);
-  const jackpotName = $derived(jackpotWin?.account === me ? 'You' : jackpotWin?.account);
+  const jackpotName = $derived(jackpotWin?.account === me ? 'You' : jackpotWin && shortName(jackpotWin.account));
 
   // Rows land from last place up to first, so the winner is the final beat.
   let revealed = $state(untrack(() => (dramatic ? 0 : result.ranking.length)));
   let announced = $state(untrack(() => !dramatic));
   let jackpotMoment = $state(false);
+  let verifying = $state(false);
   const timers: ReturnType<typeof setTimeout>[] = [];
 
   $effect(() => {
@@ -66,7 +71,7 @@
 
   const headline = $derived.by(() => {
     if (isWinner) return `You win ${near(result.split.prize)}! Squawk!`;
-    return `${result.winner} wins ${near(result.split.prize)}.`;
+    return `${result.winner ? shortName(result.winner) : 'Nobody'} wins ${near(result.split.prize)}.`;
   });
 
   const detail = $derived.by(() => {
@@ -79,7 +84,7 @@
   const deedLine = $derived.by(() => {
     if (!result.deedOwner) return `Nobody has minted the ${kind} NFT yet, so the share went to the jackpot.`;
     if (result.deedOwner === me) return `You own the ${kind} NFT, so you earned ${near(result.split.deed)}.`;
-    return `${result.deedOwner} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
+    return `${shortName(result.deedOwner)} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
   });
 
   const refundLine = $derived(
@@ -118,7 +123,7 @@
         {#each result.ranking as d, i (d.account)}
           {@const visible = result.ranking.length - i <= revealed}
           <tr class:win={i === 0 && visible} class:me={d.account === me} class:visible>
-            <td>{d.account === me ? 'You' : d.account}</td>
+            <td><Who account={d.account} {me} /></td>
             <td class="n">{points(d.closeness)}</td>
             <td class="n">{bonus(d.bonusBps)}{#if d.crowded}<span class="crowded" title="Crowded">{bonus(RULES.crowdBps)}</span>{/if}</td>
             <td class="n">{points(d.score)}</td>
@@ -138,8 +143,11 @@
     {#if myPoints}<p class="line points">You earned {myPoints} season points.</p>{/if}
   {/if}
 
+  {#if backend.testnet}<button class="verify-link" onclick={() => (verifying = true)}>Verify this round</button>{/if}
   <a class="btn" href="#/">Find another game</a>
 </div>
+
+{#if verifying}<VerifyRound gameId={game.id} onclose={() => (verifying = false)} />{/if}
 
 {#if jackpotMoment && jackpotWin}
   <div class="jackpot" role="alert">
@@ -150,6 +158,18 @@
 {/if}
 
 <style>
+  .verify-link {
+    justify-self: center;
+    padding: 0.4rem 0.6rem;
+    font: inherit;
+    font-size: 1.25rem;
+    line-height: 1.1;
+    color: var(--sun);
+    text-decoration: underline;
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
   table {
     width: 100%;
     margin: 0.9rem 0 0.6rem;

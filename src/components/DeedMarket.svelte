@@ -11,6 +11,7 @@
   import { world } from '../lib/world/world';
   import MapBadge from './MapBadge.svelte';
   import Sprite from './Sprite.svelte';
+  import Who from './Who.svelte';
 
   type Tab = 'market' | 'mint' | 'all' | 'mine';
   type Row = { map: MapId; kind: Kind; id: string };
@@ -32,8 +33,12 @@
   let note = $state('');
   let editing = $state('');
   let priceNear = $state<number | null>(null);
+  let sending = $state('');
+  let sendTo = $state('');
 
   const me = $derived(backend.account);
+  const mintPrice = $derived(backend.prices.mintPrice);
+  const guest = $derived(backend.identity.kind === 'guest');
   const perPage = $derived(ui.compact ? 4 : PER_PAGE);
 
   const matching = $derived.by(() => {
@@ -78,11 +83,12 @@
     return `${name[0].toUpperCase()}${name.slice(1)}`;
   }
 
-  async function act(id: string, action: () => Promise<void>, done: string) {
+  /** `action` resolves to false when it stepped aside without doing anything, as when the wallet opened instead. */
+  async function act(id: string, action: () => Promise<void | false>, done: string) {
     busyId = id;
     error = note = '';
     try {
-      await action();
+      if ((await action()) === false) return;
       audio.coin();
       note = done;
       editing = '';
@@ -95,23 +101,26 @@
   }
 
   /** True if the player can afford it. If not, the wallet opens with what's missing. */
-  function canPay(cost: number): boolean {
-    const balance = backend.balanceOf(me);
+  async function canPay(cost: number): Promise<boolean> {
+    await backend.ensureAccount();
+    const balance = backend.balanceOf(backend.account);
     if (balance >= cost) return true;
     openWallet(cost - balance);
     return false;
   }
 
   function mint(row: Row) {
-    if (canPay(RULES.deedMintPrice)) {
-      void act(row.id, () => backend.mintDeed(row.id), `You minted the ${title(row.kind)} NFT. Keep it, or list it under My NFTs.`);
-    }
+    void act(row.id, async () => {
+      if (!(await canPay(mintPrice))) return false;
+      await backend.mintDeed(row.id);
+    }, `You minted the ${title(row.kind)} NFT. Keep it, or list it under My NFTs.`);
   }
 
   function buy(row: Row, price: number) {
-    if (canPay(price)) {
-      void act(row.id, () => backend.buyDeed(row.id, price), `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
-    }
+    void act(row.id, async () => {
+      if (!(await canPay(price))) return false;
+      await backend.buyDeed(row.id, price);
+    }, `The ${title(row.kind)} NFT is yours. Hope the treasure likes it.`);
   }
 
   function startListing(row: Row) {
@@ -127,6 +136,22 @@
     void act(row.id, () => backend.listDeed(row.id, price), `Listed for ${near(price)}.`);
   }
 
+  function connectInstead() {
+    void act('', () => backend.connectWallet(), 'Wallet connected.');
+  }
+
+  function send(event: SubmitEvent, row: Row) {
+    event.preventDefault();
+    const to = sendTo.trim();
+    void act(row.id, () => backend.transferDeed(row.id, to), `Sent to ${to}.`);
+  }
+
+  function startSending(row: Row) {
+    sending = row.id;
+    sendTo = '';
+    error = note = '';
+  }
+
   function unlist(row: Row) {
     void act(row.id, () => backend.listDeed(row.id, null), 'Off the market. It stays yours.');
   }
@@ -136,7 +161,7 @@
   <h1>NFT market</h1>
   <p class="what">
     Earn {percent(RULES.deedBps)} of the pot when the treasure lands by your kind of landmark.
-    Mint a new one for {near(RULES.deedMintPrice)}, or buy one someone has listed.
+    Mint a new one for {near(mintPrice)}, or buy one someone has listed.
   </p>
 
   <div class="tabs" role="tablist" aria-label="NFTs">
@@ -155,6 +180,7 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if note}<p class="note" role="status">{note}</p>{/if}
   {#if tab === 'mine' && matching.length}<p class="total">Earned so far: {near(myEarnings)}</p>{/if}
+  {#if tab === 'mine' && guest}<p class="guest">Guests can list and sell here. <button class="plain inline" onclick={connectInstead}>Connect a wallet to transfer NFTs</button></p>{/if}
 
   {#if rows.length}
     <ul class="cards">
@@ -170,7 +196,7 @@
           </div>
           <h2>{title(row.kind)}</h2>
           <div class="where"><MapBadge mapId={row.map} compact /><span>{deedCount(row.map, row.kind)} on the map</span></div>
-          <p class="owner">{mine ? 'You own this' : deed.owner ? `Owner: ${deed.owner}` : 'Not minted yet'}</p>
+          <p class="owner">{#if mine}You own this{:else if deed.owner}Owner: <Who account={deed.owner} {me} />{:else}Not minted yet{/if}</p>
           <dl>
             <div><dt>Chance</dt><dd>~{Math.round(deedChance(row.map, row.kind) * 100)}%</dd></div>
             <div><dt>Landed</dt><dd>{deed.landings}</dd></div>
@@ -186,6 +212,15 @@
               <button class="btn small" type="submit" disabled={busyId === row.id}>{deed.price === null ? 'List it' : 'Save price'}</button>
               <button class="plain" type="button" onclick={() => (editing = '')}>Cancel</button>
             </form>
+          {:else if sending === row.id}
+            <form class="edit" onsubmit={(e) => send(e, row)}>
+              <label>
+                <span>Send to account</span>
+                <input bind:value={sendTo} placeholder="name.testnet" autocomplete="off" disabled={busyId === row.id} />
+              </label>
+              <button class="btn small" type="submit" disabled={busyId === row.id || !sendTo.trim()}>{busyId === row.id ? 'Asking your wallet…' : 'Send'}</button>
+              <button class="plain" type="button" onclick={() => (sending = '')}>Cancel</button>
+            </form>
           {:else if mine}
             {#if deed.price !== null}
               <p class="selling">Listed for <strong>{near(deed.price)}</strong></p>
@@ -193,11 +228,14 @@
               <button class="plain" disabled={busyId === row.id} onclick={() => unlist(row)}>Take off market</button>
             {:else}
               <p class="selling">Not listed</p>
-              <button class="btn small alt" onclick={() => startListing(row)}>List for sale</button>
+              <button class="btn small alt" disabled={busyId === row.id} onclick={() => startListing(row)}>List for sale</button>
+            {/if}
+            {#if backend.canTransferDeeds}
+              <button class="plain" onclick={() => startSending(row)}>Send to someone</button>
             {/if}
           {:else if deed.owner === null}
             <button class="btn small" disabled={busyId === row.id} onclick={() => mint(row)}>
-              {busyId === row.id ? 'Minting…' : `Mint for ${near(RULES.deedMintPrice)}`}
+              {busyId === row.id ? 'Minting…' : `Mint for ${near(mintPrice)}`}
             </button>
           {:else if deed.price !== null}
             <button class="btn small" disabled={busyId === row.id} onclick={() => buy(row, deed.price!)}>
@@ -229,6 +267,17 @@
 </section>
 
 <style>
+  .guest {
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.1;
+    color: var(--mist);
+  }
+  .plain.inline {
+    display: inline;
+    padding: 0;
+    color: var(--sun);
+  }
   .market h1 {
     margin: 0;
     font-family: var(--display);

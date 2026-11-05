@@ -20,12 +20,14 @@
   import Playtest from './Playtest.svelte';
   import Results from './Results.svelte';
   import Standing from './Standing.svelte';
+  import Who from './Who.svelte';
   import WaitingRoom from './WaitingRoom.svelte';
 
   /** Tension builds over the last ten seconds and is at full strength for the last three. */
   const TENSE_SEC = 10;
   const PEAK_SEC = 3;
-  const LAST_DIG_SEC = 1;
+  /** A dig normally confirms in 1.4 to 2.6 s. Past this the player should hear why it's taking longer. */
+  const SLOW_DIG_MS = 4000;
 
   type BoardState = { pickable: boolean; spot: Point | null; label: string };
   let { id, onboard }: { id: string; onboard: (b: BoardState) => void } = $props();
@@ -39,6 +41,7 @@
   let spot = $state.raw<Point | null>(null);
   let error = $state('');
   let busy = $state(false);
+  let slowDig = $state(false);
   /** On a phone, the pot, the player list and the test controls live in a slide-up sheet. */
   let moreOpen = $state(false);
 
@@ -173,7 +176,7 @@
     const whole = Math.ceil(left);
     if (whole !== lastSecond && whole <= TENSE_SEC && whole > 0) audio.tick(whole <= PEAK_SEC);
     lastSecond = whole;
-    if (left <= TENSE_SEC) world.setTension(Math.min(1, (TENSE_SEC - left) / (TENSE_SEC - PEAK_SEC)), [...game.candidateIds]);
+    if (left <= TENSE_SEC) world.setTension(left <= 0 ? 0.6 : Math.min(1, (TENSE_SEC - left) / (TENSE_SEC - PEAK_SEC)), [...game.candidateIds]);
   });
 
   function clearRound() {
@@ -236,7 +239,9 @@
     if (!quiet) audio.pick();
   }
 
-  const tooLate = $derived(game?.stage === 'live' && secondsLeft(game) <= LAST_DIG_SEC);
+  const tooLate = $derived(game?.stage === 'live' && secondsLeft(game) <= backend.lastDigSec);
+  /** On a real chain the round's last roll takes a few seconds after the clock runs out. */
+  const rolling = $derived(game?.stage === 'live' && secondsLeft(game) <= 0);
 
   async function dig() {
     if (!game || !spot || busy || tooLate) return;
@@ -245,6 +250,7 @@
     const signer = me;
     error = '';
     busy = true;
+    const slow = setTimeout(() => (slowDig = true), SLOW_DIG_MS);
     try {
       await backend.dig(game.id, spot, seenClue);
       if (backend.account === signer) spot = null;
@@ -254,6 +260,8 @@
         audio.error();
       }
     } finally {
+      clearTimeout(slow);
+      slowDig = false;
       busy = false;
     }
   }
@@ -281,7 +289,10 @@
     <div class="bottom">
       <div class="action">
         {#if error}<p class="error" role="alert">{error}</p>{/if}
-        {#if !joined}
+        {#if busy && myDig}<p class="note confirming" role="status">{slowDig ? 'Still digging. The ground is tough here…' : 'Shovel in the ground…'}</p>{/if}
+        {#if rolling}
+          <p class="prompt">Time's up! The treasure is on its way…</p>
+        {:else if !joined}
           <p class="prompt">This round has started. You're watching.</p>
         {:else if myDig}
           {#key me}<Standing {game} {me} />{/key}
@@ -325,7 +336,7 @@
       <ul class="diggers">
         {#each [...game.digs].reverse() as d (d.account)}
           <li class:me={d.account === me} in:fly={{ x: 16, duration: 200 }} animate:flip={{ duration: 180 }}>
-            <span>{d.account === me ? 'You' : d.account}</span>
+            <span><Who account={d.account} {me} /></span>
             <span>{bonus(d.bonusBps)}{d.crowded ? ` ${bonus(RULES.crowdBps)}` : ''}</span>
           </li>
         {:else}

@@ -5,6 +5,7 @@
   import { boardView, quickPlayRoom, SORTS } from '../lib/board';
   import type { BoardTab, SortId } from '../lib/board';
   import { audio } from '../lib/audio/audio.svelte';
+  import { near } from '../lib/format';
   import { mapName } from '../lib/game/copy';
   import { MAP_IDS } from '../lib/game/map';
   import type { MapId } from '../lib/game/types';
@@ -20,8 +21,7 @@
   ];
   const FEES: { value: number | null; label: string }[] = [
     { value: null, label: 'Any fee' },
-    { value: 1000, label: 'Max 1 NEAR' },
-    { value: 5000, label: 'Max 5 NEAR' },
+    ...backend.prices.feeFilters.map((value) => ({ value, label: `Max ${near(value)}` })),
   ];
   const EMPTY: Record<BoardTab, string> = {
     waiting: 'Nobody is waiting. Suspicious. Host one and be the hero.',
@@ -71,17 +71,18 @@
 
   async function quickPlay() {
     error = '';
-    const me = backend.account;
-    const balance = backend.balanceOf(me);
-    const room = quickPlayRoom(backend.games, balance, me, hosts);
-    if (!room) {
-      const wanted = quickPlayRoom(backend.games, Infinity, me, hosts);
-      if (wanted) openWallet(wanted.fee - balance);
-      else error = 'No room left to join. Host one!';
-      return;
-    }
     busy = true;
     try {
+      await backend.ensureAccount();
+      const me = backend.account;
+      const balance = backend.balanceOf(me);
+      const room = quickPlayRoom(backend.games, balance, me, hosts);
+      if (!room) {
+        const wanted = quickPlayRoom(backend.games, Infinity, me, hosts);
+        if (wanted) openWallet(wanted.fee - balance);
+        else error = 'No room left to join. Host one!';
+        return;
+      }
       await backend.join(room.id);
       location.hash = `#/game/${room.id}`;
     } catch (e) {
@@ -104,6 +105,7 @@
     </div>
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if backend.offline}<p class="offline" role="status">The game server is away, so this is coming straight from the chain.</p>{/if}
 
   <div class="tabs" role="tablist" aria-label="Games by stage">
     {#each TABS as item}
@@ -178,6 +180,12 @@
 </section>
 
 <style>
+  .offline {
+    margin: 0;
+    font-size: 1.15rem;
+    line-height: 1.1;
+    color: var(--mist);
+  }
   .board {
     display: grid;
     gap: 0.6rem;

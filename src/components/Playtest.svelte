@@ -1,40 +1,43 @@
 <script lang="ts">
-  import { dummy } from '../lib/backend/dummy.svelte';
+  import { backend } from '../lib/backend';
 
   let { gameId }: { gameId: string } = $props();
 
   const SPEEDS = [1, 5, 20];
-  const stage = $derived(dummy.games.find((g) => g.id === gameId)?.stage);
+  const stage = $derived(backend.games.find((g) => g.id === gameId)?.stage);
+  const controls = backend.playtest;
 
   // The game ids start again after a reset, so staying here would show a different room.
   function reset() {
-    dummy.reset();
+    controls?.reset();
     location.hash = '#/';
   }
 </script>
 
+{#if controls}
 <details class="playtest">
   <summary>Playtest controls</summary>
   <div class="row" role="group" aria-label="Game speed">
     {#each SPEEDS as speed}
-      <button class:on={dummy.speed === speed} aria-pressed={dummy.speed === speed} onclick={() => (dummy.speed = speed)}>×{speed}</button>
+      <button class:on={controls.speed === speed} aria-pressed={controls.speed === speed} onclick={() => (controls.speed = speed)}>×{speed}</button>
     {/each}
   </div>
   <div class="row">
     {#if stage === 'waiting'}
-      <button onclick={() => dummy.fillRoom(gameId)}>Fill room</button>
-      <button onclick={() => dummy.startNow(gameId)}>Start now</button>
+      <button onclick={() => controls.fillRoom(gameId)}>Fill room</button>
+      <button onclick={() => controls.startNow(gameId)}>Start now</button>
     {:else if stage === 'live'}
-      <button onclick={() => dummy.skipToNextClue(gameId)}>Skip to next clue</button>
+      <button onclick={() => controls.skipToNextClue(gameId)}>Skip to next clue</button>
     {/if}
-    <button onclick={() => dummy.endNow(gameId)}>End game</button>
-    <button onclick={() => dummy.forceJackpot(gameId)}>Force jackpot</button>
+    <button onclick={() => controls.endNow(gameId)}>End game</button>
+    <button onclick={() => controls.forceJackpot(gameId)}>Force jackpot</button>
   </div>
   <div class="row">
-    <button onclick={() => dummy.endSeason()}>End season</button>
+    <button onclick={() => controls.endSeason()}>End season</button>
     <button onclick={reset}>Reset everything</button>
   </div>
 </details>
+{/if}
 
 <style>
   .playtest {

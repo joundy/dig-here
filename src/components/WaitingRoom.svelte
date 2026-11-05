@@ -10,6 +10,7 @@
   import { openWallet, ui } from '../lib/ui.svelte';
   import MapBadge from './MapBadge.svelte';
   import Playtest from './Playtest.svelte';
+  import Who from './Who.svelte';
 
   let { game, me }: { game: Game; me: string } = $props();
 
@@ -20,7 +21,7 @@
   const joined = $derived(game.players.includes(me));
   const full = $derived(count >= game.maxPlayers);
   const need = $derived(game.minPlayers - count);
-  const deadline = $derived(RULES.waitingDeadlineSec - game.waited);
+  const deadline = $derived(Math.max(0, RULES.waitingDeadlineSec - game.waited));
 
   const status = $derived.by(() => {
     if (game.startIn !== null) return `Starting in ${clock(game.startIn)}`;
@@ -55,12 +56,15 @@
   }
 
   function join() {
-    const balance = backend.balanceOf(me);
-    if (balance < game.fee) {
-      openWallet(game.fee - balance);
-      return;
-    }
-    void run(() => backend.join(game.id));
+    void run(async () => {
+      await backend.ensureAccount();
+      const balance = backend.balanceOf(backend.account);
+      if (balance < game.fee) {
+        openWallet(game.fee - balance);
+        return;
+      }
+      await backend.join(game.id);
+    });
   }
 
   function leave() {
@@ -78,7 +82,7 @@
     <MapBadge mapId={game.mapId} compact={ui.compact} />
   </div>
   <ul class="facts">
-    <li>Host {game.host === me ? 'you' : game.host}</li>
+    <li>Host <Who account={game.host} {me} you="you" /></li>
     <li>Entry {near(game.fee)}</li>
     <li>Round {clock(game.durationSec)}</li>
     <li>Host keeps {percent(game.hostCutBps)}</li>
@@ -104,7 +108,7 @@
       <button class="btn" onclick={() => run(() => backend.start(game.id))} disabled={busy}>Start now</button>
     {/if}
     {#if joined}
-      <button class="leave" onclick={leave} disabled={busy}>Leave and get {near(game.fee)} back</button>
+      <button class="leave" onclick={leave} disabled={busy}>{busy ? 'One moment…' : `Leave and get ${near(game.fee)} back`}</button>
     {:else if full}
       <button class="btn" disabled>Room is full</button>
     {:else}
@@ -116,7 +120,7 @@
 
   <ul class="players">
     {#each game.players as player (player)}
-      <li class:me={player === me} in:fly={{ y: 10, duration: 220 }} animate:flip={{ duration: 180 }}>{player === me ? 'You' : player}</li>
+      <li class:me={player === me} in:fly={{ y: 10, duration: 220 }} animate:flip={{ duration: 180 }}><Who account={player} {me} /></li>
     {:else}
       <li class="empty">Nobody yet. Be the first!</li>
     {/each}

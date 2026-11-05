@@ -6,7 +6,7 @@ import { isLand, MAP_IDS, mathRng, rollLayout } from '../game/map';
 import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Game, NewGameInput, Point } from '../game/types';
-import type { GameBackend } from './types';
+import type { GameBackend, Identity, PlaytestControls, Prices } from './types';
 
 const STORAGE_KEY = 'dig-here-dummy-v5';
 const TICK_MS = 250;
@@ -83,9 +83,24 @@ function planBots(count: number, exclude: string | null, joinGap: number): BotPl
   });
 }
 
-class DummyBackend implements GameBackend {
+class DummyBackend implements GameBackend, PlaytestControls {
   #state = $state<Persisted>(load() ?? this.#fresh());
   speed = $state(1);
+
+  readonly ready = true;
+  readonly lastDigSec = 1;
+  readonly testnet = false;
+  readonly offline = false;
+  readonly accountPrompt = null;
+  readonly canTransferDeeds = false;
+  readonly playableAccounts = PLAYABLE_ACCOUNTS;
+  readonly prices: Prices = {
+    hostBond: RULES.hostBond,
+    mintPrice: RULES.deedMintPrice,
+    feeChoices: null,
+    feeFilters: [1000, 5000],
+    walletAmounts: [1000, 5000, 10000],
+  };
 
   constructor() {
     if (this.#state.games.length === 0) this.#seed();
@@ -99,10 +114,21 @@ class DummyBackend implements GameBackend {
     return { account: PLAYABLE_ACCOUNTS[0], ledger, games: [], bots: {}, nextId: 1 };
   }
 
+  get playtest(): PlaytestControls { return this; }
   get account() { return this.#state.account; }
+  get identity(): Identity { return { kind: 'playtest', accountId: this.#state.account }; }
   get games() { return this.#state.games; }
   get jackpot() { return this.#state.ledger.jackpot; }
   get season() { return this.#state.ledger.season; }
+
+  nowMs() { return Date.now(); }
+  async ensureAccount() {}
+  async loadGame() {}
+  async proofOf() { return null; }
+  refreshBalances() {}
+  async connectWallet() {}
+  async disconnectWallet() {}
+  async transferDeed(): Promise<void> { throw new GameError('This stand-in has no wallet to send from.'); }
 
   walletOf(account: string) { return economy.walletOf(this.#state.ledger, account); }
   balanceOf(account: string) { return economy.balanceOf(this.#state.ledger, account); }
@@ -415,5 +441,5 @@ class DummyBackend implements GameBackend {
   }
 }
 
-export const dummy = new DummyBackend();
+export const backend = new DummyBackend();
 

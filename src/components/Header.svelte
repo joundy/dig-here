@@ -16,15 +16,23 @@
   ];
 
   const balance = $derived(ui.heldBalance ?? backend.balanceOf(backend.account));
+  const watching = $derived(backend.identity.kind === 'none');
   const shown = new Tween(0, { duration: 500, easing: cubicOut });
 
   $effect(() => {
     shown.target = balance;
   });
+
+  // Nothing to show a watcher yet. This is one of the places that can ask how they'd like to play.
+  function money() {
+    if (watching) backend.ensureAccount().then(() => openWallet()).catch(() => {});
+    else openWallet();
+  }
 </script>
 
 <header>
   <a class="brand" href="#/">Dig Here</a>
+  {#if backend.testnet}<span class="testnet" title="Everything here runs on NEAR's test network. These coins have no value.">Testnet</span>{/if}
   <nav aria-label="Pages">
     {#each NAV as link}
       <a href={link.href} class:here={current === link.name} aria-current={current === link.name ? 'page' : undefined}>{link.label}</a>
@@ -50,10 +58,14 @@
       <Sprite name={audio.settings.sfx ? 'speakerOn' : 'speakerOff'} scale={2} />
     </button>
     <button class="icon help" aria-label="How to play" title="How to play" onclick={() => (ui.tutorial = true)}>?</button>
-    <button class="money" aria-label="Balance {near(balance)}. Open wallet" title="Open wallet" onclick={() => openWallet()}>
+    <button class="money" aria-label="Balance {near(balance)}. Open wallet" title="Open wallet" onclick={money}>
       <Sprite name="coin" scale={3} />
-      <span class="amount">{near(Math.round(shown.current)).replace(' NEAR', '')}<span class="unit">{' NEAR'}</span></span>
-      <span class="plus" aria-hidden="true">+</span>
+      {#if watching}
+        <span class="amount">Play</span>
+      {:else}
+        <span class="amount">{near(Math.round(shown.current)).replace(' NEAR', '')}<span class="unit">{' NEAR'}</span></span>
+        <span class="plus" aria-hidden="true">+</span>
+      {/if}
     </button>
   </div>
 </header>
@@ -77,6 +89,13 @@
     text-decoration: none;
     white-space: nowrap;
     text-shadow: 3px 3px 0 var(--ink);
+  }
+  .testnet {
+    padding: 0.05rem 0.35rem;
+    font-size: 1.05rem;
+    line-height: 1.1;
+    color: var(--ink);
+    background: var(--pink);
   }
   nav {
     display: flex;
@@ -183,11 +202,20 @@
     }
   }
   @media (max-width: 400px) {
+    header {
+      gap: 0.25rem 0.4rem;
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+    }
     .brand {
-      font-size: 1.8rem;
+      font-size: 1.7rem;
+    }
+    .testnet {
+      font-size: 0.95rem;
+      padding: 0 0.2rem;
     }
     .icon {
-      width: 2.25rem;
+      width: 2rem;
     }
     .money {
       gap: 0.25rem;

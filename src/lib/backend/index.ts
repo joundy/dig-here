@@ -1,5 +1,6 @@
-import { dummy } from './dummy.svelte';
 import type { GameBackend } from './types';
 
-// The one line to change when the real NEAR backend exists.
-export const backend: GameBackend = dummy;
+// Dynamic, with the mode folded in at build time, so a build carries one backend and not the other.
+const module = import.meta.env.VITE_BACKEND === 'dummy' ? await import('./dummy.svelte') : await import('./near.svelte');
+
+export const backend: GameBackend = module.backend;

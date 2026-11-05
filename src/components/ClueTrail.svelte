@@ -15,7 +15,7 @@
   let height = $state(window.innerHeight);
 
   // Opening a round already under way shows its clues as they are, with no pop for the old ones.
-  const restored = untrack(() => game.elapsed > 1);
+  const restored = untrack(() => game.elapsed > 3);
   const shownOnEntry = untrack(() => (restored ? game.clues.length : 0));
 
   const count = $derived(game.clues.length);
@@ -71,7 +71,7 @@
           <svg class="lock" viewBox="0 0 7 8" aria-hidden="true" shape-rendering="crispEdges">
             <path fill="currentColor" d="M2 0h3v1h1v2h1v5H0V3h1V1h1zm0 1v2h3V1z" fill-rule="evenodd" />
           </svg>
-          <span class="text">Unlocks in {clock(nextIn ?? 0)}</span>
+          <span class="text">{(nextIn ?? 0) > 0 ? `Unlocks in ${clock(nextIn ?? 0)}` : 'Unlocking…'}</span>
         </li>
       {:else}
         <li class="hidden">

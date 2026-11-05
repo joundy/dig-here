@@ -4,6 +4,7 @@
   import { clock, near, percent } from '../lib/format';
   import { potOf } from '../lib/game/engine';
   import type { Game } from '../lib/game/types';
+  import { isBot, shortName } from '../lib/names';
   import { ui } from '../lib/ui.svelte';
   import MapBadge from './MapBadge.svelte';
 
@@ -20,7 +21,12 @@
   });
   const soon = $derived(game.stage === 'live' ? left <= 20 : game.startIn !== null);
   const result = $derived(game.result);
-  const winner = $derived(result?.winner === me ? 'You won' : result?.winner);
+  const winner = $derived(result?.winner === me ? 'You won' : result?.winner && shortName(result.winner));
+
+  // The finished list is a short summary. The card fills in once it's on screen.
+  $effect(() => {
+    if (over && !game.landmarks.length) void backend.loadGame(game.id);
+  });
 </script>
 
 <a class="card" class:mine={joined} class:over class:compact={ui.compact} href="#/game/{game.id}">
@@ -38,8 +44,8 @@
   {#if over}
     <span class="result">
       {#if result?.winner}
-        <span class="winner">{#if result.winner !== me}<span class="wordy">Won by </span>{/if}{winner}</span>
-        <span class="prize">{near(result.split.prize)}</span>
+        <span class="winner">{#if result.winner !== me}<span class="wordy">Won by </span>{/if}{winner}{#if isBot(result.winner)}<span class="bot">bot</span>{/if}</span>
+        {#if result.split.prize}<span class="prize">{near(result.split.prize)}</span>{/if}
       {:else}
         <span class="refunded">Refunded</span>
       {/if}
@@ -50,12 +56,19 @@
     <span class="fill" aria-hidden="true"><span style:width="{(game.players.length / game.maxPlayers) * 100}%"></span></span>
   {/if}
 
-  <span class="small cut">Host keeps {percent(game.hostCutBps)}</span>
+  {#if !over || game.landmarks.length}<span class="small cut">Host keeps {percent(game.hostCutBps)}</span>{/if}
   <span class="small pot">Pot {near(potOf(game))}</span>
   <span class="small record">{record.finished} finished, {record.expired} expired</span>
 </a>
 
 <style>
+  .bot {
+    margin-left: 0.3rem;
+    padding: 0 0.2rem;
+    font-size: 0.85em;
+    color: var(--ink);
+    background: var(--mist);
+  }
   .card {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

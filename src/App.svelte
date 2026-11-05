@@ -1,6 +1,8 @@
 <script lang="ts">
   import { fly } from 'svelte/transition';
   import { audio } from './lib/audio/audio.svelte';
+  import { backend } from './lib/backend';
+  import AccountDialog from './components/AccountDialog.svelte';
   import { tutorialHidden, ui } from './lib/ui.svelte';
   import { world } from './lib/world/world';
   import Board from './components/Board.svelte';
@@ -9,7 +11,7 @@
   import GameBoard from './components/GameBoard.svelte';
   import Header from './components/Header.svelte';
   import NewGame from './components/NewGame.svelte';
-  import Room from './components/Room.svelte';
+  import RoomGate from './components/RoomGate.svelte';
   import SeasonPage from './components/SeasonPage.svelte';
   import Tutorial from './components/Tutorial.svelte';
   import WalletDialog from './components/WalletDialog.svelte';
@@ -98,7 +100,7 @@
   {#key route.key}
     <div class="rail" in:fly={{ x: 40, duration: calm ? 0 : 240 }}>
       {#if route.name === 'game'}
-        <Room id={route.id} onboard={(b) => (board = b)} />
+        <RoomGate id={route.id} onboard={(b) => (board = b)} />
       {:else if route.name === 'new'}
         <NewGame />
       {:else if route.name === 'deeds'}
@@ -114,4 +116,5 @@
 </div>
 
 {#if ui.wallet}<WalletDialog />{/if}
+{#if backend.accountPrompt}<AccountDialog prompt={backend.accountPrompt} />{/if}
 {#if ui.tutorial}<Tutorial />{/if}

@@ -1,19 +1,21 @@
 <script lang="ts">
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
-  import { dummy, PLAYABLE_ACCOUNTS } from '../lib/backend/dummy.svelte';
   import { near } from '../lib/format';
+  import { shortName } from '../lib/names';
+  import { explorer } from '../lib/near/config';
   import { ui } from '../lib/ui.svelte';
   import Sprite from './Sprite.svelte';
 
-  const QUICK = [1, 5, 10];
-
   const need = ui.wallet?.need ?? null;
+  const quick = backend.prices.walletAmounts;
+  const controls = backend.playtest;
 
   let dialog = $state<HTMLDialogElement>();
   let mode = $state<'deposit' | 'withdraw'>('deposit');
-  let amount = $state<number | null>(need ? need / 1000 : 1);
+  let amount = $state<number | null>(need ? need / 1000 : quick[1] / 1000);
   let busy = $state(false);
+  let connecting = $state(false);
   let error = $state('');
   let note = $state('');
 
@@ -21,6 +23,9 @@
   const balance = $derived(ui.heldBalance ?? backend.balanceOf(backend.account));
   const wallet = $derived(backend.walletOf(backend.account));
   const milli = $derived(Math.round((Number(amount) || 0) * 1000));
+  const identity = $derived(backend.identity);
+  const guest = $derived(identity.kind === 'guest');
+  const onChain = $derived(identity.kind === 'wallet');
 
   // The native dialog brings focus into itself, keeps it there, and hands it back when it closes.
   $effect(() => {
@@ -29,13 +34,18 @@
     return () => el?.close();
   });
 
+  // Winnings may have landed since the last look.
+  $effect(() => {
+    backend.refreshBalances();
+  });
+
   function close() {
     ui.wallet = null;
   }
 
   function switchMode(next: 'deposit' | 'withdraw') {
     mode = next;
-    amount = next === 'deposit' ? 1 : null;
+    amount = next === 'deposit' ? quick[1] / 1000 : null;
     error = note = '';
   }
 
@@ -62,6 +72,27 @@
       busy = false;
     }
   }
+
+  async function connect() {
+    error = note = '';
+    connecting = true;
+    try {
+      await backend.connectWallet();
+      audio.coin();
+      note = 'Wallet connected.';
+    } catch (e) {
+      error = (e as Error).message;
+      audio.error();
+    } finally {
+      connecting = false;
+    }
+  }
+
+  async function disconnect() {
+    error = note = '';
+    await backend.disconnectWallet();
+    close();
+  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -79,15 +110,27 @@
       <button class="x" aria-label="Close" onclick={close}>×</button>
     </div>
 
-    <div class="pots">
+    {#if backend.testnet}
+      <p class="testnet">NEAR testnet. These are test coins with no real value.</p>
+    {/if}
+
+    {#if identity.kind === 'guest' || identity.kind === 'wallet'}
+      <p class="who">
+        Playing as <a href={explorer.account(identity.accountId)} target="_blank" rel="noopener" title={identity.accountId}>{shortName(identity.accountId)}</a>
+      </p>
+    {/if}
+
+    <div class="pots" class:single={guest}>
       <div class="pot game">
-        <span class="label">Game balance</span>
+        <span class="label">{guest ? 'Test coins' : 'Game balance'}</span>
         <span class="value"><Sprite name="coin" scale={3} /> {near(balance)}</span>
       </div>
-      <div class="pot">
-        <span class="label">Wallet</span>
-        <span class="value">{near(wallet)}</span>
-      </div>
+      {#if !guest}
+        <div class="pot">
+          <span class="label">Wallet</span>
+          <span class="value">{near(wallet)}</span>
+        </div>
+      {/if}
     </div>
     <p class="hint">Balance leaves out coins locked in rooms. They come back when the room ends.</p>
 
@@ -95,43 +138,57 @@
       <p class="need">You need {near(need)} more for that.</p>
     {/if}
 
-    <div class="modes" role="tablist">
-      <button type="button" role="tab" aria-selected={mode === 'deposit'} class:on={mode === 'deposit'} onclick={() => switchMode('deposit')}>Deposit</button>
-      <button type="button" role="tab" aria-selected={mode === 'withdraw'} class:on={mode === 'withdraw'} onclick={() => switchMode('withdraw')}>Withdraw</button>
-    </div>
+    {#if error && guest}<p class="error" role="alert">{error}</p>{/if}
+    {#if note && guest}<p class="note" role="status">{note}</p>{/if}
 
-    <form onsubmit={submit}>
-      <div class="quick">
-        {#each QUICK as q}
-          <button type="button" class:on={amount === q} disabled={busy} onclick={() => (amount = q)}>{q}</button>
-        {/each}
-        {#if mode === 'withdraw'}
-          <button type="button" disabled={busy} onclick={() => (amount = backend.balanceOf(backend.account) / 1000)}>All</button>
-        {/if}
+    {#if guest}
+      <p class="guest-note">Guest coins stay in the game: they can't be withdrawn. To move coins or NFTs, connect a wallet.</p>
+      <button class="btn alt" disabled={connecting} onclick={connect}>{connecting ? 'Opening wallets…' : 'Connect a wallet'}</button>
+    {:else}
+      <div class="modes" role="tablist">
+        <button type="button" role="tab" aria-selected={mode === 'deposit'} class:on={mode === 'deposit'} onclick={() => switchMode('deposit')}>Top up</button>
+        <button type="button" role="tab" aria-selected={mode === 'withdraw'} class:on={mode === 'withdraw'} onclick={() => switchMode('withdraw')}>Withdraw</button>
       </div>
-      <label class="custom">
-        <span>Amount in NEAR</span>
-        <input class="input" type="number" bind:value={amount} min="0" step="any" inputmode="decimal" placeholder="0" disabled={busy} />
-      </label>
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
-      {#if note}<p class="note" role="status">{note}</p>{/if}
-      <button class="btn" type="submit" disabled={busy}>
-        {#if busy}
-          Asking your wallet…
-        {:else}
-          {mode === 'deposit' ? 'Deposit' : 'Withdraw'}{milli > 0 ? ` ${near(milli)}` : ''}
-        {/if}
-      </button>
-    </form>
 
-    <label class="playtest">
-      <span>Playtest only: play as</span>
-      <select class="select" value={backend.account} disabled={busy} onchange={(e) => dummy.switchAccount(e.currentTarget.value)}>
-        {#each PLAYABLE_ACCOUNTS as account}
-          <option value={account}>{account}</option>
-        {/each}
-      </select>
-    </label>
+      <form onsubmit={submit}>
+        <div class="quick">
+          {#each quick as q}
+            <button type="button" class:on={milli === q} disabled={busy} onclick={() => (amount = q / 1000)}>{q / 1000}</button>
+          {/each}
+          {#if mode === 'withdraw'}
+            <button type="button" disabled={busy} onclick={() => (amount = backend.balanceOf(backend.account) / 1000)}>All</button>
+          {/if}
+        </div>
+        <label class="custom">
+          <span>Amount in NEAR</span>
+          <input class="input" type="number" bind:value={amount} min="0" step="any" inputmode="decimal" placeholder="0" disabled={busy} />
+        </label>
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
+        {#if note}<p class="note" role="status">{note}</p>{/if}
+        <button class="btn" type="submit" disabled={busy}>
+          {#if busy}
+            Asking your wallet…
+          {:else}
+            {mode === 'deposit' ? 'Top up' : 'Withdraw'}{milli > 0 ? ` ${near(milli)}` : ''}
+          {/if}
+        </button>
+      </form>
+    {/if}
+
+    {#if onChain}
+      <button class="plain-link" onclick={disconnect}>Disconnect this wallet</button>
+    {/if}
+
+    {#if controls}
+      <label class="playtest">
+        <span>Playtest only: play as</span>
+        <select class="select" value={backend.account} disabled={busy} onchange={(e) => controls.switchAccount(e.currentTarget.value)}>
+          {#each controls.playableAccounts as account}
+            <option value={account}>{account}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
   </div>
 </dialog>
 
@@ -170,6 +227,43 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.4rem;
+  }
+  .pots.single {
+    grid-template-columns: 1fr;
+  }
+  .testnet {
+    margin: 0;
+    padding: 0.2rem 0.5rem;
+    font-size: 1.15rem;
+    line-height: 1.1;
+    color: var(--ink);
+    background: var(--pink);
+  }
+  .who {
+    margin: 0;
+    font-size: 1.2rem;
+    line-height: 1.1;
+    color: var(--mist);
+    overflow-wrap: anywhere;
+  }
+  .who a {
+    color: var(--foam);
+  }
+  .guest-note {
+    margin: 0;
+    font-size: 1.25rem;
+    line-height: 1.15;
+  }
+  .plain-link {
+    justify-self: center;
+    padding: 0.3rem;
+    font: inherit;
+    font-size: 1.15rem;
+    color: var(--mist);
+    text-decoration: underline;
+    background: none;
+    border: 0;
+    cursor: pointer;
   }
   .pot {
     display: grid;

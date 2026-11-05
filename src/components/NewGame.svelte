@@ -16,7 +16,8 @@
   const CAP = RULES.maxPlayersCap;
 
   let name = $state('');
-  let feeNear = $state(1);
+  const feeChoices = backend.prices.feeChoices;
+  let feeNear = $state(feeChoices ? feeChoices[1] / 1000 : 1);
   let durationSec = $state<number>(180);
   let cutPercent = $state(5);
   let mapChoice = $state<MapId | 'surprise'>('tropical');
@@ -54,13 +55,15 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     error = '';
-    const balance = backend.balanceOf(backend.account);
-    if (balance < RULES.hostBond) {
-      openWallet(RULES.hostBond - balance);
-      return;
-    }
     busy = true;
     try {
+      await backend.ensureAccount();
+      const balance = backend.balanceOf(backend.account);
+      const bond = backend.prices.hostBond;
+      if (balance < bond) {
+        openWallet(bond - balance);
+        return;
+      }
       const mapId = mapChoice === 'surprise' ? MAP_IDS[mathRng(MAP_IDS.length)] : mapChoice;
       const id = await backend.createGame({
         name,
@@ -117,10 +120,24 @@
     </div>
   </fieldset>
 
-  <label class="field">
-    <span>Entry fee in NEAR</span>
-    <input type="number" bind:value={feeNear} min="0.001" step="any" inputmode="decimal" />
-  </label>
+  {#if feeChoices}
+    <fieldset class="field">
+      <legend>Entry fee, in testnet coins</legend>
+      <div class="choices">
+        {#each feeChoices as fee}
+          <label class="choice" class:picked={feeMilli === fee}>
+            <input type="radio" name="fee" value={fee / 1000} bind:group={feeNear} />
+            {near(fee)}
+          </label>
+        {/each}
+      </div>
+    </fieldset>
+  {:else}
+    <label class="field">
+      <span>Entry fee in NEAR</span>
+      <input type="number" bind:value={feeNear} min="0.001" step="any" inputmode="decimal" />
+    </label>
+  {/if}
 
   <div class="field steppers">
     {@render stepper('Minimum players', minPlayers, setMin)}
@@ -163,13 +180,13 @@
       <div class="win"><dt>Winner</dt><dd>{near(example.prize)}</dd></div>
       <div><dt>You</dt><dd>{near(example.hostCut)}</dd></div>
       <div><dt>Jackpot</dt><dd>{near(example.jackpot)}</dd></div>
-      <div><dt>Deed owner</dt><dd>{near(example.deed)}</dd></div>
+      <div><dt>NFT owner</dt><dd>{near(example.deed)}</dd></div>
       <div><dt>Season</dt><dd>{near(example.season)}</dd></div>
     </dl>
   </div>
 
   <p class="bond">
-    Hosting locks a <b>{near(RULES.hostBond)}</b> bond. You get it back when the room ends, minus {penalty} if it expires short of players.
+    Hosting locks a <b>{near(backend.prices.hostBond)}</b> bond. You get it back when the room ends, minus {penalty} if it expires short of players.
   </p>
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}

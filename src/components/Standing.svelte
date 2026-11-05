@@ -6,6 +6,7 @@
   import { rankDigs, scoreDig, standing } from '../lib/game/engine';
   import { RULES } from '../lib/game/rules';
   import type { Game } from '../lib/game/types';
+  import { shortName } from '../lib/names';
   import { buzz } from '../lib/ui.svelte';
 
   let { game, me }: { game: Game; me: string } = $props();
@@ -41,7 +42,7 @@
         audio.spotGone();
       } else {
         const thief = rankDigs(game.digs.map((d) => scoreDig(d, landmarks[lost[0]])))[0].account;
-        tell(`${thief} just stole ${lost.length === 1 ? 'a spot' : `${lost.length} spots`} from you!`);
+        tell(`${shortName(thief)} just stole ${lost.length === 1 ? 'a spot' : `${lost.length} spots`} from you!`);
         audio.spotStolen();
       }
       buzz(30);

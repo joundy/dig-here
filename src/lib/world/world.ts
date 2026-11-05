@@ -334,6 +334,13 @@ class World {
         audio.botDig();
       }
     }
+    // An optimistic dig the chain turned down has to come back off the map.
+    const present = new Set(state.digs.map((d) => d.account));
+    for (const account of this.#marks.keys()) {
+      if (present.has(account)) continue;
+      this.#marks.delete(account);
+      added = true;
+    }
     if (added) this.#sortMarks();
   }
 

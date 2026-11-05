@@ -3,14 +3,15 @@
   import { longTime, near } from '../lib/format';
   import { RULES } from '../lib/game/rules';
   import Sprite from './Sprite.svelte';
+  import Who from './Who.svelte';
 
   const TOP = 10;
   const PLACES = ['1st', '2nd', '3rd'];
 
-  let now = $state(Date.now());
+  let now = $state(backend.nowMs());
 
   $effect(() => {
-    const timer = setInterval(() => (now = Date.now()), 1000);
+    const timer = setInterval(() => (now = backend.nowMs()), 1000);
     return () => clearInterval(timer);
   });
 
@@ -64,14 +65,14 @@
             {#each top as row (row.account)}
               <tr class:me={row.account === me}>
                 <td class="place">{row.place}</td>
-                <td class="player">{row.account}</td>
+                <td class="player"><Who account={row.account} {me} /></td>
                 <td class="points">{row.points}</td>
               </tr>
             {/each}
             {#if rank > TOP}
               <tr class="me">
                 <td class="place">{rank}</td>
-                <td class="player">{me}</td>
+                <td class="player"><Who account={me} {me} /></td>
                 <td class="points">{ranking[rank - 1].points}</td>
               </tr>
             {/if}
@@ -89,7 +90,7 @@
           {#each season.lastWinners as winner, i}
             <li class:me={winner.account === me}>
               <span class="label">{PLACES[i]}</span>
-              <span class="player">{winner.account}</span>
+              <span class="player"><Who account={winner.account} {me} /></span>
               <span class="amount">{near(winner.prize)}</span>
             </li>
           {/each}
