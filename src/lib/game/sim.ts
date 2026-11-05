@@ -1,11 +1,12 @@
 // Plays many rounds with the real rules and reports how each dig timing does. `npm run sim`.
 import { advance, createGame, joinGame, placeDig, startGame } from './engine';
-import { getMap, isLand, MAP_IDS, seededRng } from './map';
+import { isLand, MAP_IDS, rollLayout, seededRng } from './map';
 import { RULES } from './rules';
-import type { MapId, Point, Rng } from './types';
+import type { Game, MapId, Point, Rng } from './types';
 
-function aim(mapId: MapId, candidateIds: number[], rng: Rng): Point {
-  const landmark = getMap(mapId).landmarks[candidateIds[rng(candidateIds.length)]];
+function aim(game: Game, rng: Rng): Point {
+  const { mapId, candidateIds } = game;
+  const landmark = game.landmarks[candidateIds[rng(candidateIds.length)]];
   const slop = 2 + rng(10);
   for (let i = 0; i < 20; i++) {
     const spot = { x: landmark.x + rng(slop * 2 + 1) - slop, y: landmark.y + rng(slop * 2 + 1) - slop };
@@ -30,19 +31,23 @@ export function simulate(players: number, rounds: number, seed = 1, mapId?: MapI
   const digs = new Array<number>(clueCount).fill(0);
   let jackpots = 0;
   const duration = 100;
+  // Rolling a layout is slow next to playing a round, so rounds share a pool of them.
+  const pool = new Map(MAP_IDS.map((id) => [id, Array.from({ length: 25 }, () => rollLayout(id, rng))]));
 
   for (let round = 0; round < rounds; round++) {
+    const map = mapId ?? MAP_IDS[round % MAP_IDS.length];
+    const layouts = pool.get(map)!;
     const game = createGame('sim', {
-      name: 'sim', host: 'h', mapId: mapId ?? MAP_IDS[round % MAP_IDS.length], fee: 1000, durationSec: duration,
+      name: 'sim', host: 'h', mapId: map, fee: 1000, durationSec: duration,
       hostCutBps: 0, minPlayers: 2, maxPlayers: RULES.maxPlayersCap, countdownSec: 0,
-    });
+    }, layouts[rng(layouts.length)]);
     for (let i = 0; i < players; i++) joinGame(game, `p${i}`);
     startGame(game, 'h', rng);
 
     for (let clue = 0; clue < clueCount; clue++) {
       for (let i = 0; i < players; i++) {
         if (i % clueCount !== clue) continue;
-        placeDig(game, `p${i}`, aim(game.mapId, game.candidateIds, rng));
+        placeDig(game, `p${i}`, aim(game, rng));
         digs[clue]++;
       }
       const next = RULES.clueSchedule[clue + 1]?.startsAt ?? 100;

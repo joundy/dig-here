@@ -1,10 +1,4 @@
-import { getMap } from './map';
-import type { Clue, Game, Kind, Landmark, MapId, Rng, Tag } from './types';
-
-function landmarksOf(mapId: MapId, ids: number[]): Landmark[] {
-  const { landmarks } = getMap(mapId);
-  return ids.map((id) => landmarks[id]);
-}
+import type { Clue, Game, Landmark, Rng, Tag } from './types';
 
 // Prefer a tag that narrows things down but leaves more than one option, to keep the end uncertain.
 function tagOptions(seed: Landmark, candidates: Landmark[]): Tag[] {
@@ -27,7 +21,7 @@ export function rollNextClue(game: Game, rng: Rng): void {
     return;
   }
 
-  const candidates = landmarksOf(game.mapId, game.candidateIds);
+  const candidates = game.candidateIds.map((id) => game.landmarks[id]);
   const seed = candidates[rng(candidates.length)];
   let clue: Clue;
   let fits: (l: Landmark) => boolean;
@@ -45,43 +39,4 @@ export function rollNextClue(game: Game, rng: Rng): void {
   }
   game.clues.push(clue);
   game.candidateIds = candidates.filter(fits).map((l) => l.id);
-}
-
-const chances = new Map<MapId, number[]>();
-
-/**
- * Each landmark's exact chance of getting the treasure, worked out by walking every way the clues
- * can go. Landmarks aren't quite equal, because the last clue narrows some groups more than others.
- */
-export function landingChance(mapId: MapId): number[] {
-  const known = chances.get(mapId);
-  if (known) return known;
-
-  const all = getMap(mapId).landmarks;
-  const result = all.map(() => 0);
-  const each = (ids: Landmark[], p: number, visit: (seed: Landmark, p: number) => void) => {
-    for (const seed of ids) visit(seed, p / ids.length);
-  };
-
-  each(all, 1, (seedA, pA) => {
-    const byCategory = all.filter((l) => l.category === seedA.category);
-    each(byCategory, pA, (seedB, pB) => {
-      const byKind = byCategory.filter((l) => l.kind === seedB.kind);
-      each(byKind, pB, (seedC, pC) => {
-        const options = tagOptions(seedC, byKind);
-        for (const tag of options) {
-          const final = byKind.filter((l) => l.tags.includes(tag));
-          for (const l of final) result[l.id] += pC / options.length / final.length;
-        }
-      });
-    });
-  });
-  chances.set(mapId, result);
-  return result;
-}
-
-/** The chance the treasure lands by any landmark of this kind, which is what a deed earns on. */
-export function deedChance(mapId: MapId, kind: Kind): number {
-  const chance = landingChance(mapId);
-  return getMap(mapId).landmarks.reduce((sum, l) => (l.kind === kind ? sum + chance[l.id] : sum), 0);
 }

@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { landingChance } from './clues';
 import { clueText } from './copy';
 import {
   advance, createGame, currentBonus, finishAt, joinGame, leaveGame, placeDig, potOf, rankDigs, scoreDig,
   secondsToNextClue, splitPot, standing, startGame,
 } from './engine';
-import { getMap, H, isLand, MAP_IDS, seededRng, W } from './map';
+import { H, isLand, LANDMARKS_PER_MAP, MAP_IDS, seededRng, W } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
 import type { Dig, Game, MapId, Point } from './types';
@@ -29,13 +28,25 @@ function live(players = ['a.near', 'b.near', 'c.near'], over: Partial<typeof inp
 
 /** A land cell a safe distance from the first landmark. */
 function landSpot(game: Game, index = 0): Point {
-  const { x, y } = getMap(game.mapId).landmarks[index];
+  const { x, y } = game.landmarks[index];
   return { x, y };
 }
 
 function dig(x: number, bonusBps: number, dugAt = 0, crowded = false): Dig {
   return { account: `p${x}`, x, y: 0, clueIndex: 0, bonusBps, crowded, dugAt };
 }
+
+describe('layout', () => {
+  it('rolls different landmark positions for every game on the same map', () => {
+    const spots = (g: Game) => g.landmarks.map((l) => `${l.kind}:${l.x},${l.y}`).join(' ');
+    expect(spots(room())).not.toBe(spots(room()));
+  });
+
+  it('keeps the same roster of kinds in every game', () => {
+    const kinds = (g: Game) => g.landmarks.map((l) => l.kind).sort().join();
+    expect(kinds(room())).toBe(kinds(room()));
+  });
+});
 
 describe('room stages', () => {
   it('starts in waiting, where nobody can dig', () => {
@@ -150,7 +161,7 @@ describe('clues', () => {
   it('starts with a YOLO clue that narrows nothing and pays the top bonus', () => {
     const game = live();
     expect(game.clues).toEqual([{ level: 'yolo' }]);
-    expect(game.candidateIds).toHaveLength(getMap('tropical').landmarks.length);
+    expect(game.candidateIds).toHaveLength(LANDMARKS_PER_MAP);
     expect(currentBonus(game)).toBe(25000);
   });
 
@@ -190,13 +201,6 @@ describe('clues', () => {
     }
   });
 
-  it('gives every landmark a chance, adding up to exactly 1', () => {
-    for (const mapId of MAP_IDS) {
-      const chance = landingChance(mapId);
-      expect(chance.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 8);
-      expect(Math.min(...chance)).toBeGreaterThan(0);
-    }
-  });
 });
 
 describe('treasure', () => {
@@ -218,7 +222,7 @@ describe('treasure', () => {
       const candidates = [...game.candidateIds];
       advance(game, 1, r);
       const t = game.result!.treasure!;
-      const landmark = getMap(mapId).landmarks[t.landmarkId];
+      const landmark = game.landmarks[t.landmarkId];
       expect(isLand(mapId, t)).toBe(true);
       expect(candidates).toContain(t.landmarkId);
       expect(Math.hypot(t.x - landmark.x, t.y - landmark.y)).toBeLessThanOrEqual(RULES.treasureScatter);
@@ -335,7 +339,7 @@ describe('standing', () => {
     expect(standing(game, 'a.near')).toBeNull();
     placeDig(game, 'a.near', landSpot(game, 0));
     const alone = standing(game, 'a.near')!;
-    const count = getMap('tropical').landmarks.length;
+    const count = LANDMARKS_PER_MAP;
     expect(alone.of).toBe(count);
     expect(alone.wins).toHaveLength(count);
     placeDig(game, 'b.near', landSpot(game, 1));

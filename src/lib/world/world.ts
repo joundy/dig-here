@@ -223,18 +223,10 @@ class World {
     this.#canvas = null;
   }
 
-  #build(mapId: MapId) {
-    this.#mapId = mapId;
-    let terrain = this.#terrains.get(mapId);
-    if (!terrain) {
-      terrain = buildTerrain(mapId);
-      this.#terrains.set(mapId, terrain);
-    }
-    this.#terrain = terrain;
-    this.#waterClock = 1e3;
-    this.#landmarks = getMap(mapId).landmarks;
-    this.#particles.length = 0;
-    const landmarks = [...this.#landmarks].sort((a, b) => a.y - b.y);
+  /** Puts this game's landmarks on the island, front to back by where their feet are. */
+  #setLandmarks(all: Landmark[]) {
+    this.#landmarks = all;
+    const landmarks = [...all].sort((a, b) => a.y - b.y);
     this.#actors = landmarks.map((landmark) => ({
       landmark,
       x: landmark.x,
@@ -250,6 +242,18 @@ class World {
       spinAt: -9,
       fastUntil: -9,
     }));
+  }
+
+  #build(mapId: MapId) {
+    this.#mapId = mapId;
+    let terrain = this.#terrains.get(mapId);
+    if (!terrain) {
+      terrain = buildTerrain(mapId);
+      this.#terrains.set(mapId, terrain);
+    }
+    this.#terrain = terrain;
+    this.#waterClock = 1e3;
+    this.#particles.length = 0;
     if (!this.#clouds.length) {
       this.#clouds = [
         { x: 30, y: 40, vx: 2.4, canvas: makeCloudShadow(72, 30, 1) },
@@ -263,6 +267,9 @@ class World {
   showMap(mapId: MapId) {
     this.idle();
     if (mapId !== this.#mapId || !this.#terrain) this.#build(mapId);
+    // A backdrop always shows the map's fixed layout, not the last game's.
+    const backdrop = getMap(mapId).landmarks;
+    if (this.#landmarks !== backdrop) this.#setLandmarks(backdrop);
   }
 
   /** Clears the round-specific layers, leaving the island itself running. */
@@ -291,8 +298,9 @@ class World {
   }
 
   /** Starts showing a room, without playing effects for digs that already happened. */
-  enterGame(mapId: MapId, digs: Dig[]) {
+  enterGame(mapId: MapId, digs: Dig[], landmarks: Landmark[]) {
     this.showMap(mapId);
+    this.#setLandmarks(landmarks);
     for (const dig of digs) this.#marks.set(dig.account, { dig: { ...dig }, bornAt: -9 });
     this.#sortMarks();
   }

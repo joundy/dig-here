@@ -2,13 +2,13 @@
 import * as economy from '../game/economy';
 import type { Ledger } from '../game/economy';
 import { advance, finishAt, isCrowded, isOpen, placeDig, secondsToNextClue, startGame } from '../game/engine';
-import { getMap, isLand, MAP_IDS, mathRng } from '../game/map';
+import { isLand, MAP_IDS, mathRng } from '../game/map';
 import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Game, NewGameInput, Point } from '../game/types';
 import type { GameBackend } from './types';
 
-const STORAGE_KEY = 'dig-here-dummy-v2';
+const STORAGE_KEY = 'dig-here-dummy-v4';
 const TICK_MS = 250;
 const MAX_FINISHED = 40;
 
@@ -188,7 +188,7 @@ class DummyBackend implements GameBackend {
     if (game.stage === 'waiting') this.startNow(gameId);
     if (game.stage !== 'live') return;
     const me = this.account;
-    const { landmarks } = getMap(game.mapId);
+    const { landmarks } = game;
     if (game.players.includes(me) && !game.digs.some((d) => d.account === me)) {
       const l = landmarks[game.candidateIds[0]];
       placeDig(game, me, { x: l.x, y: l.y });
@@ -392,7 +392,7 @@ class DummyBackend implements GameBackend {
 
   // Bots only use the public clues: a landmark that still fits, plus some sloppiness.
   #botSpot(game: Game, slop: number): Point {
-    const { landmarks } = getMap(game.mapId);
+    const { landmarks } = game;
     const landmark = landmarks[game.candidateIds[mathRng(game.candidateIds.length)]];
     let fallback: Point = { x: landmark.x, y: landmark.y };
     for (let attempt = 0; attempt < 30; attempt++) {

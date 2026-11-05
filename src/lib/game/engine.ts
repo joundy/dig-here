@@ -1,11 +1,11 @@
 // The game rules, with no UI, wallet or storage. A NEAR contract will implement the same steps.
 import { rollNextClue } from './clues';
-import { getMap, isLand } from './map';
+import { isLand, mathRng, rollLayout } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
-import type { Dig, Game, NewGameInput, Point, PotSplit, RankedDig, RefundReason, Result, Rng } from './types';
+import type { Dig, Game, Landmark, NewGameInput, Point, PotSplit, RankedDig, RefundReason, Result, Rng } from './types';
 
-export function createGame(id: string, input: NewGameInput): Game {
+export function createGame(id: string, input: NewGameInput, landmarks: Landmark[] = rollLayout(input.mapId, mathRng)): Game {
   const { name, fee, hostCutBps, minPlayers, maxPlayers, durationSec, countdownSec } = input;
   if (!name.trim()) throw new GameError('Give the game a name.');
   if (!Number.isInteger(fee) || fee <= 0) throw new GameError('Set an entry fee above 0.');
@@ -17,6 +17,7 @@ export function createGame(id: string, input: NewGameInput): Game {
   if (maxPlayers > RULES.maxPlayersCap) throw new GameError(`A game can have at most ${RULES.maxPlayersCap} players.`);
   if (minPlayers > maxPlayers) throw new GameError('The minimum can\'t be above the maximum.');
   if (countdownSec < 0) throw new GameError('The countdown can\'t be negative.');
+
 
   return {
     id,
@@ -35,7 +36,8 @@ export function createGame(id: string, input: NewGameInput): Game {
     elapsed: 0,
     players: [],
     clues: [],
-    candidateIds: getMap(input.mapId).landmarks.map((l) => l.id),
+    landmarks,
+    candidateIds: landmarks.map((l) => l.id),
     digs: [],
     result: null,
     paid: false,
@@ -197,14 +199,14 @@ export function rankDigs(digs: RankedDig[]): RankedDig[] {
 /** Who would win if the treasure landed right on each landmark that's still possible. */
 export function standing(game: Game, account: string): { wins: number[]; of: number } | null {
   if (!game.digs.some((d) => d.account === account)) return null;
-  const { landmarks } = getMap(game.mapId);
+  const { landmarks } = game;
   const wins = game.candidateIds.filter((id) => rankDigs(game.digs.map((d) => scoreDig(d, landmarks[id])))[0].account === account);
   return { wins, of: game.candidateIds.length };
 }
 
 function rollTreasure(game: Game, rng: Rng): NonNullable<Result['treasure']> {
   const landmarkId = game.candidateIds[rng(game.candidateIds.length)];
-  const landmark = getMap(game.mapId).landmarks[landmarkId];
+  const landmark = game.landmarks[landmarkId];
   const reach = RULES.treasureScatter;
   for (let attempt = 0; attempt < 60; attempt++) {
     const x = landmark.x + rng(reach * 2 + 1) - reach;

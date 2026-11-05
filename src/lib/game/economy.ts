@@ -2,7 +2,7 @@
 import { createGame, isOpen, joinGame, leaveGame } from './engine';
 import { RULES } from './rules';
 import { GameError } from './types';
-import { getMap } from './map';
+import { LANDMARKS_PER_MAP, MAP_DEFS } from './map';
 import type { Game, Kind, MapId, NewGameInput } from './types';
 
 /** One deed per kind of landmark per map, like the Snowy Penguin. */
@@ -127,7 +127,17 @@ export function deedId(mapId: MapId, kind: Kind): DeedId {
 
 /** The kinds of landmark on a map, each of which is one deed. */
 export function deedKinds(mapId: MapId): Kind[] {
-  return [...new Set(getMap(mapId).landmarks.map((l) => l.kind))];
+  return Object.keys(MAP_DEFS[mapId].roster) as Kind[];
+}
+
+/** How many of this kind stand on the map. Their positions change, but the number doesn't. */
+export function deedCount(mapId: MapId, kind: Kind): number {
+  return MAP_DEFS[mapId].roster[kind] ?? 0;
+}
+
+/** Roughly the chance the treasure lands by this kind, since every landmark has about the same odds. */
+export function deedChance(mapId: MapId, kind: Kind): number {
+  return deedCount(mapId, kind) / LANDMARKS_PER_MAP;
 }
 
 export function deedOf(ledger: Ledger, id: string): Deed {
@@ -165,7 +175,7 @@ export function payRoom(ledger: Ledger, game: Game): void {
   record(ledger, game.host, 'finished');
 
   // The deed share goes to the owner of the kind of landmark the treasure landed by, or the jackpot if nobody owns it.
-  const id = deedId(game.mapId, getMap(game.mapId).landmarks[treasure!.landmarkId].kind);
+  const id = deedId(game.mapId, game.landmarks[treasure!.landmarkId].kind);
   const deed = deedOf(ledger, id);
   deed.landings++;
   if (deed.owner) {

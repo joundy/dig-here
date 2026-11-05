@@ -1,5 +1,4 @@
-// What makes each map different. All of it is public: a contract only needs the finished landmark
-// list and land grid, not this generator. Every coordinate is a pixel on the 320 by 224 map.
+// What makes each map different. All of it is public, and the land never changes between games. Every coordinate is a pixel on the 320 by 224 map.
 import type { Category, Kind, MapId } from './types';
 
 export const LANDMARKS_PER_MAP = 40;
@@ -26,19 +25,12 @@ export type Field = { x: number; y: number; w: number; h: number; crop: number }
 /** A plank walkway out over water, which counts as land. */
 export type Pier = { x: number; y: number; w: number; h: number };
 
-/** Where a landmark may stand within its zone. */
-export type Surface = 'any' | 'beach' | 'waterline' | 'shore' | 'hill' | 'flat';
+/** Where a landmark may stand. */
+export type Surface = 'any' | 'shore' | 'waterline';
 
-export type Zone = {
-  name: string;
-  x: number;
-  y: number;
-  r: number;
-  kinds: Partial<Record<Kind, number>>;
-  /** `ring` puts the first kind in the middle and the rest around it. `line` runs from x, y to `to`. */
-  layout?: 'scatter' | 'ring' | 'line';
-  to?: Pt;
-  on?: Surface;
+/** Most kinds can go anywhere on land. These look wrong away from water. */
+export const HABITAT: Partial<Record<Kind, Surface>> = {
+  boat: 'waterline', seal: 'waterline', duck: 'shore', lighthouse: 'shore', palm: 'shore',
 };
 
 export type MapDef = {
@@ -65,7 +57,8 @@ export type MapDef = {
   fences: Pt[][];
   /** Tumbled-down stone walls, as rectangles from the middle out. */
   ruins: Oval[];
-  zones: Zone[];
+  /** How many of each kind stand on this map. Where they stand is rolled for every game. */
+  roster: Partial<Record<Kind, number>>;
 };
 
 export const CATEGORY: Record<Kind, Category> = {
@@ -145,23 +138,7 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     piers: [{ x: 216, y: 124, w: 5, h: 18 }],
     fences: [[[84, 156], [84, 198], [146, 198], [146, 156], [106, 156]]],
     ruins: [],
-    zones: [
-      { name: 'Lighthouse islet', x: 260, y: 196, r: 6, kinds: { lighthouse: 1 } },
-      { name: 'East cape', x: 296, y: 138, r: 10, kinds: { lighthouse: 1 } },
-      { name: 'North-west cape', x: 34, y: 54, r: 10, kinds: { lighthouse: 1 } },
-      { name: 'Village', x: 56, y: 115, r: 22, layout: 'ring', kinds: { well: 1, hut: 4 } },
-      { name: 'Windmill ridge', x: 222, y: 66, r: 4, layout: 'line', to: [284, 66], kinds: { windmill: 3 }, on: 'hill' },
-      { name: 'Pine hill', x: 144, y: 44, r: 34, kinds: { pine: 4 }, on: 'hill' },
-      { name: 'Orchard', x: 146, y: 106, r: 3, layout: 'line', to: [186, 106], kinds: { apple: 3 } },
-      { name: 'Farm', x: 72, y: 56, r: 26, kinds: { scarecrow: 2, well: 1 } },
-      { name: 'Farmstead', x: 40, y: 164, r: 16, kinds: { scarecrow: 1, well: 1 } },
-      { name: 'Pasture', x: 114, y: 178, r: 30, kinds: { cow: 3, sheep: 3 } },
-      { name: 'Lake', x: 118, y: 104, r: 34, kinds: { duck: 3 }, on: 'shore' },
-      { name: 'Harbour', x: 236, y: 130, r: 44, kinds: { boat: 3 }, on: 'waterline' },
-      { name: 'Palm beach', x: 176, y: 194, r: 24, kinds: { palm: 3 }, on: 'beach' },
-      { name: 'Harbour palm', x: 198, y: 122, r: 14, kinds: { palm: 1 } },
-      { name: 'East beach palm', x: 268, y: 128, r: 16, kinds: { palm: 1 } },
-    ],
+    roster: { lighthouse: 3, well: 3, hut: 4, windmill: 3, pine: 4, apple: 3, scarecrow: 3, cow: 3, sheep: 3, duck: 3, boat: 3, palm: 5 },
   },
 
   // Two jagged lumps of ice either side of a long fjord, with a frozen lake and a dark forest.
@@ -213,19 +190,7 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
     piers: [{ x: 178, y: 104, w: 5, h: 14 }],
     fences: [],
     ruins: [],
-    zones: [
-      { name: 'Cabin village', x: 232, y: 158, r: 22, layout: 'ring', kinds: { campfire: 1, cabin: 4 } },
-      { name: 'Seal rock', x: 282, y: 38, r: 16, kinds: { seal: 3 } },
-      { name: 'Fishing harbour', x: 230, y: 116, r: 48, kinds: { boat: 3 }, on: 'waterline' },
-      { name: 'Rookery', x: 272, y: 182, r: 22, kinds: { penguin: 3 } },
-      { name: 'Spruce wood', x: 216, y: 46, r: 32, kinds: { snowpine: 5 } },
-      { name: 'Dark wood', x: 150, y: 52, r: 24, kinds: { pine: 4 } },
-      { name: 'Birch copse', x: 40, y: 112, r: 20, kinds: { birch: 3 } },
-      { name: 'Igloo camp', x: 58, y: 188, r: 24, kinds: { igloo: 3, campfire: 1 } },
-      { name: 'Dog run', x: 162, y: 176, r: 38, kinds: { husky: 3, sled: 3 } },
-      { name: 'Snowmen', x: 160, y: 122, r: 22, kinds: { snowman: 3 } },
-      { name: 'Summit fire', x: 68, y: 54, r: 12, kinds: { campfire: 1 } },
-    ],
+    roster: { campfire: 3, cabin: 4, seal: 3, boat: 3, penguin: 3, snowpine: 5, pine: 4, birch: 3, igloo: 3, husky: 3, sled: 3, snowman: 3 },
   },
 
   // A long straight north shore and two great lobes split by an inlet, with an oasis at the heart.
@@ -275,20 +240,7 @@ export const MAP_DEFS: Record<MapId, MapDef> = {
       { x: 196, y: 56, rx: 11, ry: 7 },
       { x: 272, y: 42, rx: 9, ry: 6 },
     ],
-    zones: [
-      { name: 'Pyramids', x: 226, y: 60, r: 3, layout: 'line', to: [292, 84], kinds: { pyramid: 3 } },
-      { name: 'Oasis palms', x: 160, y: 100, r: 50, kinds: { palm: 5 }, on: 'shore' },
-      { name: 'Tent camp', x: 158, y: 56, r: 20, layout: 'ring', kinds: { well: 1, tent: 4, campfire: 1 } },
-      { name: 'Camel lines', x: 60, y: 112, r: 3, layout: 'line', to: [106, 112], kinds: { camel: 3 } },
-      { name: 'Mesa', x: 56, y: 66, r: 20, kinds: { lizard: 1 } },
-      { name: 'East mesa', x: 272, y: 108, r: 14, kinds: { lizard: 1 } },
-      { name: 'Bone flats', x: 64, y: 168, r: 46, kinds: { skull: 3, deadtree: 3, vulture: 3 } },
-      { name: 'Cactus valley', x: 248, y: 184, r: 30, kinds: { cactus: 4, lizard: 1 } },
-      { name: 'Caravan stop', x: 236, y: 110, r: 16, kinds: { cart: 2 } },
-      { name: 'South road', x: 212, y: 156, r: 14, kinds: { well: 1 } },
-      { name: 'West road', x: 30, y: 104, r: 18, kinds: { cart: 1, well: 1 } },
-      { name: 'East fire', x: 288, y: 146, r: 14, kinds: { campfire: 2 } },
-    ],
+    roster: { pyramid: 3, palm: 5, well: 3, tent: 4, campfire: 3, camel: 3, lizard: 3, skull: 3, deadtree: 3, vulture: 3, cactus: 4, cart: 3 },
   },
 };
 

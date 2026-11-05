@@ -70,7 +70,7 @@
   function enterRoom() {
     const g = game;
     if (!g) return;
-    world.enterGame(g.mapId, $state.snapshot(g.digs));
+    world.enterGame(g.mapId, $state.snapshot(g.digs), $state.snapshot(g.landmarks));
     audio.setMapMusic(g.mapId);
     if (g.stage === 'waiting') {
       audio.playMusic('lobby');

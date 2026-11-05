@@ -3,7 +3,6 @@ import {
   BEACH_ROCK, BEACH_SAND, DECK_ACROSS, distanceField, getMap, H, MAP_DEFS, noise,
   PATH_EDGE, PATH_INNER, PATH_MIDDLE, W, WATER_LAKE, WATER_RIVER, WATER_SEA,
 } from '../game/map';
-import { FOOTPRINT } from '../game/mapDefs';
 import type { GroundKind } from '../game/mapDefs';
 import type { MapId } from '../game/types';
 import { themeOf } from './themes';
@@ -44,15 +43,7 @@ export function bakeLand(mapId: MapId): Uint32Array {
   const toSea = distanceField((i) => water[i] === WATER_SEA);
   const toFresh = distanceField((i) => water[i] === WATER_LAKE || water[i] === WATER_RIVER);
 
-  // Landmarks and a little margin keep small decoration out from under them.
   const reserved = new Uint8Array(size);
-  for (const l of map.landmarks) {
-    const [w, h] = FOOTPRINT[l.kind];
-    const left = l.x - Math.floor(w / 2);
-    for (let y = Math.max(0, l.y - h - 1); y <= Math.min(H - 1, l.y + 1); y++) {
-      for (let x = Math.max(0, left - 1); x <= Math.min(W - 1, left + w); x++) reserved[y * W + x] = 1;
-    }
-  }
 
   // Patches of different ground, with crumbly edges.
   const patchOf = new Int8Array(size).fill(-1);

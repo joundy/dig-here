@@ -3,7 +3,6 @@
   import { audio } from '../lib/audio/audio.svelte';
   import { bonus, near, points } from '../lib/format';
   import { kindName, withArticle } from '../lib/game/copy';
-  import { getMap } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Game } from '../lib/game/types';
   import { buzz, ui } from '../lib/ui.svelte';
@@ -20,7 +19,7 @@
   const myDig = $derived(result.ranking.find((d) => d.account === me));
   const place = $derived(myDig ? result.ranking.indexOf(myDig) + 1 : 0);
   const neverDug = $derived(game.players.includes(me) && !myDig);
-  const kind = $derived(treasure ? kindName(getMap(game.mapId).landmarks[treasure.landmarkId].kind) : '');
+  const kind = $derived(treasure ? kindName(game.landmarks[treasure.landmarkId].kind) : '');
   const myPoints = $derived(result.seasonPoints[me] ?? 0);
   const jackpotWin = $derived(result.jackpotWin);
   const jackpotName = $derived(jackpotWin?.account === me ? 'You' : jackpotWin?.account);

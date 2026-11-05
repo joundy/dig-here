@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bakeLand } from '../world/terrain';
-import { distanceField, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA } from './map';
+import { distanceField, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA, rollLayout, seededRng } from './map';
 import { FOOTPRINT } from './mapDefs';
 
 describe.each(MAP_IDS)('map %s', (id) => {
@@ -47,12 +47,38 @@ describe.each(MAP_IDS)('map %s', (id) => {
     for (const set of kinds.values()) expect(set.size).toBeGreaterThanOrEqual(2);
   });
 
-  it('places each zone’s landmarks from the zone’s own list', () => {
-    const wanted = new Map<string, number>();
-    for (const zone of MAP_DEFS[id].zones) {
-      for (const [kind, count] of Object.entries(zone.kinds)) wanted.set(kind, (wanted.get(kind) ?? 0) + (count ?? 0));
+  it('rolls a valid layout for every game: 40 landmarks, none touching, and each kind spread out', () => {
+    const rng = seededRng(5);
+    for (let game = 0; game < 25; game++) {
+      const layout = rollLayout(id, rng);
+      expect(layout).toHaveLength(LANDMARKS_PER_MAP);
+      for (const a of layout) {
+        const i = a.y * W + a.x;
+        expect(map.land[i]).toBe(1);
+        expect(map.paths[i]).toBe(0);
+        expect(map.decks[i]).toBe(0);
+        expect(map.cliffs[i]).toBe(0);
+        for (const b of layout) {
+          if (a.id >= b.id) continue;
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          expect(d).toBeGreaterThanOrEqual(20);
+          if (a.kind === b.kind) expect(d, `${a.kind} ${a.id} and ${b.id}`).toBeGreaterThanOrEqual(36);
+        }
+      }
     }
-    expect([...wanted.values()].reduce((sum, n) => sum + n, 0)).toBe(LANDMARKS_PER_MAP);
+  });
+
+  it('spreads each kind well in most games, rather than only just meeting the minimum', () => {
+    const rng = seededRng(9);
+    let total = 0;
+    let pairs = 0;
+    for (let game = 0; game < 25; game++) {
+      const layout = rollLayout(id, rng);
+      for (const a of layout) for (const b of layout) {
+        if (a.id < b.id && a.kind === b.kind) { total += Math.hypot(a.x - b.x, a.y - b.y); pairs++; }
+      }
+    }
+    expect(total / pairs).toBeGreaterThan(80);
   });
 
   it('has a stream running unbroken from an inland lake to the sea, under its bridges', () => {

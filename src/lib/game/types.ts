@@ -94,6 +94,8 @@ export type Game = {
   /** Everyone who joined. Each has a fee locked in the pot. */
   players: string[];
   clues: Clue[];
+  /** Where every landmark stands in this game, rolled when the room opens. */
+  landmarks: Landmark[];
   /** Landmarks still consistent with every clue so far. Public, like the clues. */
   candidateIds: number[];
   digs: Dig[];

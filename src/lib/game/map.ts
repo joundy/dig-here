@@ -1,7 +1,7 @@
 // Turns each map's design into the finished pixel grids and landmark list. Only plain arithmetic
 // goes into anything that affects the rules, so every machine gets the same map, bit for bit.
-import { CATEGORY, FOOTPRINT, MAP_DEFS } from './mapDefs';
-import type { Field, Hill, MapDef, Oval, Pt, Surface, Zone } from './mapDefs';
+import { CATEGORY, FOOTPRINT, HABITAT, MAP_DEFS } from './mapDefs';
+import type { Field, Hill, MapDef, Oval, Pt } from './mapDefs';
 import type { Kind, Landmark, MapId, Point, Rng, Tag } from './types';
 
 export { LANDMARKS_PER_MAP, MAP_IDS, MAP_DEFS } from './mapDefs';
@@ -221,6 +221,8 @@ export type GameMap = {
   fields: Uint8Array;
   /** How far down the river each river cell is, in pixels. */
   flow: Float32Array;
+  /** How far each cell is from any water, in pixels. */
+  toWater: Float32Array;
 };
 
 type Grids = Omit<GameMap, 'id' | 'name' | 'landmarks'>;
@@ -397,178 +399,145 @@ function carveTerrain(def: MapDef): Grids {
     }
   });
 
-  return { land, hills, cliffs, paths, decks, water, beach, fields, flow };
-}
-
-function placeLandmarks(def: MapDef, grids: Grids, rng: Unit): Landmark[] {
-  const { land, hills, cliffs, paths, decks, water, beach, fields } = grids;
   const toWater = distanceField((i) => !land[i]);
-  const landmarks: Landmark[] = [];
-
-  const offLimits = (i: number) => paths[i] > 0 || decks[i] > 0;
-  const shoreKinds = new Set<Kind>(['boat', 'seal', 'duck', 'penguin', 'palm']);
-
-  const canStand = (kind: Kind, x: number, y: number, on: Surface): boolean => {
-    const [w, h] = FOOTPRINT[kind];
-    const left = x - Math.floor(w / 2);
-    const top = y - h;
-    if (left < 1 || top < 1 || left + w >= W - 1 || y >= H - 1) return false;
-    const i = y * W + x;
-    if (!land[i]) return false;
-
-    // The feet want level, solid ground, clear of everything that would look wrong underfoot.
-    const footLeft = kind === 'boat' ? left + 3 : left + 1;
-    const footRight = kind === 'boat' ? left + w - 4 : left + w - 2;
-    for (let fy = y - 2; fy <= y + 1; fy++) {
-      for (let fx = footLeft; fx <= footRight; fx++) {
-        const f = fy * W + fx;
-        if (fy === y || fy === y - 1) {
-          if (!land[f]) return false;
-        }
-        if (land[f] && (cliffs[f] || offLimits(f) || hills[f] !== hills[i])) return false;
-        if (fields[f] && kind !== 'scarecrow') return false;
-      }
-    }
-    // Nothing paints across a path, a river or a lake. Shore creatures may overlap the water behind them.
-    for (let by = top; by < y; by++) {
-      for (let bx = left; bx < left + w; bx++) {
-        const b = by * W + bx;
-        if (offLimits(b)) return false;
-        // The lower half stands clear of any cliff, so a sprite never seems stuck in the hillside.
-        if (by >= y - h / 2 && land[b] && (cliffs[b] || hills[b] !== hills[i])) return false;
-        if (!shoreKinds.has(kind) && !land[b]) return false;
-        if (fields[b] && kind !== 'scarecrow') return false;
-      }
-    }
-
-    for (const other of landmarks) {
-      const dx = other.x - x;
-      const dy = other.y - y;
-      if (dx * dx + dy * dy < MIN_SPACING * MIN_SPACING) return false;
-      const [ow, oh] = FOOTPRINT[other.kind];
-      const oLeft = other.x - Math.floor(ow / 2);
-      const clearX = oLeft >= left + w + BOX_GAP || left >= oLeft + ow + BOX_GAP;
-      const clearY = other.y - oh >= y + BOX_GAP || top >= other.y + BOX_GAP;
-      if (!clearX && !clearY) return false;
-    }
-
-    if (on === 'beach' && !beach[i]) return false;
-    if (on === 'waterline' && toWater[i] > 3) return false;
-    if (on === 'shore' && toWater[i] > 5) return false;
-    if (on === 'hill' && !hills[i]) return false;
-    if (on === 'flat' && hills[i]) return false;
-    return true;
-  };
-
-  const add = (kind: Kind, x: number, y: number) => {
-    const shore = toWater[y * W + x];
-    const tags: Tag[] = [y < H / 2 ? 'north' : 'south', x < W / 2 ? 'west' : 'east'];
-    if (shore < WATER_NEAR) tags.push('water');
-    if (shore >= INLAND_FROM) tags.push('inland');
-    landmarks.push({ id: landmarks.length, kind, category: CATEGORY[kind], x, y, tags, flip: rng() < 0.5 });
-  };
-
-  // The nearest spot to where it was meant to go.
-  const near = (kind: Kind, zone: Zone, tx: number, ty: number): Point | null => {
-    const on = zone.on ?? 'any';
-    for (let reach = 0; reach <= 14; reach++) {
-      for (let dy = -reach; dy <= reach; dy++) {
-        for (let dx = -reach; dx <= reach; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== reach) continue;
-          const x = Math.round(tx) + dx;
-          const y = Math.round(ty) + dy;
-          if (canStand(kind, x, y, on)) return { x, y };
-        }
-      }
-    }
-    return null;
-  };
-
-  // Of many random spots, the one with the most room around it.
-  const roomiest = (kind: Kind, zone: Zone): Point | null => {
-    const on = zone.on ?? 'any';
-    let best: Point | null = null;
-    let bestRoom = -1;
-    for (let tries = 0; tries < 400; tries++) {
-      const dx = (rng() * 2 - 1) * zone.r;
-      const dy = (rng() * 2 - 1) * zone.r;
-      if (dx * dx + dy * dy > zone.r * zone.r) continue;
-      const x = Math.round(zone.x + dx);
-      const y = Math.round(zone.y + dy);
-      if (!canStand(kind, x, y, on)) continue;
-      let room = 40;
-      for (const other of landmarks) {
-        room = Math.min(room, Math.sqrt((other.x - x) ** 2 + (other.y - y) ** 2));
-      }
-      if (room > bestRoom) {
-        bestRoom = room;
-        best = { x, y };
-      }
-    }
-    return best;
-  };
-
-  let stuck = '';
-  const placeAll = (): boolean => {
-    for (const zone of def.zones) {
-      const kinds = Object.entries(zone.kinds).flatMap(([kind, count]) => Array.from({ length: count ?? 0 }, () => kind as Kind));
-      const layout = zone.layout ?? 'scatter';
-      for (const [n, kind] of kinds.entries()) {
-        let spot: Point | null;
-        if (layout === 'ring') {
-          const around = kinds.length - 1;
-          if (n === 0) spot = near(kind, zone, zone.x, zone.y);
-          else {
-            // A compass star, so no trigonometry reaches the rules.
-            const step = RING[around - 1][n - 1];
-            spot = near(kind, zone, zone.x + step[0] * zone.r * 1.2 + (rng() - 0.5) * 3, zone.y + step[1] * zone.r * 0.85 + (rng() - 0.5) * 3);
-          }
-        } else if (layout === 'line') {
-          const [tx, ty] = zone.to ?? [zone.x, zone.y];
-          const along = kinds.length > 1 ? n / (kinds.length - 1) : 0.5;
-          spot = near(kind, zone, zone.x + (tx - zone.x) * along, zone.y + (ty - zone.y) * along);
-        } else {
-          spot = roomiest(kind, zone) ?? near(kind, zone, zone.x, zone.y);
-        }
-        if (!spot) {
-          stuck = zone.name;
-          return false;
-        }
-        add(kind, spot.x, spot.y);
-      }
-    }
-    return true;
-  };
-
-  // Scattering can paint itself into a corner, so start over from the next rolls. Still repeatable.
-  for (let attempt = 0; attempt < 400; attempt++) {
-    landmarks.length = 0;
-    if (placeAll()) return landmarks;
-  }
-  throw new Error(`No room for every landmark on ${def.id}, last stuck at ${stuck}`);
+  return { land, hills, cliffs, paths, decks, water, beach, fields, flow, toWater };
 }
 
-const RING: Pt[][] = [
-  [[0, -1]],
-  [[-1, 0], [1, 0]],
-  [[-0.87, 0.5], [0.87, 0.5], [0, -1]],
-  [[-0.8, -0.65], [0.8, -0.65], [-0.8, 0.65], [0.8, 0.65]],
-  [[-0.95, -0.2], [-0.5, 0.85], [0.5, 0.85], [0.95, -0.2], [0, -1]],
-];
+const offLimits = (g: Grids, i: number) => g.paths[i] > 0 || g.decks[i] > 0;
+const OVERLAPS_WATER = new Set<Kind>(['boat', 'seal', 'duck', 'penguin', 'palm']);
 
-function build(id: MapId): GameMap {
+function canStand(g: Grids, placed: Landmark[], kind: Kind, x: number, y: number): boolean {
+  const { land, hills, cliffs, fields, toWater } = g;
+  const [w, h] = FOOTPRINT[kind];
+  const left = x - Math.floor(w / 2);
+  const top = y - h;
+  if (left < 1 || top < 1 || left + w >= W - 1 || y >= H - 1) return false;
+  const i = y * W + x;
+  if (!land[i]) return false;
+
+  const on = HABITAT[kind] ?? 'any';
+  if (on === 'waterline' && toWater[i] > 3) return false;
+  if (on === 'shore' && toWater[i] > 6) return false;
+
+  // The feet want level, solid ground, clear of everything that would look wrong underfoot.
+  const footLeft = kind === 'boat' ? left + 3 : left + 1;
+  const footRight = kind === 'boat' ? left + w - 4 : left + w - 2;
+  for (let fy = y - 2; fy <= y + 1; fy++) {
+    for (let fx = footLeft; fx <= footRight; fx++) {
+      const f = fy * W + fx;
+      if ((fy === y || fy === y - 1) && !land[f]) return false;
+      if (land[f] && (cliffs[f] || offLimits(g, f) || hills[f] !== hills[i])) return false;
+      if (fields[f]) return false;
+    }
+  }
+  // Nothing paints across a path, a river or a lake. Shore creatures may overlap the water behind them.
+  for (let by = top; by < y; by++) {
+    for (let bx = left; bx < left + w; bx++) {
+      const b = by * W + bx;
+      if (offLimits(g, b)) return false;
+      // The lower half stands clear of any cliff, so a sprite never seems stuck in the hillside.
+      if (by >= y - h / 2 && land[b] && (cliffs[b] || hills[b] !== hills[i])) return false;
+      if (!OVERLAPS_WATER.has(kind) && !land[b]) return false;
+      if (fields[b]) return false;
+    }
+  }
+
+  for (const other of placed) {
+    const dx = other.x - x;
+    const dy = other.y - y;
+    if (dx * dx + dy * dy < MIN_SPACING * MIN_SPACING) return false;
+    const [ow, oh] = FOOTPRINT[other.kind];
+    const oLeft = other.x - Math.floor(ow / 2);
+    const clearX = oLeft >= left + w + BOX_GAP || left >= oLeft + ow + BOX_GAP;
+    const clearY = other.y - oh >= y + BOX_GAP || top >= other.y + BOX_GAP;
+    if (!clearX && !clearY) return false;
+  }
+  return true;
+}
+
+// Same-kind landmarks must sit this far apart, so a kind clue doesn't point at one corner of the map.
+// The tighter values are only for when a kind can't fit otherwise, such as boats on a short coast.
+const KIND_SPREAD = [90, 70, 50, 36];
+const SAMPLES = 12;
+
+/**
+ * Rolls where every landmark stands for one game. Of several good spots it takes the one furthest
+ * from everything else, so the island fills evenly, and counts its own kind as twice as close.
+ */
+export function rollLayout(id: MapId, rng: Rng): Landmark[] {
   const def = MAP_DEFS[id];
-  const rng = seededUnit(def.seed);
-  const grids = carveTerrain(def);
-  return { id, name: def.name, landmarks: placeLandmarks(def, grids, rng), ...grids };
+  const grids = getGrids(id);
+  // Picky kinds go first, while the coast is still free. The rest are shuffled.
+  const pool = (Object.entries(def.roster) as [Kind, number][]).flatMap(([kind, count]) => Array.from({ length: count }, () => kind));
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = rng(i + 1);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const order = [...pool.filter((k) => HABITAT[k]), ...pool.filter((k) => !HABITAT[k])];
+
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const placed: Landmark[] = [];
+    const place = (kind: Kind): boolean => {
+      for (const spread of KIND_SPREAD) {
+        let best: Point | null = null;
+        let bestRoom = -1;
+        let found = 0;
+        for (let tries = 0; tries < 1500 && found < SAMPLES; tries++) {
+          const x = rng(W);
+          const y = rng(H);
+          if (!canStand(grids, placed, kind, x, y)) continue;
+          let room = 1e9;
+          let tooClose = false;
+          for (const other of placed) {
+            const d = (other.x - x) ** 2 + (other.y - y) ** 2;
+            if (other.kind === kind && d < spread * spread) {
+              tooClose = true;
+              break;
+            }
+            room = Math.min(room, other.kind === kind ? d / 4 : d);
+          }
+          if (tooClose) continue;
+          found++;
+          if (room > bestRoom) {
+            bestRoom = room;
+            best = { x, y };
+          }
+        }
+        if (best) {
+          const shore = grids.toWater[best.y * W + best.x];
+          const tags: Tag[] = [best.y < H / 2 ? 'north' : 'south', best.x < W / 2 ? 'west' : 'east'];
+          if (shore < WATER_NEAR) tags.push('water');
+          if (shore >= INLAND_FROM) tags.push('inland');
+          placed.push({ id: placed.length, kind, category: CATEGORY[kind], x: best.x, y: best.y, tags, flip: rng(2) === 0 });
+          return true;
+        }
+      }
+      return false;
+    };
+    if (order.every(place)) return placed;
+  }
+  throw new Error(`No room for every landmark on ${id}`);
+}
+
+const grids = new Map<MapId, Grids>();
+
+function getGrids(id: MapId): Grids {
+  let found = grids.get(id);
+  if (!found) {
+    found = carveTerrain(MAP_DEFS[id]);
+    grids.set(id, found);
+  }
+  return found;
 }
 
 const built = new Map<MapId, GameMap>();
 
+/** The land never changes. `landmarks` here is one fixed layout, for when the map is only a backdrop. */
 export function getMap(id: MapId): GameMap {
   let found = built.get(id);
   if (!found) {
-    found = build(id);
+    const def = MAP_DEFS[id];
+    found = { id, name: def.name, landmarks: rollLayout(id, seededRng(def.seed)), ...getGrids(id) };
     built.set(id, found);
   }
   return found;

@@ -4,7 +4,6 @@
   import { bonus } from '../lib/format';
   import { kindName } from '../lib/game/copy';
   import { rankDigs, scoreDig, standing } from '../lib/game/engine';
-  import { getMap } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Game } from '../lib/game/types';
   import { buzz } from '../lib/ui.svelte';
@@ -35,7 +34,7 @@
     if (!lost.length) return;
     untrack(() => {
       if (game.stage !== 'live') return;
-      const { landmarks } = getMap(game.mapId);
+      const { landmarks } = game;
       const gone = lost.filter((id) => !game.candidateIds.includes(id));
       if (gone.length) {
         tell(gone.length === 1 ? `Your ${kindName(landmarks[gone[0]].kind)} is gone!` : `Your ${gone.length} spots are gone!`);

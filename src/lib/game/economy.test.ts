@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  balanceOf, buyDeed, closeSeason, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, newLedger, openRoom,
+  balanceOf, buyDeed, closeSeason, deedChance, deedId, deedKinds, deedOf, deposit, hostRecord, joinRoom, leaveRoom, listDeed, newLedger, openRoom,
   payRoom, seasonRanking, totalMoney, walletOf, withdraw,
 } from './economy';
 import type { Ledger } from './economy';
-import { deedChance } from './clues';
 import { advance, finishAt, placeDig, startGame } from './engine';
-import { getMap, MAP_IDS, seededRng } from './map';
+import { MAP_IDS, seededRng } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
 import type { Game, MapId } from './types';
@@ -34,7 +33,7 @@ function setup(players = ['a.near', 'b.near', 'c.near'], over: Partial<{ fee: nu
 
 function finish(ledger: Ledger, game: Game, spots: Record<string, number>, landmarkId: number, shift = 0) {
   startGame(game, game.host, rng);
-  const { landmarks } = getMap(game.mapId);
+  const { landmarks } = game;
   for (const [account, id] of Object.entries(spots)) placeDig(game, account, landmarks[id]);
   const l = landmarks[landmarkId];
   finishAt(game, { x: l.x + shift, y: l.y, landmarkId });
@@ -138,7 +137,7 @@ describe('payout', () => {
     const owner = 'owner.near';
     fund(ledger, [owner]);
     const landing = 5;
-    const kind = getMap('tropical').landmarks[landing].kind;
+    const kind = game.landmarks[landing].kind;
     buyDeed(ledger, owner, deedId('tropical', kind));
     const jackpotBefore = ledger.jackpot;
     const spots = { 'p0.near': 0, 'p1.near': 1 };
@@ -193,7 +192,7 @@ describe('jackpot', () => {
     const { ledger, game } = setup();
     ledger.jackpot = 1000;
     startGame(game, game.host, rng);
-    const l = getMap('tropical').landmarks[0];
+    const l = game.landmarks[0];
     placeDig(game, 'a.near', l);
     advance(game, 40, rng);
     placeDig(game, 'b.near', l);
@@ -210,12 +209,12 @@ describe('jackpot', () => {
 });
 
 describe('deeds', () => {
-  const kind = getMap('snowy').landmarks[0].kind;
+  const kind = deedKinds('snowy')[0];
   const id = deedId('snowy', kind);
 
   it('is one deed per kind per map', () => {
     expect(deedKinds('snowy')).toContain(kind);
-    expect(new Set(deedKinds('snowy')).size).toBe(deedKinds('snowy').length);
+    expect(deedKinds('snowy')).toHaveLength(12);
   });
 
   it('sends the first sale into the jackpot', () => {
@@ -353,7 +352,7 @@ it('never creates or loses a coin through hundreds of random rounds', () => {
     if (game.players.length && r(4) === 0) leaveRoom(ledger, game, game.players[0]);
     if (game.stage === 'waiting' && game.players.length >= game.minPlayers && r(5) > 0) {
       startGame(game, host, r);
-      const { landmarks } = getMap(mapId);
+      const { landmarks } = game;
       for (const p of game.players) if (r(5) > 0) placeDig(game, p, landmarks[r(landmarks.length)]);
       advance(game, 100, r);
     } else {

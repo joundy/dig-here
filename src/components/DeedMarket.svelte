@@ -2,10 +2,9 @@
   import { audio } from '../lib/audio/audio.svelte';
   import { backend } from '../lib/backend';
   import { near, percent } from '../lib/format';
-  import { deedChance } from '../lib/game/clues';
   import { kindName } from '../lib/game/copy';
-  import { deedCost, deedId, deedKinds } from '../lib/game/economy';
-  import { getMap, MAP_IDS } from '../lib/game/map';
+  import { deedChance, deedCost, deedCount, deedId, deedKinds } from '../lib/game/economy';
+  import { MAP_IDS } from '../lib/game/map';
   import { RULES } from '../lib/game/rules';
   import type { Kind, MapId } from '../lib/game/types';
   import { openWallet, ui } from '../lib/ui.svelte';
@@ -75,10 +74,6 @@
   function title(kind: Kind): string {
     const name = kindName(kind);
     return `${name[0].toUpperCase()}${name.slice(1)}`;
-  }
-
-  function places(row: Row): number {
-    return getMap(row.map).landmarks.filter((l) => l.kind === row.kind).length;
   }
 
   async function act(id: string, action: () => Promise<void>, done: string) {
@@ -157,10 +152,10 @@
         <li class="card" class:mine>
           <div class="art"><Sprite name={row.kind} scale={3} /></div>
           <h2>{title(row.kind)}</h2>
-          <div class="where"><MapBadge mapId={row.map} compact /><span>{places(row)} on the map</span></div>
+          <div class="where"><MapBadge mapId={row.map} compact /><span>{deedCount(row.map, row.kind)} on the map</span></div>
           <p class="owner">{mine ? 'You own this' : deed.owner ? `Owner: ${deed.owner}` : 'New: nobody owns it yet'}</p>
           <dl>
-            <div><dt>Chance</dt><dd>{(deedChance(row.map, row.kind) * 100).toFixed(1)}%</dd></div>
+            <div><dt>Chance</dt><dd>~{Math.round(deedChance(row.map, row.kind) * 100)}%</dd></div>
             <div><dt>Landed</dt><dd>{deed.landings}</dd></div>
             <div><dt>Earned</dt><dd>{near(deed.earned)}</dd></div>
           </dl>
