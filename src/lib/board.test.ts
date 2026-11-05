@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { boardView, quickPlayRoom, roomScore } from './board';
 import type { BoardOptions } from './board';
 import { createGame, joinGame } from './game/engine';
+import { getMap } from './game/map';
 import type { Game, MapId } from './game/types';
 
 const hostsTable: Record<string, { finished: number; expired: number }> = {
@@ -12,7 +13,7 @@ const hosts = (a: string) => hostsTable[a] ?? { finished: 0, expired: 0 };
 
 function room(id: string, over: Partial<{ host: string; fee: number; hostCutBps: number; mapId: MapId; maxPlayers: number; players: number; countdownSec: number }> = {}): Game {
   const { players = 0, ...rest } = over;
-  const game = createGame(id, { name: id, host: 'good.near', mapId: 'tropical', fee: 1000, durationSec: 180, hostCutBps: 500, minPlayers: 2, maxPlayers: 10, countdownSec: 0, ...rest });
+  const game = createGame(id, { name: id, host: 'good.near', mapId: 'tropical', fee: 1000, durationSec: 180, hostCutBps: 500, minPlayers: 2, maxPlayers: 10, countdownSec: 0, ...rest }, getMap(rest.mapId ?? 'tropical').landmarks);
   for (let i = 0; i < players; i++) joinGame(game, `p${i}`);
   return game;
 }

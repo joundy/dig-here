@@ -82,7 +82,11 @@
     return `${result.deedOwner} owns the ${kind} NFT and earned ${near(result.split.deed)}.`;
   });
 
-  const refundLine = $derived(result.refundReason === 'expired' ? 'Not enough players joined.' : `A game needs ${RULES.minDigs} digs.`);
+  const refundLine = $derived(
+    result.refundReason === 'expired' ? 'Not enough players joined.'
+    : result.refundReason === 'missed-reveal' ? 'A roll was never revealed in time.'
+    : `A game needs ${RULES.minDigs} digs.`,
+  );
   const splitRows = $derived([
     { label: 'Winner', amount: result.split.prize },
     { label: game.host === me ? 'You hosted' : 'Host', amount: result.split.hostCut },

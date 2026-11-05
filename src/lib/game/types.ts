@@ -52,7 +52,7 @@ export type RankedDig = Dig & {
 
 export type PotSplit = { hostCut: number; jackpot: number; deed: number; season: number; prize: number };
 
-export type RefundReason = 'too-few-digs' | 'expired';
+export type RefundReason = 'too-few-digs' | 'expired' | 'missed-reveal';
 
 export type Result = {
   /** Null when the round was refunded, because no treasure was ever rolled. */

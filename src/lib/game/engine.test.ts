@@ -4,7 +4,7 @@ import {
   advance, createGame, currentBonus, finishAt, joinGame, leaveGame, placeDig, potOf, rankDigs, scoreDig,
   secondsToNextClue, splitPot, standing, startGame,
 } from './engine';
-import { H, isLand, LANDMARKS_PER_MAP, MAP_IDS, seededRng, W } from './map';
+import { H, isLand, LANDMARKS_PER_MAP, MAP_IDS, rollLayout, seededRng, W } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
 import type { Dig, Game, MapId, Point } from './types';
@@ -16,7 +16,8 @@ const input = {
 };
 
 function room(over: Partial<typeof input> = {}): Game {
-  return createGame('g', { ...input, ...over });
+  const mapped = { ...input, ...over };
+  return createGame('g', mapped, rollLayout(mapped.mapId, rng));
 }
 
 function live(players = ['a.near', 'b.near', 'c.near'], over: Partial<typeof input> = {}): Game {

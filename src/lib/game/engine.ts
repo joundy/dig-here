@@ -1,11 +1,12 @@
-// The game rules, with no UI, wallet or storage. A NEAR contract will implement the same steps.
+// The game rules, with no UI, wallet or storage. The NEAR contract implements the same steps, and players
+// recheck rounds with this code, so every rule works in whole numbers and draws only from the `Rng` it's given.
 import { rollNextClue } from './clues';
-import { isLand, mathRng, rollLayout } from './map';
+import { isLand } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
 import type { Dig, Game, Landmark, NewGameInput, Point, PotSplit, RankedDig, RefundReason, Result, Rng } from './types';
 
-export function createGame(id: string, input: NewGameInput, landmarks: Landmark[] = rollLayout(input.mapId, mathRng)): Game {
+export function createGame(id: string, input: NewGameInput, landmarks: Landmark[]): Game {
   const { name, fee, hostCutBps, minPlayers, maxPlayers, durationSec, countdownSec } = input;
   if (!name.trim()) throw new GameError('Give the game a name.');
   if (!Number.isInteger(fee) || fee <= 0) throw new GameError('Set an entry fee above 0.');
@@ -56,7 +57,7 @@ export function joinGame(game: Game, account: string): void {
 
   const count = game.players.length;
   if (count >= game.maxPlayers) {
-    game.startIn = Math.min(game.startIn ?? Infinity, RULES.fullRoomStartSec);
+    game.startIn = game.startIn === null ? RULES.fullRoomStartSec : Math.min(game.startIn, RULES.fullRoomStartSec);
   } else if (count >= game.minPlayers && game.countdownSec > 0 && game.startIn === null) {
     game.startIn = game.countdownSec;
   }
@@ -88,7 +89,7 @@ export function currentBonus(game: Game): number {
   return RULES.clueSchedule[Math.max(0, game.clues.length - 1)].bonusBps;
 }
 
-/** Seconds until the bonus drops, or null once the last clue is out. */
+/** Seconds until the bonus drops, or null once the last clue is out. For the screen only: it can be a fraction. */
 export function secondsToNextClue(game: Game): number | null {
   const next = RULES.clueSchedule[game.clues.length];
   return next ? (next.startsAt * game.durationSec) / 100 - game.elapsed : null;
@@ -141,9 +142,12 @@ export function advance(game: Game, seconds: number, rng: Rng): void {
 
 function isqrt(n: number): number {
   if (n < 2) return n;
-  let x = Math.floor(Math.sqrt(n));
-  while (x * x > n) x--;
-  while ((x + 1) * (x + 1) <= n) x++;
+  let x = n;
+  let next = Math.floor((x + 1) / 2);
+  while (next < x) {
+    x = next;
+    next = Math.floor((x + Math.floor(n / x)) / 2);
+  }
   return x;
 }
 
@@ -187,7 +191,10 @@ export function scoreDig(dig: Dig, treasure: Point): RankedDig {
   return { ...dig, distance, closeness, score: Math.floor((closeness * dig.bonusBps * crowd) / 100_000_000) };
 }
 
-/** Best score first. Equal scores go to whoever dug first; if nobody scored, closest wins. */
+/**
+ * Best score first. Equal scores go to whoever dug first; if nobody scored, closest wins.
+ * Digs tied on everything keep their dig order, so the contract must sort stably too.
+ */
 export function rankDigs(digs: RankedDig[]): RankedDig[] {
   return [...digs].sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
@@ -204,7 +211,8 @@ export function standing(game: Game, account: string): { wins: number[]; of: num
   return { wins, of: game.candidateIds.length };
 }
 
-function rollTreasure(game: Game, rng: Rng): NonNullable<Result['treasure']> {
+/** Spots off the land are thrown out, so the odds stay level on any coastline. The cap only keeps a contract's gas bounded. */
+export function rollTreasure(game: Game, rng: Rng): NonNullable<Result['treasure']> {
   const landmarkId = game.candidateIds[rng(game.candidateIds.length)];
   const landmark = game.landmarks[landmarkId];
   const reach = RULES.treasureScatter;
@@ -221,7 +229,7 @@ function emptySplit(): PotSplit {
   return { hostCut: 0, jackpot: 0, deed: 0, season: 0, prize: 0 };
 }
 
-function refund(game: Game, reason: RefundReason): void {
+export function refund(game: Game, reason: RefundReason): void {
   game.stage = 'refunded';
   game.startIn = null;
   game.result = {

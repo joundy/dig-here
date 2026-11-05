@@ -5,13 +5,14 @@ import {
 } from './economy';
 import type { Ledger } from './economy';
 import { advance, finishAt, placeDig, startGame } from './engine';
-import { MAP_IDS, seededRng } from './map';
+import { MAP_IDS, rollLayout, seededRng } from './map';
 import { RULES } from './rules';
 import { GameError } from './types';
-import type { Game, MapId } from './types';
+import type { Game, MapId, NewGameInput } from './types';
 
 const rng = seededRng(3);
 const NOW = 1_000_000;
+const open = (ledger: Ledger, games: Game[], id: string, input: NewGameInput) => openRoom(ledger, games, id, input, rollLayout(input.mapId, rng));
 
 function fund(ledger: Ledger, accounts: string[], amount = 50000): void {
   for (const a of accounts) {
@@ -23,7 +24,7 @@ function fund(ledger: Ledger, accounts: string[], amount = 50000): void {
 function setup(players = ['a.near', 'b.near', 'c.near'], over: Partial<{ fee: number; hostCutBps: number; mapId: MapId }> = {}) {
   const ledger = newLedger(NOW);
   fund(ledger, ['host.near', ...players]);
-  const game = openRoom(ledger, [], '1', {
+  const game = open(ledger, [], '1', {
     name: 'T', host: 'host.near', mapId: 'tropical', fee: 1000, durationSec: 100, hostCutBps: 500,
     minPlayers: 2, maxPlayers: 30, countdownSec: 0, ...over,
   });
@@ -87,7 +88,7 @@ describe('hosting', () => {
   it('locks the bond, and refuses a host without enough balance', () => {
     const { ledger } = setup();
     expect(balanceOf(ledger, 'host.near')).toBe(50000 - RULES.hostBond);
-    expect(() => openRoom(ledger, [], '2', {
+    expect(() => open(ledger, [], '2', {
       name: 'T', host: 'nobody.near', mapId: 'tropical', fee: 1000, durationSec: 100, hostCutBps: 0, minPlayers: 2, maxPlayers: 4, countdownSec: 0,
     })).toThrow(GameError);
   });
@@ -97,8 +98,8 @@ describe('hosting', () => {
     fund(ledger, ['host.near']);
     const games: Game[] = [];
     const input = { name: 'T', host: 'host.near', mapId: 'tropical' as MapId, fee: 1000, durationSec: 100, hostCutBps: 0, minPlayers: 2, maxPlayers: 4, countdownSec: 0 };
-    for (let i = 0; i < 3; i++) games.push(openRoom(ledger, games, String(i), input));
-    expect(() => openRoom(ledger, games, '9', input)).toThrow(/at most 3/);
+    for (let i = 0; i < 3; i++) games.push(open(ledger, games, String(i), input));
+    expect(() => open(ledger, games, '9', input)).toThrow(/at most 3/);
   });
 
   it('returns the bond and adds to the host\'s record when a room finishes', () => {
@@ -350,7 +351,7 @@ it('never creates or loses a coin through hundreds of random rounds', () => {
     const mapId = MAP_IDS[r(3)];
     const live = games.filter((g) => g.host === host && g.stage !== 'finished' && g.stage !== 'refunded');
     if (live.length >= RULES.maxOpenRoomsPerHost) continue;
-    const game = openRoom(ledger, games, String(n), {
+    const game = open(ledger, games, String(n), {
       name: 'R', host, mapId, fee: 1 + r(5000), durationSec: 100, hostCutBps: r(2001), minPlayers: 2 + r(3), maxPlayers: 8 + r(10), countdownSec: 0,
     });
     games.push(game);

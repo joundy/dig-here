@@ -2,7 +2,7 @@
 import * as economy from '../game/economy';
 import type { Ledger } from '../game/economy';
 import { advance, finishAt, isCrowded, isOpen, placeDig, secondsToNextClue, startGame } from '../game/engine';
-import { isLand, MAP_IDS, mathRng } from '../game/map';
+import { isLand, MAP_IDS, mathRng, rollLayout } from '../game/map';
 import { RULES } from '../game/rules';
 import { GameError } from '../game/types';
 import type { Game, NewGameInput, Point } from '../game/types';
@@ -224,7 +224,7 @@ class DummyBackend implements GameBackend {
 
   #open(input: NewGameInput): string {
     const id = String(this.#state.nextId++);
-    const game = economy.openRoom(this.#state.ledger, this.#state.games, id, input);
+    const game = economy.openRoom(this.#state.ledger, this.#state.games, id, input, rollLayout(input.mapId, mathRng));
     this.#state.games.unshift(game);
     return this.#state.games[0].id;
   }

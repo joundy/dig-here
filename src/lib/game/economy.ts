@@ -3,7 +3,7 @@ import { createGame, isOpen, joinGame, leaveGame } from './engine';
 import { RULES } from './rules';
 import { GameError } from './types';
 import { LANDMARKS_PER_MAP, MAP_DEFS } from './map';
-import type { Game, Kind, MapId, NewGameInput } from './types';
+import type { Game, Kind, Landmark, MapId, NewGameInput } from './types';
 
 /** One deed per kind of landmark per map, like the Snowy Penguin. */
 export type DeedId = `${MapId}:${Kind}`;
@@ -97,10 +97,10 @@ export function hostRecord(ledger: Ledger, account: string): HostRecord {
 }
 
 /** Opens a room and locks the host's bond. */
-export function openRoom(ledger: Ledger, games: Game[], id: string, input: NewGameInput): Game {
+export function openRoom(ledger: Ledger, games: Game[], id: string, input: NewGameInput, landmarks: Landmark[]): Game {
   const open = games.filter((g) => g.host === input.host && isOpen(g)).length;
   if (open >= RULES.maxOpenRoomsPerHost) throw new GameError(`You can host at most ${RULES.maxOpenRoomsPerHost} open games at once.`);
-  const game = createGame(id, input);
+  const game = createGame(id, input, landmarks);
   spend(ledger, input.host, RULES.hostBond);
   ledger.held += RULES.hostBond;
   return game;
@@ -138,7 +138,7 @@ export function deedCount(mapId: MapId, kind: Kind): number {
   return MAP_DEFS[mapId].roster[kind] ?? 0;
 }
 
-/** Roughly the chance the treasure lands by this kind, since every landmark has about the same odds. */
+/** Roughly the chance the treasure lands by this kind, since every landmark has about the same odds. For the screen only: it's a fraction. */
 export function deedChance(mapId: MapId, kind: Kind): number {
   return deedCount(mapId, kind) / LANDMARKS_PER_MAP;
 }
@@ -245,16 +245,20 @@ export function listDeed(ledger: Ledger, account: string, id: string, price: num
   deed.price = price;
 }
 
+/** Equal points go by account name, compared byte by byte: a locale-aware order depends on the browser's language, and Rust's wouldn't match. */
 export function seasonRanking(ledger: Ledger): { account: string; points: number }[] {
   return Object.entries(ledger.season.points)
     .map(([account, points]) => ({ account, points }))
-    .sort((a, b) => b.points - a.points || a.account.localeCompare(b.account));
+    .sort((a, b) => b.points - a.points || (a.account < b.account ? -1 : a.account > b.account ? 1 : 0));
 }
 
-/** Pays the top three and starts the next season. Any unclaimed share rolls over. */
-export function closeSeason(ledger: Ledger, now: number): void {
+/**
+ * Pays the top three and starts the next season. Any unclaimed share rolls over. Accounts ending in
+ * `excludedSuffix` (testnet bots) can't take a prize, and whoever ranks below them moves up.
+ */
+export function closeSeason(ledger: Ledger, now: number, excludedSuffix = ''): void {
   const { season } = ledger;
-  const ranking = seasonRanking(ledger);
+  const ranking = seasonRanking(ledger).filter((entry) => !excludedSuffix || !entry.account.endsWith(excludedSuffix));
   const startingPool = season.pool;
   const lastWinners: Season['lastWinners'] = [];
   RULES.seasonPrizeBps.forEach((bps, place) => {
