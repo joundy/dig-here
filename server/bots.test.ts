@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { aim, BOT_JOIN_LIMITS, botsWillJoin, botTarget, designRoom, digPercent, HumanRoomLimit } from './bot-brain.ts';
+import { aim, askingPrice, BOT_JOIN_LIMITS, botsWillJoin, botTarget, chooseBotTrade, designRoom, digPercent, HumanRoomLimit, unlistedBotNfts } from './bot-brain.ts';
 import { PROJECT_ROOT } from './config.ts';
 import { isLand, loadMaps } from './map-data.ts';
 
@@ -76,4 +76,40 @@ test('each human host gets bots in a few rooms an hour, and a room already count
   assert.equal(limit.allow('a', 2, t + 50), true);
   assert.equal(limit.allow('b', 5, t + 60), true, 'hosts are counted apart');
   assert.equal(limit.allow('a', 4, t + 3_600_001), true, 'the oldest fell out of the hour');
+});
+
+const NEAR = 10n ** 24n;
+const row = (token_id: string, seller: string, price: bigint, over: object = {}) => ({ token_id, seller, price: price.toString(), in_progress: false, stale: false, ...over });
+
+test('a bot asks a little over the mint price', () => {
+  assert.equal(askingPrice(500, () => 0), (55n * NEAR) / 100n);
+  assert.equal(askingPrice(500, () => 0.999999), (80n * NEAR) / 100n);
+});
+
+test('every NFT a bot holds with nothing good on the market needs listing', () => {
+  const nfts = [
+    { token_id: 'a', owner: 'x.bots' }, { token_id: 'b', owner: 'y.bots' }, { token_id: 'c', owner: 'z.bots' },
+    { token_id: 'd', owner: 'human' }, { token_id: 'e', owner: null },
+  ];
+  const listings = [row('a', 'x.bots', NEAR), row('c', 'old.bots', NEAR, { stale: true })];
+  assert.deepEqual(unlistedBotNfts(nfts, listings, isBot).map((n) => n.token_id), ['b', 'c']);
+});
+
+test('bots only ever buy a bot\'s listing, within the limit, and never their own', () => {
+  const wallets = [{ id: 'x.bots', spare: 2n * NEAR }, { id: 'y.bots', spare: 2n * NEAR }];
+  const max = NEAR;
+  assert.equal(chooseBotTrade([row('h', 'human', NEAR / 2n)], wallets, isBot, max), null, 'a human could farm the budget');
+  assert.equal(chooseBotTrade([row('p', 'x.bots', 2n * NEAR)], wallets, isBot, max), null, 'over the limit');
+  assert.equal(chooseBotTrade([row('s', 'x.bots', NEAR / 2n, { stale: true })], wallets, isBot, max), null, 'stale');
+  assert.equal(chooseBotTrade([row('f', 'x.bots', NEAR / 2n, { in_progress: true })], wallets, isBot, max), null, 'being sold');
+  assert.equal(chooseBotTrade([row('o', 'x.bots', NEAR / 2n)], [wallets[0]], isBot, max), null, 'no other bot to buy it');
+  for (let i = 0; i < 50; i++) {
+    const trade = chooseBotTrade([row('a', 'x.bots', NEAR / 2n)], wallets, isBot, max)!;
+    assert.deepEqual([trade.token_id, trade.buyer, trade.short], ['a', 'y.bots', 0n]);
+  }
+});
+
+test('a buyer short of coins is the closest to affording it, and says how short', () => {
+  const trade = chooseBotTrade([row('a', 's.bots', NEAR)], [{ id: 'x.bots', spare: NEAR / 4n }, { id: 'y.bots', spare: NEAR / 2n }], isBot, NEAR)!;
+  assert.deepEqual([trade.buyer, trade.short], ['y.bots', NEAR / 2n]);
 });

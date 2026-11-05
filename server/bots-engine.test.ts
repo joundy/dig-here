@@ -10,6 +10,7 @@ const stub = await startStubRpc(async (call) => {
   if (method === 'view_account') return { amount: (10n * NEAR).toString(), locked: '0', storage_usage: 200 };
   if (method === 'view_access_key') return { nonce: 1, permission: 'FullAccess' };
   if (method === 'get_account') return viewResult({ balance: NEAR.toString() });
+  if (method === 'get_config') return viewResult({ mint_price: 500 });
   if (method === 'block') return { header: { hash: '11111111111111111111111111111111', height: 100 } };
   if (method === 'send_tx') {
     signed.push(Buffer.from(call.params.signed_tx_base64, 'base64').toString('latin1'));
@@ -27,12 +28,12 @@ const { openDb } = await import('./db.ts');
 const { deriveKeyPair } = await import('./keys.ts');
 const { NearAccount } = await import('./signer.ts');
 
-async function engine() {
+async function engine(market: any = null, over: object = {}) {
   const watchers: Array<(frame: any) => void> = [];
-  const state: any = { demand: { active: () => true }, onPoll: (fn: any) => watchers.push(fn) };
+  const state: any = { market, demand: { active: () => true }, onPoll: (fn: any) => watchers.push(fn) };
   const config: any = {
-    contract: 'game.test', botsParent: 'bots.test', botCount: 8, keySeed: 's', botsBudget: 8n * NEAR, botNftMints: 0,
-    botHoldMinSec: 60, botHoldMaxSec: 60, mapDataDir: resolve(PROJECT_ROOT, 'contract/data'),
+    contract: 'game.test', marketContract: 'market.test', botsParent: 'bots.test', botCount: 8, keySeed: 's', botsBudget: 8n * NEAR, botNftMints: 0,
+    botTradeEverySec: 3600, botMaxBuy: NEAR, botHoldMinSec: 60, botHoldMaxSec: 60, mapDataDir: resolve(PROJECT_ROOT, 'contract/data'), ...over,
   };
   const funding: any = { rootCanSpend: async () => true, topUp: async () => 0n };
   const root = new NearAccount('root.test', 'test', [deriveKeyPair('s', 'root')]);
@@ -94,4 +95,31 @@ test('bots hold their digs while a roll is locked', async () => {
   assert.equal(digsOf(), 0, 'digs sent during the lock would only be refused');
   await runTicks(tick, [live(false)], 1500);
   assert.ok(digsOf() > 0, 'and they dig once it has been revealed');
+});
+
+test('a bot lists what it holds through the market, with the deposit and message it needs', async () => {
+  signed.length = 0;
+  const market = { listings: [], nfts: [{ token_id: 'snowy:seal', owner: 'vega.bots.test' }, { token_id: 'snowy:pine', owner: 'someone.testnet' }] };
+  const { tick } = await engine(market);
+  await runTicks(tick, [], 300);
+  const approvals = signed.filter((tx) => tx.includes('nft_approve'));
+  assert.equal(approvals.length, 1, 'one at a time');
+  assert.ok(approvals[0].includes('snowy:seal') && approvals[0].includes('market.test') && approvals[0].includes('\\"price\\":\\"'), approvals[0]);
+  assert.ok(!signed.some((tx) => tx.includes('list_nft') || tx.includes('buy_nft')), 'the old methods are gone');
+});
+
+test('a bot buys a bot\'s listing through the market, and leaves a human\'s alone', async () => {
+  signed.length = 0;
+  const price = (NEAR / 10n).toString();
+  const listing = { approval_id: 1, in_progress: false, stale: false };
+  const market = {
+    listings: [{ ...listing, token_id: 'snowy:seal', seller: 'vega.bots.test', price }, { ...listing, token_id: 'snowy:pine', seller: 'human.testnet', price }],
+    nfts: [{ token_id: 'snowy:seal', owner: 'vega.bots.test' }, { token_id: 'snowy:pine', owner: 'human.testnet' }],
+  };
+  // The listing step needs nothing here, so the trade comes straight after it.
+  const { tick } = await engine(market, { botTradeEverySec: 0 });
+  await runTicks(tick, [], 600);
+  const buys = signed.filter((tx) => tx.includes('"token_id"') && tx.includes('buy'));
+  assert.ok(buys.length >= 1, `${signed.length} sends`);
+  assert.ok(buys.every((tx) => tx.includes('snowy:seal') && tx.includes('market.test')), 'only the bot\'s own listing');
 });

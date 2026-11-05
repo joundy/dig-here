@@ -42,6 +42,7 @@ export function loadConfig() {
   return {
     port: num('PORT', 8787),
     contract: process.env.NEAR_CONTRACT ?? `v1.${root}`,
+    marketContract: process.env.NEAR_MARKET ?? `market.${root}`,
     rootAccount: root,
     rootKey: required('NEAR_ROOT_PRIVATE_KEY'),
     oracleAccount: process.env.NEAR_ORACLE_ACCOUNT ?? `oracle.${root}`,
@@ -79,6 +80,9 @@ export function loadConfig() {
     botCount: num('BOT_COUNT', 8),
     botsBudget: coins('BOTS_BUDGET_NEAR', '8'),
     botNftMints: num('BOT_NFT_MINTS', 3),
+    /** How often one bot buys another's NFT, so the market shows real sales. The coins stay among the bots. */
+    botTradeEverySec: num('BOT_TRADE_EVERY_SEC', 1200),
+    botMaxBuy: coins('BOT_MAX_BUY_NEAR', '1'),
     /** A bot room stays open this long for a visitor to join. This is what sets rounds per hour, and so the burn rate. */
     botHoldMinSec: num('BOT_HOLD_MIN_SEC', 60),
     botHoldMaxSec: num('BOT_HOLD_MAX_SEC', 300),

@@ -23,14 +23,15 @@ export type ParsedEvent = {
   data: any;
 };
 
-/** Pulls our contract's events out of one transaction. A failed receipt's logs never happened. */
-export function eventsOfTransaction(tx: any, contract: string): ParsedEvent[] {
+/** Pulls our contracts' events out of one transaction. A failed receipt's logs never happened. */
+export function eventsOfTransaction(tx: any, contracts: string | string[]): ParsedEvent[] {
+  const ours = new Set(typeof contracts === 'string' ? [contracts] : contracts);
   const out: ParsedEvent[] = [];
   const hash = tx.transaction?.hash ?? tx.execution_outcome?.id;
   for (const entry of tx.receipts ?? []) {
     const exec = entry.execution_outcome;
     const outcome = exec?.outcome;
-    if (!outcome || outcome.executor_id !== contract || 'Failure' in (outcome.status ?? {})) continue;
+    if (!outcome || !ours.has(outcome.executor_id) || 'Failure' in (outcome.status ?? {})) continue;
     (outcome.logs ?? []).forEach((line: string, log_index: number) => {
       if (!line.startsWith('EVENT_JSON:')) return;
       let parsed: any;
@@ -85,14 +86,23 @@ export function storeEvents(db: Db, events: ParsedEvent[]): number {
 export class Indexer {
   readonly #config: Config;
   readonly #db: Db;
-  height = 0;
+  readonly #accounts: string[];
+  readonly #heights = new Map<string, number>();
   lastError: string | null = null;
 
   constructor(config: Config, db: Db) {
     this.#config = config;
     this.#db = db;
-    const row = db.prepare('SELECT height FROM cursor WHERE id = 1').get() as { height: number } | undefined;
-    this.height = row?.height ?? 0;
+    this.#accounts = [config.contract, ...(config.marketContract ? [config.marketContract] : [])];
+    // The game contract's progress lived in `cursor` before there was a second contract.
+    const old = db.prepare('SELECT height FROM cursor WHERE id = 1').get() as { height: number } | undefined;
+    if (old) this.#heights.set(config.contract, old.height);
+    for (const row of db.prepare('SELECT account, height FROM account_cursors').all() as Array<{ account: string; height: number }>) this.#heights.set(row.account, row.height);
+  }
+
+  /** How far the game contract is read, which is what a round's history depends on. */
+  get height(): number {
+    return this.#heights.get(this.#config.contract) ?? 0;
   }
 
   async run(): Promise<never> {
@@ -121,43 +131,55 @@ export class Indexer {
     return res.json();
   }
 
-  /** Rereading the overlap is harmless because the event key makes every row unique. */
   async syncOnce(): Promise<number> {
+    let stored = 0;
+    for (const account of this.#accounts) stored += await this.#syncAccount(account);
+    return stored;
+  }
+
+  /**
+   * Rereading the overlap is harmless because the event key makes every row unique. A listing or a sale touches both
+   * contracts, so each read keeps both contracts' events. The "done" marks are per contract, because a transaction this
+   * read before it knew about the market still holds market events to collect.
+   */
+  async #syncAccount(account: string): Promise<number> {
     const db = this.#db;
     let stored = 0;
     let resume: string | undefined;
+    const markOf = (hash: string) => (account === this.#config.contract ? hash : `${account}:${hash}`);
     const known = db.prepare('SELECT 1 FROM indexed_txs WHERE hash = ?');
     const mark = db.prepare('INSERT OR IGNORE INTO indexed_txs(hash) VALUES (?)');
-    let highest = this.height;
+    const start = this.#heights.get(account) ?? 0;
+    let highest = start;
     do {
       const page = await this.#post('/v0/account', {
-        account_id: this.#config.contract,
+        account_id: account,
         is_real_receiver: true,
-        from_tx_block_height: Math.max(0, this.height - OVERLAP_BLOCKS),
+        from_tx_block_height: Math.max(0, start - OVERLAP_BLOCKS),
         desc: false,
         limit: 200,
         ...(resume ? { resume_token: resume } : {}),
       });
       const rows = (page.account_txs ?? []) as Array<{ transaction_hash: string; tx_block_height: number; tx_block_timestamp: string }>;
-      const fresh = rows.filter((r) => !known.get(r.transaction_hash));
+      const fresh = rows.filter((r) => !known.get(markOf(r.transaction_hash)));
       for (let i = 0; i < fresh.length; i += HASHES_PER_CALL) {
         const batch = fresh.slice(i, i + HASHES_PER_CALL);
         const { transactions } = await this.#post('/v0/transactions', { tx_hashes: batch.map((r) => r.transaction_hash) });
-        const events = (transactions ?? []).flatMap((tx: any) => eventsOfTransaction(tx, this.#config.contract));
+        const events = (transactions ?? []).flatMap((tx: any) => eventsOfTransaction(tx, this.#accounts));
         stored += storeEvents(db, events);
         const now = Date.now();
         for (const r of batch) {
-          if (now - Number(r.tx_block_timestamp) / 1e6 > SETTLED_AFTER_MS) mark.run(r.transaction_hash);
+          if (now - Number(r.tx_block_timestamp) / 1e6 > SETTLED_AFTER_MS) mark.run(markOf(r.transaction_hash));
         }
       }
       for (const r of rows) highest = Math.max(highest, r.tx_block_height);
       resume = rows.length ? page.resume_token : undefined;
     } while (resume);
-    if (highest !== this.height) {
-      db.prepare('INSERT INTO cursor(id, height) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET height = excluded.height').run(highest);
-      this.height = highest;
+    if (highest !== start) {
+      db.prepare('INSERT INTO account_cursors(account, height) VALUES (?, ?) ON CONFLICT(account) DO UPDATE SET height = excluded.height').run(account, highest);
+      this.#heights.set(account, highest);
     }
-    if (stored) log('indexer', `stored ${stored} events up to block ${highest}`);
+    if (stored) log('indexer', `stored ${stored} events from ${account} up to block ${highest}`);
     return stored;
   }
 }

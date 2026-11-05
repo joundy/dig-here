@@ -71,7 +71,7 @@ function check(room, proof) {
     expect('finished treasure', finished.treasure, reveals.at(-1)?.treasure);
     const split = splitPot(finished.pot, finished.host_cut_bps);
     expect('split', { host_cut: split.hostCut, jackpot: split.jackpot, deed: split.deed, season: split.season, prize: split.prize }, finished.split);
-    const ranked = rankDigs(digs.map((d) => scoreDig({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, bonusBps: d.bonus_bps, crowded: d.crowded, at: d.dug_at_ms }, finished.treasure)));
+    const ranked = rankDigs(digs.map((d) => scoreDig({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, bonusBps: d.bonus_bps, crowded: d.crowded, at: d.dug_at_ms }, finished.treasure, finished.closeness_range ?? created.closeness_range ?? 48)));
     expect('ranking', ranked.map((d) => [d.account, d.score]), finished.ranking.map((d) => [d.account, d.score]));
     expect('winner', ranked[0]?.account, finished.winner);
   }

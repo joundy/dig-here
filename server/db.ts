@@ -14,6 +14,7 @@ export function openDb(path: string): Db {
     PRAGMA busy_timeout = 2000;
 
     CREATE TABLE IF NOT EXISTS cursor(id INTEGER PRIMARY KEY CHECK(id = 1), height INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS account_cursors(account TEXT PRIMARY KEY, height INTEGER NOT NULL) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS indexed_txs(hash TEXT PRIMARY KEY) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS events(
       seq INTEGER PRIMARY KEY AUTOINCREMENT,

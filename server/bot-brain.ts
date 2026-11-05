@@ -96,3 +96,40 @@ export function botTarget(room: any, isBot: (id: string) => boolean, available: 
   const extra = 1 + below(3, rand);
   return Math.max(0, Math.min(Math.max(room.min_players - humans, 0) + extra, free - (hostIsHuman && room.max_players > 2 ? 1 : 0), available));
 }
+
+/** What a bot asks for an NFT it holds, in yocto: a little over what minting one costs, so a human can always outbid the mint. */
+export function askingPrice(mintPriceMilli: number, rand: Rand = Math.random): bigint {
+  return BigInt(Math.round(mintPriceMilli * (1.1 + rand() * 0.5))) * 10n ** 21n;
+}
+
+export type ListingRow = { token_id: string; seller: string; price: string; in_progress: boolean; stale: boolean };
+
+/** NFTs a bot holds with nothing good on the market, so they should be listed. */
+export function unlistedBotNfts(nfts: Array<{ token_id: string; owner: string | null }>, listings: ListingRow[], isBot: (id: string) => boolean) {
+  const listed = new Set(listings.filter((l) => !l.stale).map((l) => l.token_id));
+  return nfts.filter((n): n is { token_id: string; owner: string } => n.owner !== null && isBot(n.owner) && !listed.has(n.token_id));
+}
+
+/**
+ * A sale between two bots, so the market has real activity. Only a bot's own listing: buying from a human would let
+ * anyone list at the limit and farm the budget. Prefers a buyer who already holds the coins, since sales pay the
+ * seller's wallet and so the same coins can go round. `short` is what the chosen buyer still needs.
+ */
+export function chooseBotTrade(
+  listings: ListingRow[],
+  wallets: Array<{ id: string; spare: bigint }>,
+  isBot: (id: string) => boolean,
+  maxPrice: bigint,
+  rand: Rand = Math.random,
+): { token_id: string; price: bigint; buyer: string; short: bigint } | null {
+  const fits = listings.filter((l) => !l.stale && !l.in_progress && isBot(l.seller) && BigInt(l.price) <= maxPrice);
+  if (!fits.length) return null;
+  const listing = pick(fits, rand);
+  const price = BigInt(listing.price);
+  const others = wallets.filter((w) => w.id !== listing.seller);
+  if (!others.length) return null;
+  const richest = others.reduce((best, w) => (w.spare > best.spare ? w : best));
+  const able = others.filter((w) => w.spare >= price);
+  const buyer = able.length ? pick(able, rand) : richest;
+  return { token_id: listing.token_id, price, buyer: buyer.id, short: buyer.spare >= price ? 0n : price - buyer.spare };
+}

@@ -71,6 +71,61 @@ function playerGame(db: Db, account: string, roomId: number) {
   };
 }
 
+const YOCTO_PER_MILLI = 10n ** 21n;
+/** The game contract priced in milliNEAR before the market took over selling. Everything here is a yocto string. */
+const yoctoOf = (price: unknown) => (typeof price === 'number' ? (BigInt(price) * YOCTO_PER_MILLI).toString() : typeof price === 'string' ? price : null);
+
+const ACTIVITY_EVENTS = ['nft_minted', 'nft_listed', 'nft_price_changed', 'nft_delisted', 'nft_sold', 'nft_sale_failed', 'nft_listing_cancelled', 'nft_transfer'];
+const TOKEN_OF = `CASE WHEN event = 'nft_transfer' THEN json_extract(data, '$[0].token_ids[0]') ELSE json_extract(data, '$.token_id') END`;
+// A sale's own token move is the sale. Showing it twice would read as two things happening.
+const ACTIVITY_WHERE = `event IN (${ACTIVITY_EVENTS.map((e) => `'${e}'`).join(', ')})
+  AND NOT (event = 'nft_transfer' AND tx_hash IN (SELECT tx_hash FROM events WHERE event = 'nft_sold'))`;
+
+/** One row for the market's activity list, whichever contract and standard it came from. */
+export function activityRow(r: any) {
+  const d = JSON.parse(r.data);
+  const base = { seq: r.seq, block_ms: r.block_ms, block_height: r.block_height, tx_hash: r.tx_hash };
+  const row = (kind: string, token_id: string, seller: string | null, buyer: string | null, price: unknown) => ({ ...base, kind, token_id, seller, buyer, price: yoctoOf(price) });
+  switch (r.event) {
+    case 'nft_minted':
+      return row('minted', d.token_id, null, d.owner, d.price);
+    case 'nft_listed':
+      // The old game contract said a delisting this way, with no price.
+      if (r.standard === 'dig-here' && d.price === null) return row('delisted', d.token_id, d.owner, null, null);
+      return row('listed', d.token_id, d.seller ?? d.owner, null, d.price);
+    case 'nft_price_changed':
+      return row('price_changed', d.token_id, d.seller, null, d.price);
+    case 'nft_delisted':
+      return row('delisted', d.token_id, d.seller, null, null);
+    case 'nft_listing_cancelled':
+      return row('delisted', d.token_id, null, null, null);
+    case 'nft_sold':
+      return row('sold', d.token_id, d.seller, d.buyer, d.price);
+    case 'nft_sale_failed':
+      return row('sale_failed', d.token_id, d.seller, d.buyer, d.refund);
+    default:
+      return row('transferred', d[0].token_ids[0], d[0].old_owner_id, d[0].new_owner_id, null);
+  }
+}
+
+function activity(db: Db, url: URL, filter: string, ...params: Array<string | number>) {
+  const before = Number(url.searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
+  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} AND seq < ? ${filter} ORDER BY seq DESC LIMIT ?`).all(before, ...params, limitOf(url, 30));
+  return rows.map(activityRow);
+}
+
+const TRADER_FILTER = `AND ? IN (json_extract(data, '$.seller'), json_extract(data, '$.buyer'), json_extract(data, '$.owner'),
+  json_extract(data, '$[0].old_owner_id'), json_extract(data, '$[0].new_owner_id'))`;
+
+/** Why a round's deed share went where it did: how the NFT reached its owner, up to the settlement. */
+export function deedActivity(db: Db, events: Array<{ event: string; block_height: number; data: any }>) {
+  const finished = events.find((e) => e.event === 'finished');
+  const token = finished?.data.deed?.token_id;
+  if (!token) return [];
+  const rows = db.prepare(`SELECT * FROM events WHERE ${ACTIVITY_WHERE} AND ${TOKEN_OF} = ? AND block_height <= ? ORDER BY seq`).all(token, finished!.block_height);
+  return rows.map(activityRow);
+}
+
 function limitOf(url: URL, fallback: number): number {
   const n = Number(url.searchParams.get('limit') ?? fallback);
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), MAX_LIMIT) : fallback;
@@ -94,6 +149,7 @@ export function addHistoryRoutes(app: App, db: Db, indexer: Indexer): void {
       complete: has('room_created') && (has('finished') || has('refunded')),
       indexed_to: indexer.height,
       events,
+      deed_activity: deedActivity(db, events),
     });
   });
 
@@ -101,6 +157,19 @@ export function addHistoryRoutes(app: App, db: Db, indexer: Indexer): void {
     const account = params[0];
     const before = Number(url.searchParams.get('before') ?? Number.MAX_SAFE_INTEGER);
     const rows = db.prepare('SELECT room_id FROM player_games WHERE account = ? AND room_id < ? ORDER BY room_id DESC LIMIT ?').all(account, before, limitOf(url, 30)) as Array<{ room_id: number }>;
-    sendJson(req, res, 200, { account, games: rows.map((r) => playerGame(db, account, r.room_id)).filter(Boolean), indexed_to: indexer.height });
+    sendJson(req, res, 200, {
+      account,
+      games: rows.map((r) => playerGame(db, account, r.room_id)).filter(Boolean),
+      trades: activity(db, new URL(url.pathname, url), TRADER_FILTER, account),
+      indexed_to: indexer.height,
+    });
+  });
+
+  app.route('GET', /^\/api\/market-activity$/, (req, res, _p, url) => {
+    sendJson(req, res, 200, { activity: activity(db, url, ''), indexed_to: indexer.height });
+  });
+
+  app.route('GET', /^\/api\/nfts\/([^/]+)\/activity$/, (req, res, params, url) => {
+    sendJson(req, res, 200, { activity: activity(db, url, `AND ${TOKEN_OF} = ?`, params[0]), indexed_to: indexer.height });
   });
 }

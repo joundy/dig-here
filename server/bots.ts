@@ -1,4 +1,4 @@
-import { aim, botsWillJoin, botTarget, designRoom, digPercent, HumanRoomLimit, pick } from './bot-brain.ts';
+import { aim, askingPrice, botsWillJoin, botTarget, chooseBotTrade, designRoom, digPercent, HumanRoomLimit, pick, unlistedBotNfts } from './bot-brain.ts';
 import type { Config } from './config.ts';
 import { type Db, ledgerAdd, ledgerTotal } from './db.ts';
 import { availableBalance, ensureAccount, type Funding } from './funding.ts';
@@ -32,6 +32,11 @@ const CREATE_TGAS = 60;
 const JOIN_TGAS = 10;
 const DIG_TGAS = 5;
 const MINT_EVERY_MS = 600_000;
+const LIST_EVERY_MS = 30_000;
+const LIST_TGAS = 30;
+const BUY_TGAS = 60;
+// The approval's storage, whose unused part comes straight back. Must match `contract-market/README.md`.
+const LIST_DEPOSIT = near('0.001');
 const FUNDS_CHECK_MS = 60_000;
 
 type Bot = { account: NearAccount; busy: boolean; balance: bigint; wallet: bigint };
@@ -55,6 +60,9 @@ export class Bots {
   #hosting = false;
   #lastFunds = 0;
   #lastMint = 0;
+  #lastList = 0;
+  #lastTrade = 0;
+  #marketBusy = false;
   #rootLow = false;
   #startedMs = Date.now();
 
@@ -163,6 +171,7 @@ export class Bots {
     if (active && !this.#rootLow) {
       this.#maybeHost(live);
       this.#maybeMint();
+      this.#maybeUseMarket();
     }
   }
 
@@ -278,10 +287,10 @@ export class Bots {
     return attach;
   }
 
-  async #send(bot: Bot, method: string, args: unknown, tgas: number, deposit = 0n): Promise<any> {
+  async #send(bot: Bot, method: string, args: unknown, tgas: number, deposit = 0n, receiver = this.#config.contract): Promise<any> {
     bot.busy = true;
     try {
-      const r = await bot.account.call(this.#config.contract, method, args, tgas, deposit);
+      const r = await bot.account.call(receiver, method, args, tgas, deposit);
       if (!r.ok) log('bots', `${bot.account.id} ${method} refused: ${r.failure}`);
       return r;
     } catch (e) {
@@ -323,8 +332,9 @@ export class Bots {
     const free = nfts.filter((n) => !n.owner);
     if (!free.length) return;
     const config: any = await viewFunction(this.#config.contract, 'get_config');
-    const price = milli(config.mint_price);
-    const coins = price + near('0.05');
+    // Minting needs something attached, and a bot with no record yet pays for one out of it.
+    const attach = milli(config.mint_price) + near('0.002');
+    const coins = attach + near('0.05');
     if (this.spent() + coins > this.#config.botsBudget || !(await this.#funding.rootCanSpend(coins, 'bots'))) return;
     const bot = this.#freeBot(() => true);
     if (!bot) return;
@@ -332,11 +342,54 @@ export class Bots {
     const funded = await this.#root.transfer(bot.account.id, coins);
     if (!funded.ok) return;
     ledgerAdd(this.#db, BUDGET_KIND, bot.account.id, coins);
-    const minted = await this.#send(bot, 'mint_nft', { token_id: token }, 30, price);
-    if (!minted?.ok) return;
-    const listPrice = Math.round(config.mint_price * between(1.1, 1.6));
-    await this.#send(bot, 'list_nft', { token_id: token, price: listPrice }, 10);
-    log('bots', `${bot.account.id} minted and listed ${token}`, { price: listPrice });
+    const minted = await this.#send(bot, 'mint_nft', { token_id: token }, 30, attach);
+    if (minted?.ok) log('bots', `${bot.account.id} minted ${token}`);
+    // It's listed on the next pass, along with anything else a bot holds that isn't for sale.
+  }
+
+  /** Listing is cheap, because the deposit comes back. A sale is demand-driven and spaced out, and stays among the bots. */
+  #maybeUseMarket(): void {
+    if (this.#marketBusy || !this.#state.market) return;
+    const now = Date.now();
+    if (now - this.#lastList >= LIST_EVERY_MS) {
+      this.#lastList = now;
+      this.#marketBusy = true;
+      void this.#listOne().catch((e) => log('bots', `listing failed: ${errorText(e)}`)).finally(() => (this.#marketBusy = false));
+    } else if (now - this.#lastTrade >= this.#config.botTradeEverySec * 1000) {
+      this.#lastTrade = now;
+      this.#marketBusy = true;
+      void this.#tradeOne().catch((e) => log('bots', `trade failed: ${errorText(e)}`)).finally(() => (this.#marketBusy = false));
+    }
+  }
+
+  async #listOne(): Promise<void> {
+    const market = this.#state.market!;
+    const [nft] = unlistedBotNfts(market.nfts, market.listings, this.#isBot);
+    if (!nft) return;
+    const bot = this.#bots.get(nft.owner);
+    if (!bot || bot.busy || bot.wallet < GAS_RESERVE) return;
+    const config: any = await viewFunction(this.#config.contract, 'get_config');
+    const price = askingPrice(config.mint_price);
+    const msg = JSON.stringify({ price: price.toString() });
+    const out = await this.#send(bot, 'nft_approve', { token_id: nft.token_id, account_id: this.#config.marketContract, msg }, LIST_TGAS, LIST_DEPOSIT);
+    if (out?.ok) log('bots', `${bot.account.id} listed ${nft.token_id}`, { price: toNear(price) });
+  }
+
+  async #tradeOne(): Promise<void> {
+    const wallets = [...this.#bots.entries()].filter(([, b]) => !b.busy).map(([id, b]) => ({ id, spare: b.wallet > GAS_RESERVE ? b.wallet - GAS_RESERVE : 0n }));
+    const trade = chooseBotTrade(this.#state.market!.listings, wallets, this.#isBot, this.#config.botMaxBuy);
+    if (!trade) return;
+    const bot = this.#bots.get(trade.buyer)!;
+    if (trade.short > 0n) {
+      if (this.spent() + trade.short > this.#config.botsBudget || !(await this.#funding.rootCanSpend(trade.short, 'bots'))) return;
+      const funded = await this.#root.transfer(bot.account.id, trade.short);
+      if (!funded.ok) return;
+      ledgerAdd(this.#db, BUDGET_KIND, bot.account.id, trade.short);
+      bot.wallet += trade.short;
+    }
+    bot.wallet -= trade.price;
+    const out = await this.#send(bot, 'buy', { token_id: trade.token_id }, BUY_TGAS, trade.price, this.#config.marketContract);
+    // A sale that failed is refunded, and the next funds check sees the wallet as it really is.
+    if (out?.ok) log('bots', `${bot.account.id} bought ${trade.token_id}`, { price: toNear(trade.price), sold: out.value });
   }
 }
-

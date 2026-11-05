@@ -20,7 +20,7 @@ process.on('unhandledRejection', (e) => log('main', `unhandled rejection: ${erro
 
 const config = loadConfig();
 const demand = new Demand(config.demandWindowSec * 1000);
-const state = new LiveState(config.contract, demand);
+const state = new LiveState(config.contract, demand, config.marketContract);
 const app = new App();
 const team = rootAndOracle(config);
 const db = openDb(config.dbPath);
@@ -44,6 +44,7 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
   sendJson(req, res, fresh ? 200 : 503, {
     ok: fresh,
     contract: config.contract,
+    market: config.marketContract,
     oracle_pool: current?.frame.live.commitments_left ?? null,
     root_balance: rootBalance.toString(),
     last_state_ms: current?.frame.fetched_ms ?? null,
