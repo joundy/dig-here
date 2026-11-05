@@ -245,3 +245,10 @@ Every player, including jurors, uses a real testnet wallet, by the user's decisi
 | `docs.near.org/getting-started/faucet` | Loads, and its form calls `helper.testnet.near.org`, which answered 429 "retry in 6 hours" because this machine had used up its share. That same service funded this project earlier, but delivery wasn't seen today |
 | `near-faucet.io` | Loads, but the one proper request (1 NEAR) came back "Error occured", so the game doesn't offer it |
 | `testnet.mynearwallet.com` | Loads, but no longer creates accounts, so the game doesn't offer it |
+
+## Parked ideas (noted by the user's request, not built)
+
+- **Closeness range:** in 40 real rounds, 16 ended with every dig scoring 0, because digs often land past the 48-pixel limit once landmarks are spread out. The closest dig still wins in those rounds. Idea: raise the range to about 80 pixels. It needs a re-run of the simulation on today's maps, a contract upgrade, and Verify keeping the old value for rounds already played.
+- **Starter coins:** the backend sends about 1 test NEAR once per real wallet, so a juror doesn't depend on outside faucets. The docs faucet refused this machine with a 429 and no faucet was confirmed delivering coins on 2026-11-05.
+- **Jackpot seeding:** 25% of each mint goes to the jackpot.
+- **Other known issues:** a lone host waiting on the default 30-second countdown takes 36 seconds, against a 15-second target. The season list can include deleted guest accounts until season 1 closes. Disconnecting leaves the game's limited key on the player's account.
