@@ -172,11 +172,11 @@ At least 50 cases per area. TS and Rust must agree exactly.
 | **Oracle** | Keeps at least 50 commitments in the pool. Watches open rooms, calls `poke` when due, `reveal` a block after each lock |
 | **Bots** | Testnet only (`BOTS_ENABLED`). Host rooms, join, dig with public data, keep the lobby alive. Budgeted, and pause if the root runs low |
 | **Guests** | `POST /api/guest-accounts`, per `docs/research/onboarding-and-payments.md` section 3 |
-| **Live state** | Polls contract views once, serves everyone: `GET /api/state`, `GET /api/live` (SSE) |
-| **Indexer** | Tails contract events from Neardata into `node:sqlite`. `GET /api/finished-games`, `GET /api/games/:id/proof`, `GET /api/players/:id/history`. Decides nothing. Live play works without it |
+| **Live state** | Polls one batched contract view about once a second, serves everyone: `GET /api/state`, `GET /api/live` (SSE) |
+| **Indexer** | Reads our contract's transactions from the FastNEAR Transactions API into `node:sqlite` (not tailing blocks: anonymous Neardata is too rate limited, see `docs/research/realtime-and-indexing.md`). `GET /api/finished-games`, `GET /api/games/:id/proof`, `GET /api/players/:id/history`. Decides nothing. Live play works without it |
 | **Sweeper** | Reclaims idle guests' coins per research section 3.5 |
 
-Secrets in environment only. Signer queues per account so nonces never collide. Retries check status first, because a timed-out transaction may still land. Log with no keys. A `GET /api/health` shows pool size, root balance and last block.
+Secrets in environment only. Signer queues per account so nonces never collide (the research recommends one gas key with several nonce lanes for the oracle). RPC: FastNEAR, with dRPC read failover, never `rpc.testnet.near.org`. Retries check status first, because a timed-out transaction may still land. Log with no keys. A `GET /api/health` shows pool size, root balance and last block.
 
 Frontend reads the backend first, and falls back to direct RPC views if it's unreachable.
 
@@ -185,7 +185,7 @@ Frontend reads the backend first, and falls back to direct RPC views if it's unr
 - `src/lib/backend/near.svelte.ts` implements `GameBackend`, mapping contract rooms to the existing `Game` type so the screens barely change.
 - `src/lib/backend/index.ts` picks it by `VITE_BACKEND` (`near` default, `dummy` for tests and playtest).
 - **First action asks once:** "Play as guest" (instant, no wallet) or "Connect NEAR wallet" (`@hot-labs/near-connect` pinned 0.11.x, `function-call-key-plugin` 2.2, `near-api-js` 7.4, loaded on click).
-- Optimistic: the X appears at once and confirms in the background. Clear errors, and roll back on failure.
+- Optimistic: the X appears at once and confirms in the background, sent with `wait_until: EXECUTED_OPTIMISTIC`, never `NONE`. Clear errors, and roll back on failure.
 - Time comes from chain time plus a measured offset. Never trust the local clock alone.
 - Labels: bots are clearly marked. Guests shown short.
 - **"Verify this round"** on results (section above), with links to the testnet explorer.
