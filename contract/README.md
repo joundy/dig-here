@@ -31,11 +31,11 @@ Attach gas per the table below. Gas is bought at 10× its burn price and the res
 |---|---|
 | `dig` | 5 |
 | `join`, `leave`, `start`, `deposit`, `deposit_for`, `list_nft` | 10 |
-| `withdraw` (needs at least 5) | 10 |
+| `withdraw` (fails below 10) | 10 |
 | `poke` | 30 |
 | `reveal` | 30 |
 | `add_commitments` | 30 for 50 tips |
-| `create_room` | 100 |
+| `create_room` | 60 |
 | `mint_nft`, `buy_nft`, `nft_transfer` | 30 |
 | `close_season` | 30 |
 
@@ -55,7 +55,7 @@ Only the contract's own account can call it. There's no admin method afterwards.
 |---|---|
 | `deposit()` payable | Needs something attached |
 | `deposit_for({ account_id })` payable | Credits someone else. Used for guest coins. Their record, if new, is paid out of the amount |
-| `withdraw({ amount })` exactly 1 yocto | `amount` is a yocto string. Deducts first. Returns `true`, or `false` after restoring the balance if the transfer failed. Needs a full-access key, because a function-call key can't attach the yocto. Needs at least 5 Tgas |
+| `withdraw({ amount })` exactly 1 yocto | `amount` is a yocto string. Deducts first. Returns `true`, or `false` after restoring the balance if the transfer failed. Needs a full-access key, because a function-call key can't attach the yocto. Needs at least 10 Tgas |
 
 ### Rooms
 
@@ -139,7 +139,7 @@ Accounts with the excluded suffix never appear in `top`, though they do collect 
 [{ token_id, map, kind, owner /* or null */, price /* milli, or null */, earned, landings }]
 ```
 
-**`live_state()`**, one batched read for the board and every open room. Measured with 30 full rooms in the gas doc.
+**`live_state()`**, one batched read for the board and every open room. Measured with 30 full rooms in the gas doc: 32.6 Tgas and 247 KB at worst, so it needs no paging. Open rooms are capped at 30. Send `accept-encoding: gzip`.
 
 ```
 { version,                // rises on every change to any room
@@ -240,7 +240,7 @@ Rooms get deleted, so these are the permanent record. Everything a proof needs i
 
 - The validator's seed comes first, ours second: `lock_seed` is fixed at the lock, and `link` only comes out in a later block.
 - A reveal in the lock's own block is rejected. Replaying a link fails, because once used it's no longer the preimage of what's expected.
-- A verifier can recompute all of it from `get_room` or the events. What it can't do alone is check `block_seed` or `lock_seed` against the chain, because `env::random_seed()` mixes the block's random value with the receipt: see the gas doc.
+- A verifier can recompute all of it from `get_room` or the events. What it can't do alone is check `block_seed` or `lock_seed` against the chain, because they aren't the block header's `random_value`: see the gas doc.
 
 ## Storage
 
@@ -280,10 +280,12 @@ To redeploy code to the same account, keeping its state, with a change that does
   without-init-call network-config testnet sign-with-legacy-keychain send
 ```
 
+The commitment pool's next index on `v1` is 1, because the testnet smoke test used index 0 with a throwaway secret. The oracle reads it from `commitments_next_index()`.
+
 A breaking change deploys a new `v2` account, and old state isn't migrated:
 
 ```
-../docker/near near account create-account fund-myself v2.dighere.testnet '8 NEAR' autogenerate-new-keypair \
+../docker/near near account create-account fund-myself v2.dighere.testnet '6 NEAR' autogenerate-new-keypair \
   save-to-legacy-keychain sign-as dighere.testnet network-config testnet sign-with-legacy-keychain send
 ../docker/near near contract deploy v2.dighere.testnet use-file target/near/dig_here.wasm \
   with-init-call new json-args '{"config":{"oracle":"oracle.dighere.testnet","treasury":"treasury.dighere.testnet","mint_price":500,"host_bond":100,"season_length_sec":86400,"prize_excluded_suffix":".bots.dighere.testnet"}}' \
