@@ -3,6 +3,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
   plugins: [svelte()],
+  // The server swaps this for a fresh value per request. See `server/static.ts`.
+  html: { cspNonce: '__CSP_NONCE__' },
   // Found late, these would make the dev server reload the page right as someone signs in.
   optimizeDeps: { include: ['near-api-js', '@hot-labs/near-connect', 'function-call-key-plugin'] },
   server: {

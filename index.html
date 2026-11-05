@@ -7,10 +7,33 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <title>Dig Here</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f5cc0'/%3E%3Cpath d='M9 9l14 14M23 9L9 23' stroke='%23ffc800' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <title>Dig Here: a treasure-digging game on NEAR testnet</title>
+    <meta name="description" content="Everyone digs one hole on the same pixel island. The treasure doesn't exist until the timer ends, the contract rolls it, and you can recheck any round in your browser. Test coins only." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Dig Here" />
+    <meta property="og:title" content="Dig Here: the treasure doesn't exist until the timer ends" />
+    <meta property="og:description" content="A multiplayer treasure-digging game on NEAR testnet. One dig each, four clues, best score takes the pot. Nobody can rig it, and you can check. Test coins only." />
+    <meta property="og:url" content="https://dig.joundy.dev/" />
+    <meta property="og:image" content="https://dig.joundy.dev/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="A pixel-art island with the title Dig Here" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <style>
+      html { background: #155fc4; }
+      #splash { position: fixed; inset: 0; display: grid; place-content: center; gap: 0.5rem; padding: 1rem; color: #f7f7ee; font: 1.1rem/1.3 ui-monospace, monospace; text-align: center; }
+      #splash strong { color: #ffc800; font-size: 2.2rem; }
+    </style>
   </head>
   <body>
+    <div id="splash">
+      <strong>Dig Here</strong>
+      <noscript>This game needs JavaScript to run.</noscript>
+      <span>Rowing out to the island…</span>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
