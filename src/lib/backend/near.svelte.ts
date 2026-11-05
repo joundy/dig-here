@@ -658,14 +658,20 @@ class NearBackend implements GameBackend {
         this.#wallet = account ? spendable(account) : 0;
         this.walletKnown = true;
       }
-      // A separate look, because the game must carry on working if the market can't be read.
-      void marketView<string | null>('get_unclaimed', { account_id: session.accountId }).then(
-        (held) => { if (this.#session === session) this.marketClaim = held ? toMilli(held) : 0; },
-        () => undefined,
-      );
+      void this.#readClaim(session);
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /** A separate look, because the game must carry on working if the market can't be read. */
+  async #readClaim(session: Session) {
+    try {
+      const held = await marketView<string | null>('get_unclaimed', { account_id: session.accountId });
+      if (this.#session === session) this.marketClaim = held ? toMilli(held) : 0;
+    } catch {
+      // The next balance read looks again.
     }
   }
 
@@ -1014,6 +1020,8 @@ class NearBackend implements GameBackend {
       throw new GameError("The sale didn't go through. If any coins left your wallet they're on their way back.");
     }
     this.#movedDeed(id, { owner: session.accountId, price: null, saleInProgress: false });
+    // A seller whose account has gone can't be paid, and the market holds those coins for the buyer.
+    await this.#readClaim(session);
   }
 
   /** Not every wallet hands back the logs, so the chain's own record is the fallback for how a sale went. */

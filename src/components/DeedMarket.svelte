@@ -167,7 +167,7 @@
 
     {#if backend.marketClaim > 0}
       <div class="claim" role="status">
-        <p>The market is holding {near(backend.marketClaim)} for you, because a payment couldn't reach your account when it was due.</p>
+        <p>The market is holding {near(backend.marketClaim)} for you, from a sale or a refund that couldn't be paid out when it was due.</p>
         <button class="btn small" disabled={claiming} onclick={claim}>{claiming ? 'Waiting for your wallet…' : 'Send it to my wallet'}</button>
         {#if claimError}<p class="error" role="alert">{claimError}</p>{/if}
       </div>

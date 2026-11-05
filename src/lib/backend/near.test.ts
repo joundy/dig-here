@@ -455,6 +455,18 @@ describe('the backend', () => {
     expect(backend.walletKnown).toBe(false);
   });
 
+  it('has heard about any coins the market kept by the time a buy comes back', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('gone.testnet')];
+    views[`${MARKET}.get_listings`] = [listing('gone.testnet')];
+    const backend = await load(WALLET);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.marketClaim).toBe(0);
+    views[`${MARKET}.get_unclaimed`] = (990n * YOCTO).toString();
+    walletAnswer = logsOf({ standard: 'dig-here-market', event: 'nft_sold', data: {} });
+    await backend.buyDeed('snowy:penguin', 1000);
+    expect(backend.marketClaim).toBe(990);
+  });
+
   it('has nothing to say about sales until the backend answers', async () => {
     const backend = await load(null);
     expect(backend.deedNews).toBeNull();

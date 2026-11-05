@@ -35,6 +35,8 @@
   let heading = $state<HTMLHeadingElement>();
   /** Just became theirs, or just changed. Lights the frame for a moment. */
   let won = $state(false);
+  /** Says something more exact than the move's usual line, when a move turned out differently. */
+  let after = '';
 
   const me = $derived(backend.account);
   const deed = $derived(backend.deedOf(row.id));
@@ -68,7 +70,8 @@
     try {
       if ((await action()) === false) return;
       audio.coin();
-      note = done;
+      note = after || done;
+      after = '';
       form = '';
       won = true;
       setTimeout(() => (won = false), WON_MS);
@@ -101,8 +104,10 @@
       // Just signed in, this is the first look at their wallet, and the panel can now say what's missing.
       if (backend.account === deed.owner) return false;
       if (!canAfford(price, GAS_TGAS.market_buy, backend.walletOf(backend.account)).ok) return false;
+      const held = backend.marketClaim;
       waiting = true;
       await backend.buyDeed(row.id, price);
+      if (backend.marketClaim > held) after = `The seller's account no longer exists, so the market is holding your ${near(price)}. Collect it from the market page.`;
     }, `The ${title} NFT is yours, and ${near(price)} went to the seller.`);
   }
 
@@ -278,6 +283,9 @@
 
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         {#if note}<p class="note" role="status">{note}</p>{/if}
+        {#if backend.marketClaim > 0 && !waiting}
+          <a class="held" href="#/deeds">The market is holding {near(backend.marketClaim)} for you. Collect it</a>
+        {/if}
       </div>
 
       {#if mine && backend.canTransferDeeds && !waiting && form === ''}
@@ -576,6 +584,11 @@
     line-height: 1.15;
     color: var(--ink);
     background: var(--sun);
+  }
+  .held {
+    font-size: 1.2rem;
+    line-height: 1.15;
+    color: var(--sun);
   }
   .deal .error {
     margin: 0;
