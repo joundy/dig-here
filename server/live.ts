@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { errorText, log, sleep } from './log.ts';
+import { errorText, log } from './log.ts';
 import { viewFunction } from './rpc.ts';
 
 export type Live = any;
@@ -37,10 +37,16 @@ export class LiveState {
   lastError: string | null = null;
   #watchers: Array<(frame: Frame) => void> = [];
   #changeWatchers: Array<(frame: Frame, encoded: Encoded) => void> = [];
+  #wake: () => void = () => {};
 
   constructor(contract: string, demand: Demand) {
     this.contract = contract;
     this.demand = demand;
+  }
+
+  /** Something just changed on chain or someone just arrived, so the next read shouldn't wait out the interval. */
+  wake(): void {
+    this.#wake();
   }
 
   /** Runs on every poll. The oracle and bots use it, since their decisions depend on time as well as state. */
@@ -65,7 +71,13 @@ export class LiveState {
       }
       const open = this.current?.frame.live.rooms.length ?? 0;
       const interval = open > 0 || this.demand.active() ? FAST_MS : IDLE_MS;
-      await sleep(Math.max(100, interval - (Date.now() - began)));
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Math.max(100, interval - (Date.now() - began)));
+        this.#wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
     }
   }
 

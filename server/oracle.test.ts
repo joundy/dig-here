@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { chainFor, findChain, secretFor } from './commitments.ts';
-import { nextStep, POKE_LEAD_MS } from './oracle-plan.ts';
+import { nextStep, POKE_LEAD_MS, pokeDue } from './oracle-plan.ts';
 
 const sha = (hex: string) => createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
 
@@ -38,13 +38,26 @@ test('a waiting room is left alone until it is due', () => {
   assert.deepEqual(nextStep(waiting({}), 899_000, null), { type: 'poke' });
 });
 
-test('a live roll is locked when due, and revealed only once the lock is final', () => {
-  assert.equal(nextStep(live({}), 700_000, null), null);
-  assert.deepEqual(nextStep(live({}), 780_000, null), { type: 'poke' });
+test('a live roll is locked when due, and revealed as soon as it is locked', () => {
+  assert.equal(nextStep(live({}), 700_000), null);
+  assert.deepEqual(nextStep(live({}), 780_000), { type: 'poke' });
   const locked = live({ locked: true, lock_height: 500, next_step: 2 });
-  assert.deepEqual(nextStep(locked, 780_000, null), { type: 'wait-final' });
-  assert.deepEqual(nextStep(locked, 780_000, 499), { type: 'wait-final' });
-  assert.deepEqual(nextStep(locked, 780_000, 500), { type: 'reveal', step: 2, tip_index: 3 });
+  assert.deepEqual(nextStep(locked, 780_000), { type: 'reveal', step: 2, tip_index: 3 });
+});
+
+test('with reveals set to wait for finality, the link stays secret until the lock is final', () => {
+  const locked = live({ locked: true, lock_height: 500, next_step: 2 });
+  assert.deepEqual(nextStep(locked, 780_000, null, true), { type: 'wait-final' });
+  assert.deepEqual(nextStep(locked, 780_000, 499, true), { type: 'wait-final' });
+  assert.deepEqual(nextStep(locked, 780_000, 500, true), { type: 'reveal', step: 2, tip_index: 3 });
+});
+
+test('pokeDue gives the next time a room needs a poke', () => {
+  assert.equal(pokeDue(waiting({})), 900_000);
+  assert.equal(pokeDue(waiting({ start_at_ms: 100_000 })), 100_000);
+  assert.equal(pokeDue(live({})), 780_000);
+  assert.equal(pokeDue(live({ locked: true })), 900_000);
+  assert.equal(pokeDue({ status: 'finished' }), null);
 });
 
 test('an overdue reveal or a round without enough digs gets refunded', () => {

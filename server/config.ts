@@ -54,20 +54,26 @@ export function loadConfig() {
 
     oracleEnabled: flag('ORACLE_ENABLED', true),
     runnerAccount: process.env.RUNNER_ACCOUNT ?? `warden.${root}`,
-    oracleLanes: num('ORACLE_LANES', 6),
+    oracleLanes: num('ORACLE_LANES', 10),
+    /** On for mainnet: holds each link until its lock is final, about 2 s more per roll. See the backend notes. */
+    oracleRevealFinal: flag('ORACLE_REVEAL_FINAL', false),
     poolTarget: num('ORACLE_POOL_TARGET', 50),
     poolBatch: num('ORACLE_POOL_BATCH', 30),
 
-    /** Below this the root stops funding anything, and bots pause. */
-    rootFloor: coins('ROOT_FLOOR_NEAR', '8'),
+    /** The root stops paying each role at its own floor, lowest for the oracle, so bots and guests run out first. */
+    rootFloors: {
+      oracle: coins('ROOT_FLOOR_ORACLE_NEAR', '1'),
+      guests: coins('ROOT_FLOOR_GUESTS_NEAR', '6'),
+      bots: coins('ROOT_FLOOR_BOTS_NEAR', '10'),
+    },
 
     guestsEnabled: flag('GUESTS_ENABLED', true),
     guestsParent: process.env.GUESTS_PARENT ?? `guests.${root}`,
     guestLanes: num('GUEST_LANES', 6),
     guestGas: coins('GUEST_GAS_NEAR', '0.08'),
-    guestCredit: coins('GUEST_CREDIT_NEAR', '0.3'),
+    guestCredit: coins('GUEST_CREDIT_NEAR', '0.6'),
     guestsPerIpPerHour: num('GUESTS_PER_IP_PER_HOUR', 3),
-    guestDailyCap: num('GUEST_DAILY_CAP', 40),
+    guestDailyCap: num('GUEST_DAILY_CAP', 25),
     /** Only safe when every request really arrives through Cloudflare. Otherwise a client can forge the header. */
     trustCfIp: flag('TRUST_CF_CONNECTING_IP', false),
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),

@@ -161,7 +161,7 @@ export class Guests {
     if (Date.now() - this.#lastTopUp < 5000) return;
     this.#lastTopUp = Date.now();
     try {
-      await this.#funding.topUp(this.#funder.id, FUNDER_LOW, FUNDER_TOP_UP);
+      await this.#funding.topUp(this.#funder.id, FUNDER_LOW, FUNDER_TOP_UP, 'guests');
     } catch (e) {
       log('guests', `funder top-up failed: ${errorText(e)}`);
     }

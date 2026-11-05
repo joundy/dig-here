@@ -10,8 +10,20 @@ export type OracleStep =
  */
 export const POKE_LEAD_MS = 1500;
 
-/** What a room needs right now, worked out only from chain state, so a restart mid-round loses nothing. */
-export function nextStep(room: any, nowMs: number, finalHeight: number | null): OracleStep {
+/** The next chain time this room needs a poke, or null if it needs none. A locked roll needs a reveal instead. */
+export function pokeDue(room: any): number | null {
+  if (room.status === 'waiting') return room.start_at_ms !== null ? Math.min(room.start_at_ms, room.deadline_ms) : room.deadline_ms;
+  if (room.status !== 'live') return null;
+  if (room.locked) return room.reveal_deadline_ms;
+  if (room.digs.length < 2 && room.next_due_ms !== null) return Math.min(room.next_due_ms, room.ends_at_ms);
+  return room.next_due_ms;
+}
+
+/**
+ * What a room needs right now, worked out only from chain state, so a restart mid-round loses nothing.
+ * `finalHeight` is null unless reveals are set to wait for finality. Then a lock must be final before its link comes out.
+ */
+export function nextStep(room: any, nowMs: number, finalHeight: number | null = null, waitForFinal = false): OracleStep {
   if (room.status === 'waiting') {
     if (room.start_at_ms !== null && nowMs + POKE_LEAD_MS >= room.start_at_ms) return { type: 'poke' };
     if (nowMs + POKE_LEAD_MS >= room.deadline_ms) return { type: 'poke' };
@@ -22,9 +34,7 @@ export function nextStep(room: any, nowMs: number, finalHeight: number | null): 
   if (nowMs >= room.ends_at_ms && room.digs.length < 2) return { type: 'poke' };
   if (room.reveal_deadline_ms !== null && nowMs >= room.reveal_deadline_ms) return { type: 'poke' };
   if (room.locked) {
-    // The link stays secret until the lock can't be reorganised away, so no validator can
-    // see the link and then swap the seed it mixes with.
-    if (finalHeight === null || finalHeight < room.lock_height) return { type: 'wait-final' };
+    if (waitForFinal && (finalHeight === null || finalHeight < room.lock_height)) return { type: 'wait-final' };
     return { type: 'reveal', step: room.next_step, tip_index: room.tip_index };
   }
   if (room.next_due_ms !== null && nowMs + POKE_LEAD_MS >= room.next_due_ms) return { type: 'poke' };

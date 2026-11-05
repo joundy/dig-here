@@ -12,7 +12,7 @@ export type Team = { root: NearAccount; oracle: NearAccount; funding: Funding };
 export function rootAndOracle(config: Config): Team {
   const root = new NearAccount(config.rootAccount, 'root', [KeyPair.fromString(config.rootKey as any)]);
   const oracle = new NearAccount(config.oracleAccount, 'oracle', [KeyPair.fromString(config.oracleKey as any)]);
-  return { root, oracle, funding: new Funding(root, config.rootFloor) };
+  return { root, oracle, funding: new Funding(root, config.rootFloors) };
 }
 
 /**

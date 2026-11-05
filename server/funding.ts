@@ -4,6 +4,8 @@ import { listAccessKeys, viewAccount } from './rpc.ts';
 import type { NearAccount } from './signer.ts';
 import { toNear } from './units.ts';
 
+export type Floors = { oracle: bigint; guests: bigint; bots: bigint };
+
 export function availableBalance(account: { amount: string; storage_usage: number } | null): bigint {
   if (!account) return 0n;
   // 770 bytes are free of storage staking, and below that nothing is locked.
@@ -14,27 +16,27 @@ export function availableBalance(account: { amount: string; storage_usage: numbe
 /** The root pays for everything, so every coin it sends passes through this floor check. */
 export class Funding {
   readonly root: NearAccount;
-  readonly floor: bigint;
+  readonly floors: Floors;
 
-  constructor(root: NearAccount, floor: bigint) {
+  constructor(root: NearAccount, floors: Floors) {
     this.root = root;
-    this.floor = floor;
+    this.floors = floors;
   }
 
   async rootBalance(): Promise<bigint> {
     return availableBalance(await viewAccount(this.root.id));
   }
 
-  async rootCanSpend(amount: bigint): Promise<boolean> {
-    return (await this.rootBalance()) - amount >= this.floor;
+  async rootCanSpend(amount: bigint, role: keyof Floors): Promise<boolean> {
+    return (await this.rootBalance()) - amount >= this.floors[role];
   }
 
   /** Sends only if the account is under `below`. Returns the amount sent, or 0 when it wasn't needed or allowed. */
-  async topUp(to: string, below: bigint, amount: bigint): Promise<bigint> {
+  async topUp(to: string, below: bigint, amount: bigint, role: keyof Floors): Promise<bigint> {
     const balance = availableBalance(await viewAccount(to));
     if (balance >= below) return 0n;
-    if (!(await this.rootCanSpend(amount))) {
-      log('funding', `root is near its floor, not topping up ${to}`);
+    if (!(await this.rootCanSpend(amount, role))) {
+      log('funding', `root is near the ${role} floor, not topping up ${to}`);
       return 0n;
     }
     const result = await this.root.transfer(to, amount);

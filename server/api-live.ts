@@ -56,6 +56,7 @@ export function addLiveRoutes(app: App, state: LiveState): void {
     res.flushHeaders();
     state.demand.sseClients++;
     state.demand.touch();
+    state.wake();
     clients.add(res);
     if (state.current) res.write(frameOf(state.current.json));
     req.on('close', () => {

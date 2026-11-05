@@ -23,6 +23,9 @@ const WALLET_REFILL = near('0.25');
 const GAME_TOP_UP = near('0.06');
 const GAS_RESERVE = near('0.08');
 const DONOR_MIN = near('0.4');
+// Long enough for a player who joined together with a friend, short enough that a lone juror isn't left waiting.
+const HUMAN_SETTLE_MS = 2500;
+const PRESS_AGAIN_MS = 6000;
 const CREATE_TGAS = 60;
 const JOIN_TGAS = 10;
 const DIG_TGAS = 5;
@@ -30,7 +33,7 @@ const MINT_EVERY_MS = 600_000;
 const FUNDS_CHECK_MS = 60_000;
 
 type Bot = { account: NearAccount; busy: boolean; balance: bigint; wallet: bigint };
-type RoomPlan = { fillAt: number; joinAt: number; target: number; digs: Map<string, { pct: number; slop: number; done: boolean; tries: number }>; startAt: number | null };
+type RoomPlan = { fillAt: number; hurry: number | null; pressedAt: number; joinAt: number; target: number; digs: Map<string, { pct: number; slop: number; done: boolean; tries: number }>; startAt: number | null };
 
 const rand = Math.random;
 const between = (lo: number, hi: number) => lo + rand() * (hi - lo);
@@ -97,7 +100,7 @@ export class Bots {
       bot.wallet = availableBalance(account);
       if (bot.wallet < WALLET_LOW) await this.#refill(bot);
     }
-    this.#rootLow = !(await this.#funding.rootCanSpend(0n));
+    this.#rootLow = !(await this.#funding.rootCanSpend(0n, 'bots'));
     if (this.#rootLow) log('bots', 'root is below its floor, bots are pausing');
   }
 
@@ -125,7 +128,7 @@ export class Bots {
       log('bots', `budget used up, ${bot.account.id} not refilled`, { spent: toNear(this.spent()) });
       return;
     }
-    const sent = await this.#funding.topUp(bot.account.id, WALLET_LOW, WALLET_REFILL);
+    const sent = await this.#funding.topUp(bot.account.id, WALLET_LOW, WALLET_REFILL, 'bots');
     if (sent) {
       ledgerAdd(this.#db, BUDGET_KIND, bot.account.id, sent);
       bot.wallet += sent;
@@ -155,7 +158,7 @@ export class Bots {
   #planFor(room: any): RoomPlan {
     let plan = this.#plans.get(room.room_id);
     if (!plan) {
-      plan = { fillAt: Date.now() + between(this.#config.botHoldMinSec, this.#config.botHoldMaxSec) * 1000, joinAt: 0, target: 0, digs: new Map(), startAt: null };
+      plan = { fillAt: Date.now() + between(this.#config.botHoldMinSec, this.#config.botHoldMaxSec) * 1000, hurry: null, pressedAt: 0, joinAt: 0, target: 0, digs: new Map(), startAt: null };
       this.#plans.set(room.room_id, plan);
     }
     return plan;
@@ -164,12 +167,20 @@ export class Bots {
   #tendWaiting(room: any, nowMs: number, active: boolean): void {
     const plan = this.#planFor(room);
     const hostBot = this.#isBot(room.host);
-    const humanHere = !hostBot || room.players.some((p: string) => !this.#isBot(p));
+    const humanPlayer = room.players.some((p: string) => !this.#isBot(p));
+    const humanHere = !hostBot || humanPlayer;
     const nearlyOver = nowMs > room.deadline_ms - 180_000;
+
+    // Someone's sitting in a bot's room, so it shouldn't make them wait out a countdown. Pressing Start early is allowed.
+    if (hostBot && humanPlayer) {
+      plan.hurry ??= Date.now();
+      if (room.players.length >= room.min_players && Date.now() - plan.hurry >= HUMAN_SETTLE_MS) return this.#pressStart(room, plan);
+    }
 
     // With nobody watching, a bot room left waiting would cost its host part of the bond when it expires. Finishing it is cheaper.
     const wantsPlayers = humanHere ? active : hostBot && (Date.now() > plan.fillAt || !active || nearlyOver);
-    if (wantsPlayers && !room.start_at_ms) {
+    const hurrying = plan.hurry !== null && room.players.length < room.min_players;
+    if (wantsPlayers && (!room.start_at_ms || hurrying)) {
       const botsNow = room.players.filter(this.#isBot).length;
       if (!plan.target || botsNow >= plan.target) {
         plan.target = Math.max(plan.target, botTarget(room, this.#isBot, this.#bots.size, rand));
@@ -178,20 +189,24 @@ export class Bots {
         const candidate = this.#freeBot((id) => !room.players.includes(id));
         if (candidate) {
           // A lone visitor should see someone arrive within seconds, so humans get quick joins.
-          plan.joinAt = Date.now() + (humanHere ? between(1500, 4000) : between(4000, 12_000));
+          plan.joinAt = Date.now() + (humanHere ? between(800, 2500) : between(4000, 12_000));
           void this.#join(candidate, room);
         }
       }
     }
 
-    if (hostBot && room.countdown_sec === 0 && room.players.length >= room.min_players && !room.start_at_ms) {
-      plan.startAt ??= Date.now() + (humanHere ? between(15_000, 30_000) : between(5000, 20_000));
-      if (Date.now() >= plan.startAt) {
-        plan.startAt = Date.now() + 10_000;
-        const host = this.#bots.get(room.host);
-        if (host) void this.#send(host, 'start', { room_id: room.room_id }, JOIN_TGAS);
-      }
+    if (hostBot && !humanPlayer && room.countdown_sec === 0 && room.players.length >= room.min_players && !room.start_at_ms) {
+      plan.startAt ??= Date.now() + between(5000, 20_000);
+      if (Date.now() >= plan.startAt) this.#pressStart(room, plan);
     }
+  }
+
+  #pressStart(room: any, plan: RoomPlan): void {
+    if (Date.now() < plan.pressedAt + PRESS_AGAIN_MS) return;
+    const host = this.#bots.get(room.host);
+    if (!host || host.busy) return;
+    plan.pressedAt = Date.now();
+    void this.#send(host, 'start', { room_id: room.room_id }, JOIN_TGAS);
   }
 
   #tendLive(room: any, nowMs: number): void {
@@ -297,7 +312,7 @@ export class Bots {
     const config: any = await viewFunction(this.#config.contract, 'get_config');
     const price = milli(config.mint_price);
     const coins = price + near('0.05');
-    if (this.spent() + coins > this.#config.botsBudget || !(await this.#funding.rootCanSpend(coins))) return;
+    if (this.spent() + coins > this.#config.botsBudget || !(await this.#funding.rootCanSpend(coins, 'bots'))) return;
     const bot = this.#freeBot(() => true);
     if (!bot) return;
     const token = pick(free).token_id;

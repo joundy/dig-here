@@ -47,6 +47,7 @@ for (;;) {
   }
   if (room.status === 'live' && !dug) {
     dug = true;
+    console.log(`round started +${((Date.now() - t1) / 1000).toFixed(1)} s after the join landed (chain: ${room.started_ms})`);
     const lm = await viewFunction<any>(c, 'get_room', { id });
     const r = await guest.call(c, 'dig', { room_id: id, x: lm.landmarks[0].x, y: lm.landmarks[0].y, seen_clue: lm.clues.length }, 5);
     console.log('juror dug', r.ok, r.failure ?? '', `started +${((Date.now() - t1) / 1000).toFixed(1)} s`);
