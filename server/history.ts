@@ -15,7 +15,10 @@ const eventRow = (r: any) => ({
 });
 
 export function roomEvents(db: Db, roomId: number) {
-  const rows = db.prepare('SELECT * FROM events WHERE room_id = ? ORDER BY block_height, outcome_index, log_index, seq').all(roomId);
+  // Balance rows name no room, but the receipt that settled it wrote them, and they show who was actually paid.
+  const rows = db.prepare(`SELECT * FROM events WHERE room_id = ?
+    OR (event = 'balance' AND receipt_id IN (SELECT receipt_id FROM events WHERE room_id = ?))
+    ORDER BY block_height, outcome_index, log_index, seq`).all(roomId, roomId);
   return rows.map(eventRow);
 }
 

@@ -23,6 +23,8 @@ export class RpcError extends Error {
   }
 }
 
+let fastnearCoolUntil = 0;
+
 export const rpcStats = { fastnear: 0, drpc: 0, rate_limited: 0, failovers: 0 };
 
 async function post(url: string, method: string, params: unknown, timeoutMs: number): Promise<any> {
@@ -41,7 +43,11 @@ async function post(url: string, method: string, params: unknown, timeoutMs: num
     throw new RpcError(kind, `${method}: ${kind} after ${timeoutMs} ms`);
   }
   const text = await res.text();
-  if (res.status === 429) rpcStats.rate_limited++;
+  // FastNEAR answers a limit with a JSON error as well as with 429, and hammering it only extends the limit.
+  if (res.status === 429 || (url === FASTNEAR && /rate limit/i.test(text.slice(0, 500)))) {
+    rpcStats.rate_limited++;
+    if (url === FASTNEAR) fastnearCoolUntil = Date.now() + COOL_OFF_MS;
+  }
   let json: any;
   try {
     json = JSON.parse(text);
@@ -57,7 +63,7 @@ async function post(url: string, method: string, params: unknown, timeoutMs: num
   return json.result;
 }
 
-let fastnearCoolUntil = 0;
+export const fastnearCooling = () => Date.now() < fastnearCoolUntil;
 
 /** Reads fail over to dRPC, which caps every free request at about 2 s and so can't carry long sends. */
 export async function read(method: string, params: unknown, timeoutMs = 6000): Promise<any> {
@@ -67,17 +73,15 @@ export async function read(method: string, params: unknown, timeoutMs = 6000): P
       return await post(FASTNEAR, method, params, timeoutMs);
     } catch (e) {
       if (!(e instanceof RpcError) || !e.transient) throw e;
-      const limited = e.status === 429 || /rate limit/i.test(e.message);
-      if (limited) fastnearCoolUntil = Date.now() + COOL_OFF_MS;
       rpcStats.failovers++;
-      if (!limited) log('rpc', `FastNEAR read failed, trying dRPC: ${e.message}`);
+      if (!fastnearCooling()) log('rpc', `FastNEAR read failed, trying dRPC: ${e.message}`);
     }
   }
   rpcStats.drpc++;
   return post(DRPC, method, params, Math.min(timeoutMs, 4000));
 }
 
-/** Sends always start at FastNEAR. `viaFallback` is for a rebroadcast when FastNEAR keeps refusing. */
+/** Sends start at FastNEAR, and `viaFallback` is for when it's refusing or a send there got lost. */
 export async function sendRaw(method: string, params: unknown, timeoutMs: number, viaFallback = false): Promise<any> {
   return post(viaFallback ? DRPC : FASTNEAR, method, params, timeoutMs);
 }

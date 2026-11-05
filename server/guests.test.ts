@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseEnv } from './config.ts';
 import { openDb } from './db.ts';
-import { GUEST_METHODS, GuestError, Guests, originAllowed } from './guests.ts';
+import { clientIp, GUEST_METHODS, GuestError, Guests, originAllowed } from './guests.ts';
 import { deriveKeyPair } from './keys.ts';
 import { near, toNear } from './units.ts';
 
@@ -17,6 +17,13 @@ test('only the game itself may ask for a guest', () => {
   assert.equal(originAllowed(strict, 'http://localhost:5173', 'x'), false);
   assert.equal(originAllowed(open, 'http://localhost:5173', 'x'), true);
   assert.equal(originAllowed(open, 'not a url', 'x'), false);
+});
+
+test('the Cloudflare header only counts when the deploy says traffic really comes through Cloudflare', () => {
+  const req: any = { headers: { 'cf-connecting-ip': '1.2.3.4' }, socket: { remoteAddress: '10.0.0.9' } };
+  assert.equal(clientIp(req, false), '10.0.0.9');
+  assert.equal(clientIp(req, true), '1.2.3.4');
+  assert.equal(clientIp({ headers: {}, socket: { remoteAddress: '10.0.0.9' } } as any, true), '10.0.0.9');
 });
 
 test('the browser key can use exactly the methods the spec lists', () => {

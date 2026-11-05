@@ -74,6 +74,7 @@ export function loadConfig() {
     allowLocalOrigins: flag('ALLOW_LOCAL_ORIGINS', process.env.NODE_ENV !== 'production'),
 
     botsEnabled: flag('BOTS_ENABLED', false),
+    demandWindowSec: num('DEMAND_WINDOW_SEC', 300),
     botsParent: process.env.BOTS_PARENT ?? `bots.${root}`,
     botCount: num('BOT_COUNT', 8),
     botsBudget: coins('BOTS_BUDGET_NEAR', '8'),

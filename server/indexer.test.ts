@@ -48,7 +48,7 @@ test('rereading the same events adds nothing', () => {
   const { db, all } = seededDb();
   assert.equal(storeEvents(db, all), 5);
   assert.equal(storeEvents(db, all), 0);
-  assert.deepEqual(roomEvents(db, 5).map((e) => e.event), ['room_created', 'joined', 'dig', 'finished']);
+  assert.deepEqual(roomEvents(db, 5).map((e) => e.event), ['room_created', 'joined', 'dig', 'finished', 'balance']);
   assert.equal(roomEvents(db, 5)[3].data.winner, 'p');
 });
 
@@ -69,7 +69,7 @@ test('the history routes answer from stored events', async () => {
 
     const proof = await get('/api/games/5/proof');
     assert.equal(proof.complete, true);
-    assert.equal(proof.events.length, 4);
+    assert.equal(proof.events.length, 5);
     assert.equal((await fetch(`http://localhost:${port}/api/games/99/proof`)).status, 404);
 
     const history = await get('/api/players/p/history');

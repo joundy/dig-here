@@ -9,15 +9,18 @@ import { App, sendJson } from './http.ts';
 import { Indexer } from './indexer.ts';
 import { Demand, LiveState } from './live.ts';
 import { errorText, log, sleep } from './log.ts';
-import { Oracle } from './oracle.ts';
+import { Oracle, oracleStats } from './oracle.ts';
 import { finalBlock, rpcStats } from './rpc.ts';
 import { staticHandler } from './static.ts';
 import { Sweeper } from './sweeper.ts';
 import { prepareParent, prepareRunner, rootAndOracle } from './team.ts';
 import { toNear } from './units.ts';
 
+// A background task's bad moment shouldn't stop the board and the oracle for everyone.
+process.on('unhandledRejection', (e) => log('main', `unhandled rejection: ${errorText(e)}`));
+
 const config = loadConfig();
-const demand = new Demand();
+const demand = new Demand(config.demandWindowSec * 1000);
 const state = new LiveState(config.contract, demand);
 const app = new App();
 const team = rootAndOracle(config);
@@ -53,6 +56,7 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
     indexer_height: indexer.height,
     indexer_error: indexer.lastError,
     bots_spent: bots ? toNear(bots.spent()) : null,
+    oracle_stats: oracleStats,
     rpc: rpcStats,
     burn: burnReport(),
   });

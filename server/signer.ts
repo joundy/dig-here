@@ -1,7 +1,7 @@
 import { actions, baseDecode, baseEncode, createTransaction, KeyPair, KeyPairSigner, type Action } from 'near-api-js';
 import { addBurn } from './burn.ts';
 import { log, sleep } from './log.ts';
-import { finalBlock, RpcError, sendRaw, viewAccessKey } from './rpc.ts';
+import { fastnearCooling, finalBlock, read, RpcError, sendRaw, viewAccessKey } from './rpc.ts';
 import { TGAS } from './units.ts';
 
 export type TxResult = { hash: string; ok: boolean; failure?: string; value: any; logs: string[]; burnt: bigint };
@@ -45,7 +45,7 @@ const isExecuted = (r: any) => r?.status && (r.status.SuccessValue !== undefined
 
 async function checkByHash(hash: string, sender: string, wait: string): Promise<any | null> {
   try {
-    const r = await sendRaw('tx', { tx_hash: hash, sender_account_id: sender, wait_until: wait }, 4000);
+    const r = await read('tx', { tx_hash: hash, sender_account_id: sender, wait_until: wait }, 4000);
     return isExecuted(r) ? r : null;
   } catch {
     return null;
@@ -72,8 +72,10 @@ async function deliver(signedB64: string, hash: string, sender: string, opts: Se
   const giveUpAt = Date.now() + (opts.giveUpMs ?? patience + 5000);
   for (let attempt = 0; attempt === 0 || Date.now() < giveUpAt; attempt++) {
     try {
-      if (attempt % 3 === 1) void rebroadcast(signedB64);
-      const r = attempt === 0 ? await sendRaw('send_tx', { signed_tx_base64: signedB64, wait_until: wait }, patience) : null;
+      // dRPC ends free requests at about 2 s, so it can only take a send that doesn't wait for the result.
+      const direct = attempt === 0 && !fastnearCooling();
+      if (!direct && (attempt === 0 || attempt % 3 === 1)) void rebroadcast(signedB64);
+      const r = direct ? await sendRaw('send_tx', { signed_tx_base64: signedB64, wait_until: wait }, patience) : null;
       if (r && isExecuted(r)) return r;
     } catch (e) {
       const err = e as RpcError;

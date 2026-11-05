@@ -12,15 +12,20 @@ const IDLE_MS = 5000;
 
 /** Tracks whether anyone is watching. Bots and the poller slow down when nobody is. */
 export class Demand {
+  readonly windowMs: number;
   sseClients = 0;
   lastSeenMs = 0;
+
+  constructor(windowMs = 300_000) {
+    this.windowMs = windowMs;
+  }
 
   touch(): void {
     this.lastSeenMs = Date.now();
   }
 
-  active(windowMs = 300_000): boolean {
-    return this.sseClients > 0 || Date.now() - this.lastSeenMs < windowMs;
+  active(): boolean {
+    return this.sseClients > 0 || Date.now() - this.lastSeenMs < this.windowMs;
   }
 }
 

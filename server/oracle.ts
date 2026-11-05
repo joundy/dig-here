@@ -19,6 +19,8 @@ const TOP_UP = near('1');
 // Both calls are harmless to repeat, and a clue that waits costs every player in the room.
 const SEND_FAST = { patienceMs: 5000 };
 
+export const oracleStats = { pokes: 0, pokes_too_early: 0, reveals: 0, send_failures: 0 };
+
 export class Oracle {
   readonly #config: Config;
   readonly #oracle: NearAccount;
@@ -63,7 +65,10 @@ export class Oracle {
     this.#busy.set(room.room_id, Number.MAX_SAFE_INTEGER);
     const send = step.type === 'poke' ? this.#poke(room.room_id) : this.#reveal(room.room_id, step.step, step.tip_index);
     void send
-      .catch((e) => log('oracle', `room ${room.room_id}: ${step.type} failed: ${errorText(e)}`))
+      .catch((e) => {
+        oracleStats.send_failures++;
+        log('oracle', `room ${room.room_id}: ${step.type} failed: ${errorText(e)}`);
+      })
       // The poll that saw this state is out of date by the time the send returns. Leave
       // room for the view to catch up, or the same action gets sent again for nothing.
       .finally(() => this.#busy.set(room.room_id, Date.now() + RETRY_AFTER_NONE_MS));
@@ -72,7 +77,9 @@ export class Oracle {
   async #poke(roomId: number): Promise<void> {
     const r = await this.#runner.call(this.#config.contract, 'poke', { room_id: roomId }, POKE_TGAS, 0n, SEND_FAST);
     if (!r.ok) throw new Error(r.failure);
-    if (r.value !== 'none') log('oracle', `room ${roomId}: poke ${r.value}`, { hash: r.hash });
+    oracleStats.pokes++;
+    if (r.value === 'none') oracleStats.pokes_too_early++;
+    else log('oracle', `room ${roomId}: poke ${r.value}`, { hash: r.hash });
   }
 
   async #reveal(roomId: number, step: number, tipIndex: number): Promise<void> {
@@ -80,6 +87,7 @@ export class Oracle {
     const r = await this.#runner.call(this.#config.contract, 'reveal', { room_id: roomId, link }, REVEAL_TGAS, 0n, SEND_FAST);
     // Two polls can both see a pending lock, and the later one then finds it already revealed. That's harmless.
     if (!r.ok) throw new Error(r.failure);
+    oracleStats.reveals++;
     log('oracle', `room ${roomId}: revealed step ${step}`, { hash: r.hash });
   }
 

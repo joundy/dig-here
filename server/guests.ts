@@ -16,8 +16,10 @@ export const GUEST_METHODS = ['join', 'leave', 'start', 'dig', 'create_room', 'm
 const CREDIT_TGAS = 10;
 // Account creation burns a fixed amount and some spare keeps one guest from failing while a top-up lands.
 const CREATION_MARGIN = near('0.02');
-const FUNDER_LOW = near('1.5');
-const FUNDER_TOP_UP = near('3');
+const FUNDER_LOW = near('1');
+const FUNDER_TOP_UP = near('2');
+// A read for every new guest would add a quarter second to a wait a juror can feel.
+const FUNDS_CHECK_MS = 15_000;
 
 export class GuestError extends Error {
   status: number;
@@ -71,8 +73,9 @@ export class Guests {
   readonly #funding: Funding;
   // The same key arriving twice at once must become one account, not two racing creations.
   readonly #inFlight = new Map<string, Promise<{ account_id: string; created: boolean }>>();
-  #lastFloorCheck = 0;
-  #canFund = true;
+  #lastTopUp = 0;
+  #funderSpare = 0n;
+  #funderCheckedMs = 0;
 
   constructor(config: Config, db: Db, funder: NearAccount, funding: Funding) {
     this.#config = config;
@@ -140,16 +143,23 @@ export class Guests {
   }
 
   async #checkFunds(): Promise<void> {
-    const spare = availableBalance(await viewAccount(this.#funder.id, 'optimistic'));
-    if (spare >= this.#costPerGuest) return;
-    await this.#topUpFunder();
-    const after = availableBalance(await viewAccount(this.#funder.id, 'optimistic'));
-    if (after < this.#costPerGuest) throw new GuestError(503, 'Guest accounts are paused while the game refills its test coins. Connect a wallet, or try later.');
+    if (Date.now() - this.#funderCheckedMs < FUNDS_CHECK_MS && this.#funderSpare >= this.#costPerGuest) {
+      this.#funderSpare -= this.#costPerGuest;
+      return;
+    }
+    this.#funderSpare = availableBalance(await viewAccount(this.#funder.id, 'optimistic'));
+    this.#funderCheckedMs = Date.now();
+    if (this.#funderSpare < this.#costPerGuest) {
+      await this.#topUpFunder();
+      this.#funderSpare = availableBalance(await viewAccount(this.#funder.id, 'optimistic'));
+    }
+    if (this.#funderSpare < this.#costPerGuest) throw new GuestError(503, 'Guest accounts are paused while the game refills its test coins. Connect a wallet, or try later.');
+    this.#funderSpare -= this.#costPerGuest;
   }
 
   async #topUpFunder(): Promise<void> {
-    if (Date.now() - this.#lastFloorCheck < 5000) return;
-    this.#lastFloorCheck = Date.now();
+    if (Date.now() - this.#lastTopUp < 5000) return;
+    this.#lastTopUp = Date.now();
     try {
       await this.#funding.topUp(this.#funder.id, FUNDER_LOW, FUNDER_TOP_UP);
     } catch (e) {
