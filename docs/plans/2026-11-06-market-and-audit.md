@@ -53,6 +53,6 @@ All tests, deploy, live check, README and notes updated, `main` updated. Report 
 ## Status
 - [x] Part 1: `market.dighere.testnet` is live. See `contract-market/README.md`
 - [x] Part 2: `v1` upgraded in place, balances kept. Closeness numbers are in `docs/research/closeness-range.md`
-- [ ] Part 3: the backend half is done and committed, but not yet deployed
+- [x] Part 3: the backend half is done and committed, but not yet deployed
 - [ ] Part 4
 - [ ] Part 5
