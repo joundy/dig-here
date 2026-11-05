@@ -108,6 +108,7 @@ export class Indexer {
   readonly #db: Db;
   height = 0;
   lastError: string | null = null;
+  lastSyncMs = 0;
 
   constructor(config: Config, db: Db) {
     this.#config = config;
@@ -121,6 +122,7 @@ export class Indexer {
       try {
         await this.syncOnce();
         this.lastError = null;
+        this.lastSyncMs = Date.now();
         await sleep(LOOP_MS);
       } catch (e) {
         this.lastError = errorText(e);

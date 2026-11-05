@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { aim, botTarget, designRoom, digPercent } from './bot-brain.ts';
+import { aim, BOT_JOIN_LIMITS, botsWillJoin, botTarget, designRoom, digPercent, HumanRoomLimit } from './bot-brain.ts';
 import { PROJECT_ROOT } from './config.ts';
 import { isLand, loadMaps } from './map-data.ts';
 
@@ -54,4 +54,26 @@ test('bots never fill a room past its maximum', () => {
   }
   const lone = { players: ['juror.testnet'], host: 'a.bots', min_players: 3, max_players: 6 };
   assert.ok(botTarget(lone, isBot, 8) >= 2, 'a lone juror gets enough bots to start');
+});
+
+test('a human-hosted room is only for bots at a modest fee and host cut', () => {
+  assert.deepEqual(BOT_JOIN_LIMITS, { max_fee_milli: 50, max_host_cut_bps: 1000 });
+  assert.equal(botsWillJoin({ fee: 50, host_cut_bps: 1000 }), true);
+  assert.equal(botsWillJoin({ fee: 10, host_cut_bps: 0 }), true);
+  assert.equal(botsWillJoin({ fee: 51, host_cut_bps: 0 }), false);
+  assert.equal(botsWillJoin({ fee: 10, host_cut_bps: 1001 }), false);
+  assert.equal(botsWillJoin({ fee: 200, host_cut_bps: 2000 }), false);
+});
+
+test('each human host gets bots in a few rooms an hour, and a room already counted stays allowed', () => {
+  const limit = new HumanRoomLimit(3);
+  const t = 1_000_000;
+  assert.equal(limit.allow('a', 1, t), true);
+  assert.equal(limit.allow('a', 1, t + 10), true);
+  assert.equal(limit.allow('a', 2, t + 20), true);
+  assert.equal(limit.allow('a', 3, t + 30), true);
+  assert.equal(limit.allow('a', 4, t + 40), false);
+  assert.equal(limit.allow('a', 2, t + 50), true);
+  assert.equal(limit.allow('b', 5, t + 60), true, 'hosts are counted apart');
+  assert.equal(limit.allow('a', 4, t + 3_600_001), true, 'the oldest fell out of the hour');
 });

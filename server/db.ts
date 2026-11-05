@@ -34,6 +34,10 @@ export function openDb(path: string): Db {
 
     CREATE TABLE IF NOT EXISTS ledger(id INTEGER PRIMARY KEY AUTOINCREMENT, at_ms INTEGER NOT NULL, kind TEXT NOT NULL, account TEXT NOT NULL, yocto TEXT NOT NULL);
   `);
+  // Older databases have the table without these.
+  const columns = (db.prepare('PRAGMA table_info(guests)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!columns.includes('attempts')) db.exec('ALTER TABLE guests ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+  if (!columns.includes('last_attempt_ms')) db.exec('ALTER TABLE guests ADD COLUMN last_attempt_ms INTEGER NOT NULL DEFAULT 0');
   return db;
 }
 

@@ -18,11 +18,13 @@ export class Sweeper {
   readonly #config: Config;
   readonly #db: Db;
   readonly #state: LiveState;
+  readonly #indexerFresh: () => boolean;
 
-  constructor(config: Config, db: Db, state: LiveState) {
+  constructor(config: Config, db: Db, state: LiveState, indexerFresh: () => boolean) {
     this.#config = config;
     this.#db = db;
     this.#state = state;
+    this.#indexerFresh = indexerFresh;
   }
 
   start(): void {
@@ -51,6 +53,8 @@ export class Sweeper {
 
   async sweepIdle(): Promise<void> {
     if (!this.#state.current) return;
+    // A guest's activity comes from the indexer, so while it's behind an active guest looks idle.
+    if (!this.#indexerFresh()) return log('sweeper', 'indexer is behind, skipping this run');
     for (const id of this.idleGuests()) {
       try {
         const result = await this.sweep(id);

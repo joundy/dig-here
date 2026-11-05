@@ -100,7 +100,7 @@ So bots and guests run out first, and the oracle keeps its gas.
 
 **FastNEAR rate limits are real.** It answers with a JSON error "Rate limits exceeded", and that came up repeatedly during testing, shared with whatever else runs from this IP. The backend then uses dRPC for 10 seconds without stopping. A key would help, and the research already flags that decision for the user.
 
-**A commitment's index can shift.** `add_commitments` has no index argument, so a late upload or two overlapping oracles would move tips along. The oracle checks the tip with `get_room` and searches 400 indexes either side for its secret. If two oracles uploaded the same tips, a later room could reuse a known chain, which would let someone work out a result between lock and reveal. It only happens during an overlap.
+**A commitment's index could shift.** `add_commitments` had no index argument until the 2026-11-05 upgrade, so a late upload or two overlapping oracles could move tips along. The oracle now names `first_index`, and a late copy fails. Tips uploaded before that may still sit shifted. The oracle checks the tip with `get_room` and searches 400 indexes either side for its secret. If two oracles uploaded the same tips, a later room could reuse a known chain, which would let someone work out a result between lock and reveal. It only happens during an overlap.
 
 **Keys.** All derived from `BACKEND_KEY_SEED` with a label, so nothing needs a key store: bots, lanes, sweep keys and test accounts. `ORACLE_SECRET` makes the commitments, and each secret is `HMAC-SHA256(ORACLE_SECRET, decimal tip index)`. Losing either secret refunds open rooms, and a new `BACKEND_KEY_SEED` would strand bots and guests.
 

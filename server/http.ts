@@ -59,12 +59,24 @@ export class App {
   }
 
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', 'http://local');
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://local');
+    } catch {
+      return sendJson(req, res, 400, { error: 'That address could not be read.' });
+    }
     try {
       for (const route of this.#routes) {
         if (route.method !== req.method) continue;
         const m = url.pathname.match(route.pattern);
-        if (m) return await route.handler(req, res, m.slice(1).map(decodeURIComponent), url);
+        if (!m) continue;
+        let params: string[];
+        try {
+          params = m.slice(1).map(decodeURIComponent);
+        } catch {
+          return sendJson(req, res, 400, { error: 'That address could not be read.' });
+        }
+        return await route.handler(req, res, params, url);
       }
       if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'No such API path.' });
       if (this.#fallback) return await this.#fallback(req, res, [], url);

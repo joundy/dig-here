@@ -5,7 +5,9 @@ import type { LiveState } from './live.ts';
 const HEARTBEAT_MS = 15_000;
 // A browser that stops reading shouldn't hold megabytes of frames in this process.
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-const MAX_CLIENTS = 3000;
+
+export type LiveLimits = { maxClients: number; maxPerIp: number; ipOf: (req: IncomingMessage) => string };
+const DEFAULT_LIMITS: LiveLimits = { maxClients: 500, maxPerIp: 20, ipOf: (req) => req.socket.remoteAddress ?? 'unknown' };
 
 function serveState(state: LiveState, req: IncomingMessage, res: ServerResponse): void {
   state.demand.touch();
@@ -26,8 +28,9 @@ function serveState(state: LiveState, req: IncomingMessage, res: ServerResponse)
 
 const frameOf = (json: Buffer) => Buffer.concat([Buffer.from('event: state\ndata: '), json, Buffer.from('\n\n')]);
 
-export function addLiveRoutes(app: App, state: LiveState): void {
+export function addLiveRoutes(app: App, state: LiveState, limits: LiveLimits = DEFAULT_LIMITS): void {
   const clients = new Set<ServerResponse>();
+  const perIp = new Map<string, number>();
 
   state.onChange((_frame, encoded) => {
     if (!clients.size) return;
@@ -45,7 +48,10 @@ export function addLiveRoutes(app: App, state: LiveState): void {
   app.route('GET', /^\/api\/state$/, (req, res) => serveState(state, req, res));
 
   app.route('GET', /^\/api\/live$/, (req, res) => {
-    if (clients.size >= MAX_CLIENTS) return sendJson(req, res, 503, { error: 'Too many live connections.' });
+    const ip = limits.ipOf(req);
+    // The browser's feed handles a refusal by polling `/api/state`, which costs no RPC reads either.
+    if (clients.size >= limits.maxClients || (perIp.get(ip) ?? 0) >= limits.maxPerIp) return sendJson(req, res, 503, { error: 'Too many live connections.' });
+    perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
       // no-transform keeps intermediaries from buffering the stream to compress it.
@@ -56,11 +62,13 @@ export function addLiveRoutes(app: App, state: LiveState): void {
     res.flushHeaders();
     state.demand.sseClients++;
     state.demand.touch();
-    state.wake();
     clients.add(res);
     if (state.current) res.write(frameOf(state.current.json));
-    req.on('close', () => {
+    res.on('close', () => {
       clients.delete(res);
+      const left = (perIp.get(ip) ?? 1) - 1;
+      if (left > 0) perIp.set(ip, left);
+      else perIp.delete(ip);
       state.demand.sseClients--;
       state.demand.touch();
     });

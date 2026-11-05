@@ -9,6 +9,8 @@ type Encoded = { frame: Frame; json: Buffer; gzip: Buffer; etag: string };
 
 const FAST_MS = 1000;
 const IDLE_MS = 5000;
+// The oracle can ask for a read right after its own transaction, and never more often than this.
+const WAKE_GAP_MS = 500;
 
 /** Tracks whether anyone is watching. Bots and the poller slow down when nobody is. */
 export class Demand {
@@ -38,14 +40,22 @@ export class LiveState {
   #watchers: Array<(frame: Frame) => void> = [];
   #changeWatchers: Array<(frame: Frame, encoded: Encoded) => void> = [];
   #wake: () => void = () => {};
+  #running = false;
+  #woken = false;
+  #lastReadMs = 0;
 
   constructor(contract: string, demand: Demand) {
     this.contract = contract;
     this.demand = demand;
   }
 
-  /** Something just changed on chain or someone just arrived, so the next read shouldn't wait out the interval. */
+  /**
+   * For the oracle's own transactions, so the clue it just revealed reaches everyone sooner. Nothing a client does
+   * may lead here: browsers reconnecting once multiplied the RPC reads by 40, and the oracle lives on these reads.
+   */
   wake(): void {
+    if (Date.now() - this.#lastReadMs < WAKE_GAP_MS) return;
+    this.#woken = true;
     this.#wake();
   }
 
@@ -59,25 +69,39 @@ export class LiveState {
     this.#changeWatchers.push(fn);
   }
 
+  /** Checks once a second whether a read is due, so a new arrival is noticed at once without being able to cause one. */
   async run(): Promise<never> {
+    if (this.#running) throw new Error('LiveState has one poller, and it is already running');
+    this.#running = true;
     for (;;) {
       const began = Date.now();
-      try {
-        this.#accept(await viewFunction(this.contract, 'live_state'));
-        this.lastError = null;
-      } catch (e) {
-        this.lastError = errorText(e);
-        log('live', `poll failed: ${this.lastError}`);
-      }
-      const open = this.current?.frame.live.rooms.length ?? 0;
-      const interval = open > 0 || this.demand.active() ? FAST_MS : IDLE_MS;
+      if (this.#readDue(began)) await this.#read(began);
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, Math.max(100, interval - (Date.now() - began)));
+        const timer = setTimeout(resolve, Math.max(100, FAST_MS - (Date.now() - began)));
+        // The HTTP server is what keeps the process running, so tests can end without stopping this loop.
+        timer.unref();
         this.#wake = () => {
           clearTimeout(timer);
           resolve();
         };
       });
+    }
+  }
+
+  #readDue(now: number): boolean {
+    const open = this.current?.frame.live.rooms.length ?? 0;
+    return this.#woken || open > 0 || this.demand.active() || now - this.#lastReadMs >= IDLE_MS;
+  }
+
+  async #read(now: number): Promise<void> {
+    this.#woken = false;
+    this.#lastReadMs = now;
+    try {
+      this.#accept(await viewFunction(this.contract, 'live_state'));
+      this.lastError = null;
+    } catch (e) {
+      this.lastError = errorText(e);
+      log('live', `poll failed: ${this.lastError}`);
     }
   }
 

@@ -202,7 +202,7 @@ export class Oracle {
       }
       const count = Math.max(this.#config.poolBatch, this.#config.poolTarget - left);
       const tips = Array.from({ length: Math.min(count, 100) }, (_, i) => chainFor(this.#config.oracleSecret, first + i).tip);
-      const r = await this.#oracle.call(contract, 'add_commitments', { tips }, POOL_TGAS, 0n, { wait: 'FINAL', giveUpMs: 60_000, resign: false });
+      const r = await this.#oracle.call(contract, 'add_commitments', { tips, first_index: first }, POOL_TGAS, 0n, { wait: 'FINAL', giveUpMs: 60_000, resign: false });
       if (!r.ok) throw new Error(r.failure);
       log('oracle', `uploaded ${tips.length} commitments from index ${first}`, { pool: r.value, hash: r.hash });
     } catch (e) {

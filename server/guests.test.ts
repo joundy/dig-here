@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { parseEnv } from './config.ts';
 import { openDb } from './db.ts';
@@ -27,8 +31,9 @@ test('the Cloudflare header only counts when the deploy says traffic really come
 });
 
 test('the browser key can use exactly the methods the spec lists', () => {
-  assert.deepEqual([...GUEST_METHODS].sort(), ['buy_nft', 'create_room', 'dig', 'join', 'leave', 'list_nft', 'mint_nft', 'poke', 'start']);
+  assert.deepEqual([...GUEST_METHODS].sort(), ['create_room', 'dig', 'join', 'leave', 'list_nft', 'mint_nft', 'poke', 'start']);
   assert.ok(!GUEST_METHODS.includes('withdraw'));
+  assert.ok(!GUEST_METHODS.includes('buy_nft'), 'a stolen key could pay a rigged price with the whole balance');
 });
 
 test('derived keys are stable, and differ per label', () => {
@@ -51,7 +56,7 @@ test('coin amounts round-trip exactly', () => {
 function limited(rows: Array<[string, number]>, config: object) {
   const db = openDb(':memory:');
   rows.forEach(([ip, ms], i) => db.prepare('INSERT INTO guests(public_key, account_id, ip_hash, created_ms) VALUES (?, ?, ?, ?)').run(`k${i}`, `a${i}`, ip, ms));
-  return new Guests({ guestsParent: 'guests.test', keySeed: 's', guestGas: 1n, guestCredit: 1n, guestsPerIpPerHour: 3, guestDailyCap: 5, ...config } as any, db, {} as any, {} as any);
+  return new Guests({ guestsParent: 'guests.test', keySeed: 's', guestGas: 1n, guestCredit: 1n, guestsPerIpPerHour: 3, guestDailyCap: 5, guestMaxInFlight: 10, ...config } as any, db, {} as any, {} as any);
 }
 
 test('a fourth new guest from one IP within the hour is refused', async () => {
@@ -64,4 +69,17 @@ test('the daily cap holds across IPs', async () => {
   const now = Date.now();
   const guests = limited(Array.from({ length: 5 }, (_, i): [string, number] => [`ip${i}`, now - 7_200_000]), {});
   await assert.rejects(guests.request('ed25519:new', 'someone'), (e: GuestError) => e.status === 429);
+});
+
+test('a database from before the attempt columns opens, and its rows can retry', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'guests-db-')), 'old.sqlite');
+  const old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE guests(public_key TEXT PRIMARY KEY, account_id TEXT NOT NULL, ip_hash TEXT NOT NULL, created_ms INTEGER NOT NULL,
+    created_ok INTEGER NOT NULL DEFAULT 0, credit_ok INTEGER NOT NULL DEFAULT 0, swept_ms INTEGER)`);
+  old.prepare('INSERT INTO guests(public_key, account_id, ip_hash, created_ms, created_ok, credit_ok) VALUES (?, ?, ?, ?, 1, 1)').run('k', 'a', 'ip', 1);
+  old.close();
+  const db = openDb(path);
+  assert.deepEqual({ ...(db.prepare('SELECT attempts, last_attempt_ms FROM guests').get() as object) }, { attempts: 0, last_attempt_ms: 0 });
+  db.close();
+  openDb(path).close();
 });

@@ -4,6 +4,39 @@ export type Rand = () => number;
 export type Point = { x: number; y: number };
 
 const CROWD_RADIUS = 6;
+const HOUR_MS = 3_600_000;
+
+/** What a human host's room can ask of a bot. Above this, a host's cut could farm the bots' budget. Sent to the browser in `/api/health`. */
+export const BOT_JOIN_LIMITS = { max_fee_milli: 50, max_host_cut_bps: 1000 };
+export const HUMAN_ROOMS_PER_HOUR = 3;
+
+export function botsWillJoin(room: { fee: number; host_cut_bps: number }): boolean {
+  return room.fee <= BOT_JOIN_LIMITS.max_fee_milli && room.host_cut_bps <= BOT_JOIN_LIMITS.max_host_cut_bps;
+}
+
+/** Rooms per human host that bots went into in the last hour. Forgotten on restart, which only gives a host a few more. */
+export class HumanRoomLimit {
+  readonly #perHour: number;
+  readonly #hosts = new Map<string, Map<number, number>>();
+
+  constructor(perHour = HUMAN_ROOMS_PER_HOUR) {
+    this.#perHour = perHour;
+  }
+
+  /** Call only when a bot is about to join, since this counts the room. A room already counted stays allowed. */
+  allow(host: string, roomId: number, nowMs: number = Date.now()): boolean {
+    for (const [name, rooms] of this.#hosts) {
+      for (const [id, at] of rooms) if (nowMs - at >= HOUR_MS) rooms.delete(id);
+      if (!rooms.size) this.#hosts.delete(name);
+    }
+    const rooms = this.#hosts.get(host) ?? new Map<number, number>();
+    if (rooms.has(roomId)) return true;
+    if (rooms.size >= this.#perHour) return false;
+    rooms.set(roomId, nowMs);
+    this.#hosts.set(host, rooms);
+    return true;
+  }
+}
 const below = (n: number, rand: Rand) => Math.floor(rand() * n);
 export const pick = <T>(list: readonly T[], rand: Rand = Math.random): T => list[below(list.length, rand)];
 

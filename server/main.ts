@@ -1,9 +1,10 @@
 import { addLiveRoutes } from './api-live.ts';
 import { startBurnLog, burnReport } from './burn.ts';
+import { BOT_JOIN_LIMITS } from './bot-brain.ts';
 import { Bots } from './bots.ts';
 import { loadConfig } from './config.ts';
 import { openDb } from './db.ts';
-import { Guests } from './guests.ts';
+import { clientIp, Guests, ipBucket } from './guests.ts';
 import { addHistoryRoutes } from './history.ts';
 import { App, sendJson } from './http.ts';
 import { Indexer } from './indexer.ts';
@@ -49,6 +50,7 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
     root_balance: rootBalance.toString(),
     last_state_ms: current?.frame.fetched_ms ?? null,
     bots_enabled: config.botsEnabled,
+    bot_join_limits: BOT_JOIN_LIMITS,
     last_block: lastBlock,
     oracle_enabled: config.oracleEnabled,
     sse_clients: demand.sseClients,
@@ -62,7 +64,7 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
     burn: burnReport(),
   });
 });
-addLiveRoutes(app, state);
+addLiveRoutes(app, state, { maxClients: config.sseMaxClients, maxPerIp: config.sseMaxPerIp, ipOf: (req) => ipBucket(clientIp(req, config.trustCfIp)) });
 const indexer = new Indexer(config, db);
 addHistoryRoutes(app, db, indexer);
 
@@ -108,7 +110,8 @@ if (config.guestsEnabled) {
   });
 }
 if (config.indexerEnabled) void indexer.run();
-if (config.sweeperEnabled) new Sweeper(config, db, state).start();
+// The indexer loops every 5 s, or 15 s when rate limited, so a few minutes without a sync means real trouble.
+if (config.sweeperEnabled) new Sweeper(config, db, state, () => Date.now() - indexer.lastSyncMs < 300_000).start();
 if (config.botsEnabled) {
   void untilItWorks('bots', async () => {
     const engine = new Bots(config, db, state, team.funding, team.root);

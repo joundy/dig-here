@@ -74,6 +74,12 @@ export function loadConfig() {
     guestCredit: coins('GUEST_CREDIT_NEAR', '0.6'),
     guestsPerIpPerHour: num('GUESTS_PER_IP_PER_HOUR', 3),
     guestDailyCap: num('GUEST_DAILY_CAP', 25),
+    /** Guests being made right now, however they got past the limits. Each one is two sends on six lanes. */
+    guestMaxInFlight: num('GUEST_MAX_IN_FLIGHT', 10),
+    /** Every state change writes a frame of up to 247 KB to each stream. */
+    sseMaxClients: num('SSE_MAX_CLIENTS', 500),
+    /** High enough for a room of people behind one router. Anyone over it falls back to polling `/api/state`. */
+    sseMaxPerIp: num('SSE_MAX_PER_IP', 20),
     /** Only safe when every request really arrives through Cloudflare. Otherwise a client can forge the header. */
     trustCfIp: flag('TRUST_CF_CONNECTING_IP', false),
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),

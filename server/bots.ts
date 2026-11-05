@@ -1,4 +1,4 @@
-import { aim, botTarget, designRoom, digPercent, pick } from './bot-brain.ts';
+import { aim, botsWillJoin, botTarget, designRoom, digPercent, HumanRoomLimit, pick } from './bot-brain.ts';
 import type { Config } from './config.ts';
 import { type Db, ledgerAdd, ledgerTotal } from './db.ts';
 import { availableBalance, ensureAccount, type Funding } from './funding.ts';
@@ -49,6 +49,7 @@ export class Bots {
   readonly #maps: Record<string, MapData>;
   readonly #bots = new Map<string, Bot>();
   readonly #plans = new Map<number, RoomPlan>();
+  readonly #humanRooms = new HumanRoomLimit();
   #parent!: NearAccount;
   #mapTurn = Math.floor(rand() * MAPS.length);
   #hosting = false;
@@ -190,14 +191,14 @@ export class Bots {
     // With nobody watching, a bot room left waiting would cost its host part of the bond when it expires. Finishing it is cheaper.
     const wantsPlayers = humanHere ? active : hostBot && (Date.now() > plan.fillAt || !active || nearlyOver);
     const hurrying = plan.hurry !== null && room.players.length < room.min_players;
-    if (wantsPlayers && (!room.start_at_ms || hurrying)) {
+    if (wantsPlayers && (!room.start_at_ms || hurrying) && (hostBot || botsWillJoin(room))) {
       const botsNow = room.players.filter(this.#isBot).length;
       if (!plan.target || botsNow >= plan.target) {
         plan.target = Math.max(plan.target, botTarget(room, this.#isBot, this.#bots.size, rand));
       }
       if (botsNow < plan.target && room.players.length < room.max_players && Date.now() >= plan.joinAt) {
         const candidate = this.#freeBot((id) => !room.players.includes(id));
-        if (candidate) {
+        if (candidate && (hostBot || this.#humanRooms.allow(room.host, room.room_id))) {
           // A lone visitor should see someone arrive within seconds, so humans get quick joins.
           plan.joinAt = Date.now() + (humanHere ? between(800, 2500) : between(4000, 12_000));
           void this.#join(candidate, room);
@@ -220,6 +221,8 @@ export class Bots {
   }
 
   #tendLive(room: any, nowMs: number): void {
+    // The contract refuses digs until the clue is revealed, so sending one now would only burn gas.
+    if (room.locked) return;
     const plan = this.#planFor(room);
     const pctDone = ((nowMs - room.started_ms) / (room.duration_sec * 1000)) * 100;
     const dug = new Set(room.digs.map((d: any) => d.account));
