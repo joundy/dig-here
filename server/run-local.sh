@@ -3,7 +3,7 @@
 # second start fails rather than running two oracles against each other.
 #   server/run-local.sh            start, with logs in server/data/server.log
 #   server/run-local.sh stop
-#   ENV overrides go first: BOTS_ENABLED=1 server/run-local.sh
+#   ENV overrides go first: BOTS_ENABLED=0 server/run-local.sh
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unit=dig-here-server
@@ -21,6 +21,7 @@ fi
 cd "$here/.."
 # Everything local comes from one IP, so the production limit of 3 an hour would stop testing almost at once.
 export GUESTS_PER_IP_PER_HOUR="${GUESTS_PER_IP_PER_HOUR:-40}"
+export BOTS_ENABLED="${BOTS_ENABLED:-1}"
 setsid nohup systemd-run --user --scope --unit="$unit" -p MemoryMax=1G -p CPUQuota=100% \
   node --disable-warning=ExperimentalWarning server/main.ts >>"$log" 2>&1 </dev/null &
 disown

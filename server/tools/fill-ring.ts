@@ -9,7 +9,7 @@ import { c, removeAccount, throwaway, room } from './lib.ts';
 const BATCHES = Number(process.argv[2] ?? 2);
 const tag = `wf${Date.now().toString(36).slice(-4)}`;
 const accounts: NearAccount[] = [];
-for (const n of ['a', 'b', 'c', 'd']) accounts.push(await throwaway(`${tag}-${n}`, '0.55'));
+for (const n of ['a', 'b', 'c', 'd']) accounts.push(await throwaway(`${tag}-${n}`, '0.75'));
 const ids: number[] = [];
 
 async function round(host: NearAccount, other: NearAccount, i: number): Promise<void> {
@@ -29,14 +29,16 @@ try {
     await Promise.all(work);
     console.log('batch', batch, 'opened', ids.length);
     for (;;) {
-      const states: any[] = await Promise.all(ids.map((id) => room(id).catch(() => ({ status: 'gone' }))));
-      const open = states.filter((s) => s.status === 'waiting' || s.status === 'live').length;
-      if (!open) break;
+      // The backend's copy, so this test doesn't spend the RPC quota it's measuring the oracle under.
+      const { live }: any = await (await fetch('http://localhost:8787/api/state')).json();
+      if (!live.rooms.some((r: any) => ids.includes(r.room_id))) break;
       await sleep(5000);
     }
     console.log('batch', batch, 'all ended');
   }
-  const ended: any[] = await Promise.all(ids.map((id) => room(id).catch(() => null)));
+  await sleep(1000);
+  const ended: any[] = [];
+  for (const id of ids) ended.push(await room(id).catch(() => null));
   const gaps = ended.filter(Boolean).flatMap((r) => r.rolls.filter((x: any) => x.reveal_ms).map((x: any) => x.reveal_ms - x.due_ms)).sort((a, b) => a - b);
   console.log('ids', ids.join(','));
   console.log('rooms', ended.filter(Boolean).map((r) => `${r.status}/${r.result?.refund_reason}`).reduce((m: any, k: string) => ((m[k] = (m[k] ?? 0) + 1), m), {}));

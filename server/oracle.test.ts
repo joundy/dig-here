@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { chainFor, secretFor } from './commitments.ts';
+import { chainFor, findChain, secretFor } from './commitments.ts';
 import { nextStep, POKE_LEAD_MS } from './oracle-plan.ts';
 
 const sha = (hex: string) => createHash('sha256').update(Buffer.from(hex, 'hex')).digest('hex');
@@ -19,6 +19,14 @@ test('the same index always gives the same chain, and others differ', () => {
   assert.deepEqual(chainFor('secret', 7), chainFor('secret', 7));
   assert.notEqual(chainFor('secret', 7).tip, chainFor('secret', 8).tip);
   assert.notEqual(chainFor('secret', 7).tip, chainFor('other', 7).tip);
+});
+
+test('a tip that landed at the wrong index is still found, and a stranger\'s is not', () => {
+  const { tip, links } = chainFor('secret', 40);
+  assert.deepEqual(findChain('secret', tip, 40)?.links, links);
+  assert.equal(findChain('secret', tip, 70)?.index, 40);
+  assert.equal(findChain('secret', tip, 10)?.index, 40);
+  assert.equal(findChain('secret', chainFor('other', 40).tip, 40, 50), null);
 });
 
 const live = (over: object) => ({ status: 'live', digs: [{}, {}], ends_at_ms: 1_000_000, reveal_deadline_ms: 900_000, next_due_ms: 780_000, locked: false, lock_height: null, next_step: 1, tip_index: 3, ...over });

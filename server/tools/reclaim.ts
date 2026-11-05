@@ -7,20 +7,20 @@ import { NearAccount } from '../signer.ts';
 import { near, toNear } from '../units.ts';
 import { c, config, team } from './lib.ts';
 
-for (const id of process.argv.slice(2)) {
+async function reclaim(id: string): Promise<void> {
   const key = deriveKeyPair(config.keySeed, `test:${id}`);
   const record: any = await viewFunction(c, 'get_account', { id });
   const game = BigInt(record?.balance ?? 0);
   const exists = await viewAccount(id);
   if (!exists && game === 0n) {
     console.log(id, 'nothing to reclaim');
-    continue;
+    return;
   }
   if (!exists) {
     const r = await team.root.send(id, [actions.createAccount(), actions.transfer(near('0.02')), actions.addFullAccessKey(key.getPublicKey())]);
     if (!r.ok) {
       console.log(id, 'create failed', r.failure);
-      continue;
+      return;
     }
   }
   const account = new NearAccount(id, 'test', [key]);
@@ -31,3 +31,5 @@ for (const id of process.argv.slice(2)) {
   const d = await account.send(id, [actions.deleteAccount(config.rootAccount)], { wait: 'FINAL' });
   console.log(id, 'deleted', d.ok ? 'ok' : d.failure);
 }
+
+for (const id of process.argv.slice(2)) await reclaim(id).catch((e) => console.log(id, 'failed', e.message));

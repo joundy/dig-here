@@ -16,3 +16,18 @@ export function chainFor(oracleSecret: string, tipIndex: number): { tip: string;
   const tip = sha256(h3);
   return { tip: tip.toString('hex'), links: [h3, h2, h1, s].map((b) => b.toString('hex')) };
 }
+
+/**
+ * A chain normally sits at its upload index. But a lost upload that lands late, or two oracles overlapping during a
+ * deploy, would shift later tips along, and every room using them would refund. So this looks nearby before giving up.
+ */
+export function findChain(oracleSecret: string, tip: string, tipIndex: number, reach = 400): { tip: string; links: string[]; index: number } | null {
+  for (let distance = 0; distance <= reach; distance++) {
+    for (const index of distance === 0 ? [tipIndex] : [tipIndex - distance, tipIndex + distance]) {
+      if (index < 0) continue;
+      const chain = chainFor(oracleSecret, index);
+      if (chain.tip === tip) return { ...chain, index };
+    }
+  }
+  return null;
+}

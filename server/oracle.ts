@@ -1,4 +1,4 @@
-import { chainFor } from './commitments.ts';
+import { chainFor, findChain } from './commitments.ts';
 import type { Config } from './config.ts';
 import type { Funding } from './funding.ts';
 import type { Frame, LiveState } from './live.ts';
@@ -28,6 +28,7 @@ export class Oracle {
   readonly #state: LiveState;
   readonly #funding: Funding;
   readonly #busy = new Map<number, number>();
+  readonly #chains = new Map<number, string[]>();
   #uploading = false;
   #started = Date.now();
   #lastFundCheck = 0;
@@ -82,8 +83,21 @@ export class Oracle {
     else log('oracle', `room ${roomId}: poke ${r.value}`, { hash: r.hash });
   }
 
+  /** One extra read per room, and only for its first reveal in this process. */
+  async #linksFor(roomId: number, tipIndex: number): Promise<string[]> {
+    const known = this.#chains.get(roomId);
+    if (known) return known;
+    const { tip } = await viewFunction<{ tip: string }>(this.#config.contract, 'get_room', { id: roomId });
+    const chain = findChain(this.#config.oracleSecret, tip, tipIndex);
+    if (!chain) throw new Error(`no secret found for tip ${tip} near index ${tipIndex}, so this room will refund`);
+    if (chain.index !== tipIndex) log('oracle', `room ${roomId}: tip sits at index ${tipIndex} but was made for ${chain.index}`);
+    this.#chains.set(roomId, chain.links);
+    if (this.#chains.size > 200) this.#chains.delete(this.#chains.keys().next().value!);
+    return chain.links;
+  }
+
   async #reveal(roomId: number, step: number, tipIndex: number): Promise<void> {
-    const link = chainFor(this.#config.oracleSecret, tipIndex).links[step - 1];
+    const link = (await this.#linksFor(roomId, tipIndex))[step - 1];
     const r = await this.#runner.call(this.#config.contract, 'reveal', { room_id: roomId, link }, REVEAL_TGAS, 0n, SEND_FAST);
     // Two polls can both see a pending lock, and the later one then finds it already revealed. That's harmless.
     if (!r.ok) throw new Error(r.failure);

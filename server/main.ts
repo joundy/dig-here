@@ -52,6 +52,7 @@ app.route('GET', /^\/api\/health$/, (req, res) => {
     last_block: lastBlock,
     oracle_enabled: config.oracleEnabled,
     sse_clients: demand.sseClients,
+    demand_active: demand.active(),
     missed_reveals: current?.frame.live.missed_reveals ?? null,
     indexer_height: indexer.height,
     indexer_error: indexer.lastError,
