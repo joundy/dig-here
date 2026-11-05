@@ -1,0 +1,113 @@
+{
+  "seeds_scanned_per_map": 1000,
+  "cases": [
+    {
+      "map": "tropical",
+      "seed": "c03c338c078c2a77b2539b7433950a74933e754bd0527e5be4863bbf95598945",
+      "draws": 10410,
+      "rank": "worst"
+    },
+    {
+      "map": "tropical",
+      "seed": "cb6a7dcaabb656946c421252ad391b3c02186d7406575de0b433f9c19f65e646",
+      "draws": 9697,
+      "rank": "worst"
+    },
+    {
+      "map": "tropical",
+      "seed": "eae95161769c9e0f76928a434c48a28305bf51bcebdf71193cdf02d4e794da24",
+      "draws": 9473,
+      "rank": "worst"
+    },
+    {
+      "map": "tropical",
+      "seed": "b9a70efdd251dab285a2a9eea16c95d2e39466d6bd237e9d74e29913adbd0de6",
+      "draws": 9325,
+      "rank": "worst"
+    },
+    {
+      "map": "tropical",
+      "seed": "2be2e4391eaf5cfbd10ed403265210e4f96dd3e6add773331c2d3b750ec24a20",
+      "draws": 9286,
+      "rank": "worst"
+    },
+    {
+      "map": "tropical",
+      "seed": "8e937ad484bddf8cb8980bd76f5178c30639d32cca83b9d3591142e3cc1172d9",
+      "draws": 4295,
+      "rank": "median"
+    },
+    {
+      "map": "snowy",
+      "seed": "8e739313e7c074386b2dd2a4447dd5b857ba3a00546c8a5f4054d88150f83f67",
+      "draws": 7553,
+      "rank": "worst"
+    },
+    {
+      "map": "snowy",
+      "seed": "5ac0b124a3eccbfd20395d5a7246ff0014a4432abcc1e610f480cfcb5b7f0d2f",
+      "draws": 4752,
+      "rank": "worst"
+    },
+    {
+      "map": "snowy",
+      "seed": "f753a3690662821a74fbdb734e0452f8481544a0a7deaf12d50a0aacb81145fb",
+      "draws": 4740,
+      "rank": "worst"
+    },
+    {
+      "map": "snowy",
+      "seed": "0cb9914ca963c67a1d2724546e75f1c012228a6fe25bd7023cd75d03b8afff0a",
+      "draws": 4632,
+      "rank": "worst"
+    },
+    {
+      "map": "snowy",
+      "seed": "93e6dbebf3d9c54b9bc0681c03715fea28ebb90b9d9822b4c3297efe2ea4f835",
+      "draws": 4503,
+      "rank": "worst"
+    },
+    {
+      "map": "snowy",
+      "seed": "f8cac5e08d6c588d48123e8a6b73c009191220a7d0e06e29697707e2ccd4cfef",
+      "draws": 3566,
+      "rank": "median"
+    },
+    {
+      "map": "desert",
+      "seed": "7af4c7159f555700ecbdf2569e1462dbada64eb3d2004d562272fbdf536dc3d6",
+      "draws": 3620,
+      "rank": "worst"
+    },
+    {
+      "map": "desert",
+      "seed": "4c27822634f5628d8e335cc67393e1776776e76e499ecec78b35b75d5adc32aa",
+      "draws": 3567,
+      "rank": "worst"
+    },
+    {
+      "map": "desert",
+      "seed": "6e8fe56f3e7ab6df0a130df3e8fb67f11c6de28ff7c39e79e88a9c6eada4d3ee",
+      "draws": 3457,
+      "rank": "worst"
+    },
+    {
+      "map": "desert",
+      "seed": "bd4372be486e71f876a1563e9775f99de942d4717ea554b278ecd3a55691c354",
+      "draws": 3429,
+      "rank": "worst"
+    },
+    {
+      "map": "desert",
+      "seed": "8dd1502e3359af5c7d56824aa3143c93723a939fb89fe8c00c69eee6ca3e059a",
+      "draws": 3421,
+      "rank": "worst"
+    },
+    {
+      "map": "desert",
+      "seed": "dea40221a32ba5046a8da781dcd2ea18cd6b20a64ae896b147f14cbafbc4a1dd",
+      "draws": 2855,
+      "rank": "median"
+    }
+  ]
+}

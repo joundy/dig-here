@@ -1,0 +1,50 @@
+[package]
+name = "dig-here"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Dig Here: every rule, roll and coin of the game, on NEAR."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Adds probe_layout, so the sandbox can price the layout roll on a chosen seed. Never in the deployed wasm.
+gas-probe = []
+
+[dependencies]
+near-sdk = { version = "5.30.0", default-features = true }
+near-contract-standards = "5.30.0"
+
+# The contract hashes through the host. Native builds, which have no host, use this instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+near-sdk = { version = "5.30.0", features = ["unit-testing"] }
+near-workspaces = { version = "0.24.0", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde_json = "1"
+anyhow = "1"
+futures = "0.3"
+sha2 = "0.10"
+# Only for the vector with a deliberately illegal account name.
+near-account-id = { version = "2", features = ["internal_unstable"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+strip = "symbols"
+# The checklist asks for this: an overflow panics and reverts instead of minting coins.
+overflow-checks = true
+
+# Tests build a large tree of nearcore crates. Without debug info that takes gigabytes less disk.
+[profile.dev]
+debug = false
+
+[profile.test]
+debug = false
