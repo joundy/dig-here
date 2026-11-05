@@ -408,6 +408,31 @@ describe('the backend', () => {
     expect(backend.marketClaim).toBe(0);
   });
 
+  it('reads an old market again when the page asks, without being asked by a redraw', async () => {
+    views[`${CHAIN}.get_nfts`] = [nft('a.testnet')];
+    const backend = await load(null);
+    void backend.deedsReady;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin').owner).toBe('a.testnet');
+    views[`${CHAIN}.get_nfts`] = [nft('b.testnet')];
+    backend.refreshDeeds();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin').owner).toBe('a.testnet');
+    await vi.advanceTimersByTimeAsync(21_000);
+    backend.refreshDeeds();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.deedOf('snowy:penguin').owner).toBe('b.testnet');
+  });
+
+  it("doesn't call a wallet empty before anyone has read it", async () => {
+    const backend = await load(WALLET);
+    expect(backend.walletKnown).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.walletKnown).toBe(true);
+    await backend.disconnectWallet();
+    expect(backend.walletKnown).toBe(false);
+  });
+
   it('has nothing to say about sales until the backend answers', async () => {
     const backend = await load(null);
     expect(backend.deedNews).toBeNull();

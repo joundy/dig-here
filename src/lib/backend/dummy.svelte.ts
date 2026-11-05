@@ -136,6 +136,8 @@ class DummyBackend implements GameBackend, PlaytestControls {
   refreshBalances() {}
   async disconnectWallet() {}
   reloadDeeds() {}
+  refreshDeeds() {}
+  readonly walletKnown = true;
   get deedNews() { return this.#state.ledger.deedLog; }
   deedHistory(id: string) { return this.#state.ledger.deedLog.filter((e) => e.id === id); }
 

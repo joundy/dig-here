@@ -27,6 +27,7 @@
     { id: 'mine', label: 'Mine' },
   ];
   const SKELETONS = 8;
+  const REFRESH_MS = 5000;
 
   let tab = $state<MarketTab>('sale');
   let mapFilter = $state<MapId | 'all'>('all');
@@ -54,6 +55,13 @@
     const deed = read(row.id);
     return me && deed.owner === me ? sum + deed.earned : sum;
   }, 0));
+
+  // The page only reads while something on it redraws, so a quiet market would otherwise stop updating.
+  $effect(() => {
+    const open = id;
+    const timer = setInterval(() => backend.refreshDeeds(open), REFRESH_MS);
+    return () => clearInterval(timer);
+  });
 
   // The map is only the backdrop here. It follows whichever island you're looking at.
   $effect(() => {
@@ -167,7 +175,7 @@
       <div class="list">
         {#if !backend.deedsReady}
           <ul class="cards" aria-busy="true" aria-label="Loading the market">
-            {#each { length: SKELETONS }, i}<li class="ghost" style:--i={i}><span></span></li>{/each}
+            {#each { length: SKELETONS }, i}<li class="ghost" style:--i={i}><span class="plot"><Sprite name="shovel" scale={3} /></span><span class="bar"></span><span class="bar short"></span></li>{/each}
           </ul>
         {:else if tab === 'mine' && !me}
           <div class="state">
@@ -175,6 +183,13 @@
             <h2>Your collection lives in your wallet</h2>
             <p>Connect it to see the NFTs you own and what they've earned.</p>
             <button class="btn small" onclick={() => backend.ensureAccount().catch(() => {})}>Connect wallet</button>
+          </div>
+        {:else if rows.length === 0 && tab === 'sale' && backend.deedsError}
+          <div class="state">
+            <Sprite name="coin" scale={6} />
+            <h2>Prices are out of reach</h2>
+            <p>This isn't the same as nothing being for sale. Minting still works.</p>
+            <button class="btn small" onclick={() => chooseTab('mint')}>See what's left to mint</button>
           </div>
         {:else if rows.length === 0}
           <div class="state">
@@ -350,15 +365,30 @@
     min-width: 0;
   }
   .ghost {
-    aspect-ratio: 13 / 22;
+    display: grid;
+    gap: 0.4rem;
+    align-content: start;
+    padding-bottom: 0.7rem;
     background: var(--deep);
     animation: breathe 1.2s steps(4) infinite alternate;
     animation-delay: calc(var(--i) * 90ms);
   }
-  .ghost span {
-    display: block;
-    height: 70%;
-    background: rgb(247 247 238 / 0.08);
+  .plot {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 4 / 5;
+    background: rgb(247 247 238 / 0.07);
+  }
+  .plot :global(canvas) {
+    opacity: 0.45;
+  }
+  .ghost .bar {
+    height: 0.9rem;
+    margin: 0 0.5rem;
+    background: rgb(247 247 238 / 0.14);
+  }
+  .ghost .bar.short {
+    width: 45%;
   }
   @keyframes breathe {
     from { opacity: 0.45; }

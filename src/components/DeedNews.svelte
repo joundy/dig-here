@@ -11,7 +11,13 @@
 
   const sales = $derived(backend.deedNews?.filter((e) => e.kind === 'sold').slice(0, SHOWN) ?? null);
   const me = $derived(backend.account);
-  const now = $derived(backend.nowMs());
+
+  let now = $state(backend.nowMs());
+
+  $effect(() => {
+    const timer = setInterval(() => (now = backend.nowMs()), 30_000);
+    return () => clearInterval(timer);
+  });
 </script>
 
 <div class="news">

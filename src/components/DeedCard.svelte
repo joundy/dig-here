@@ -30,7 +30,7 @@
     <h3>{title}</h3>
     <p class="facts">
       <span class="set">{mapName(row.map).split(' ')[0]}</span>
-      <span title="Roughly how often the treasure lands by this kind">{chance}% chance</span>
+      <span title="Roughly how often the treasure lands by this kind">{chance}%<span class="word"> chance</span></span>
     </p>
     <p class="owner">
       {#if mine}You own this{:else if deed.owner}Owner <span class="who"><Who account={deed.owner} {me} link={false} /></span>{:else}No owner yet{/if}
@@ -95,6 +95,7 @@
   }
   .info {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.1rem;
     padding: 0.35rem 0.5rem 0.5rem;
     border-top: var(--frame) solid var(--ink);
@@ -165,6 +166,7 @@
     color: var(--foam);
   }
   .cta {
+    flex: none;
     margin-left: auto;
     padding: 0.05rem 0.5rem 0.2rem;
     font-size: 1.2rem;
@@ -180,5 +182,20 @@
   .kept {
     font-size: 1.15rem;
     color: var(--mist);
+  }
+  @media (max-width: 480px) {
+    .word {
+      display: none;
+    }
+    .info {
+      padding: 0.3rem 0.4rem 0.4rem;
+    }
+    .cta {
+      padding: 0.05rem 0.35rem 0.2rem;
+      font-size: 1.1rem;
+    }
+    .deal small {
+      font-size: 0.55em;
+    }
   }
 </style>

@@ -79,6 +79,8 @@ export interface GameBackend {
   readonly deedsError: string;
   /** Tries the market's reads again now. */
   reloadDeeds(): void;
+  /** For a screen showing the market: reads whatever has got old. `openId` is an NFT whose history is on screen. */
+  refreshDeeds(openId?: string): void;
   /** The market's latest news, newest first. Null if nobody can say, which isn't the same as nothing having happened. */
   readonly deedNews: DeedEvent[] | null;
   /** One NFT's history, newest first. Null if nobody can say. */
@@ -95,6 +97,8 @@ export interface GameBackend {
   /** A first credit pays for the player's record out of itself, so this is what that adds, if they still need one. */
   readonly setupCost: number;
 
+  /** The player's wallet has been read at least once, so a 0 from `walletOf` means 0. */
+  readonly walletKnown: boolean;
   /** Coins outside the game. */
   walletOf(account: string): number;
   /** Deposited coins, free to spend or withdraw. */

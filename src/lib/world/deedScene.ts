@@ -14,7 +14,7 @@ type Backdrop = {
   farLit: string;
   orb: string;
   orbGlow: string;
-  /** How much of the way down the sky the sun or moon sits, and how many chunks across it is. */
+  /** How much of the way down the sky the sun or moon sits, and its radius in chunks. */
   orbAt: number;
   orbSize: number;
   cloud: string | null;
@@ -27,19 +27,19 @@ const BACKDROPS: Record<MapId, Backdrop> = {
   tropical: {
     sky: ['#3aa8e4', '#55b9ea', '#74c9ef', '#97d9f3', '#bde8f6'],
     far: '#2a9ede', farLit: '#4cd0d8',
-    orb: '#fff6c2', orbGlow: '#d8f1ec', orbAt: 0.16, orbSize: 3,
+    orb: '#fff6c2', orbGlow: '#d8f1ec', orbAt: 0.2, orbSize: 2,
     cloud: '#f7f7ee', cloudShade: '#cfe6f2', stars: null,
   },
   snowy: {
     sky: ['#142c58', '#183a68', '#1f4d7c', '#2d6890', '#4a8aa8'],
     far: '#7d9dbb', farLit: '#d5e6f2',
-    orb: '#eef6fb', orbGlow: '#1f4d7c', orbAt: 0.14, orbSize: 4,
+    orb: '#eef6fb', orbGlow: '#1f4d7c', orbAt: 0.2, orbSize: 3,
     cloud: null, cloudShade: '', stars: '#cfe0fb',
   },
   desert: {
     sky: ['#e0603f', '#ec7a45', '#f4954f', '#f9b160', '#fccf80'],
     far: '#cf8246', farLit: '#e8a25c',
-    orb: '#fff0b8', orbGlow: '#fdbf72', orbAt: 0.5, orbSize: 7,
+    orb: '#fff0b8', orbGlow: '#fdbf72', orbAt: 0.62, orbSize: 4,
     cloud: '#fbbf7e', cloudShade: '#f0975b', stars: null,
   },
 };
@@ -78,17 +78,26 @@ function drawCloud(paint: Painter, x: number, y: number, size: number, color: st
   paint(x + size, y + size * 2, size * 4, 1, under);
 }
 
-function drawOrb(paint: Painter, map: MapId, x: number, y: number, size: number, look: Backdrop) {
-  const corner = Math.max(1, Math.floor(size / 4));
-  paint(x - corner, y + corner, size + corner * 2, size - corner * 2, look.orbGlow);
-  paint(x + corner, y - corner, size - corner * 2, size + corner * 2, look.orbGlow);
-  paint(x, y + corner, size, size - corner * 2, look.orb);
-  paint(x + corner, y, size - corner * 2, size, look.orb);
-  // A bite out of the moon, in the colour of the sky behind it.
-  if (map === 'snowy') {
-    paint(x + corner * 2, y, size - corner * 2, size - corner, look.orbGlow);
-    paint(x + corner, y, size - corner, corner, look.orbGlow);
+/** Discs drawn in chunks, so they sit on the same grid as everything else. */
+function drawDisc(paint: Painter, cx: number, cy: number, radius: number, unit: number, color: string, bite?: { x: number; y: number; radius: number }) {
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dy * dy > radius * radius + radius * 0.6) continue;
+      if (bite && (dx - bite.x) ** 2 + (dy - bite.y) ** 2 < bite.radius * bite.radius) continue;
+      paint(cx + dx * unit, cy + dy * unit, unit, unit, color);
+    }
   }
+}
+
+function drawOrb(paint: Painter, map: MapId, x: number, y: number, unit: number, look: Backdrop) {
+  const radius = look.orbSize;
+  if (map === 'snowy') {
+    // A crescent, so it can only be the moon.
+    drawDisc(paint, x, y, radius, unit, look.orb, { x: 2, y: -1, radius });
+    return;
+  }
+  drawDisc(paint, x, y, radius + 1, unit, look.orbGlow);
+  drawDisc(paint, x, y, radius, unit, look.orb);
 }
 
 function drawFar(paint: Painter, map: MapId, w: number, horizon: number, unit: number, random: () => number, look: Backdrop) {
@@ -172,8 +181,7 @@ export function paintScene(paint: Painter, map: MapId, kind: Kind | null, seed: 
       paint(Math.floor(random() * w), Math.floor(random() * horizon * 0.8), 1, 1, random() < 0.25 ? '#f7f7ee' : blend(look.stars, look.sky[1], 0.5));
     }
   }
-  const orb = unit * look.orbSize;
-  drawOrb(paint, map, Math.floor((w - orb) * (0.1 + random() * 0.8)), Math.floor(horizon * look.orbAt + random() * unit * 2), orb, look);
+  drawOrb(paint, map, Math.floor(w * (0.14 + random() * 0.72)), Math.floor(horizon * look.orbAt + random() * unit * 2), unit, look);
 
   if (look.cloud) {
     for (let i = 0; i < 2; i++) {

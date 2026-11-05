@@ -103,11 +103,12 @@ class NearBackend implements GameBackend {
   #top = $state<{ account: string; points: number }[]>([]);
   #balance = $state(0);
   #wallet = $state(0);
+  walletKnown = $state(false);
   /** Assumed until a read says otherwise, so a slow read can't add a setup line that isn't owed. */
   #hasRecord = $state(true);
   #hosts = $state<Record<string, HostRecord>>({});
   #deeds = $state<Record<string, Deed>>({});
-  deedsReady = $state(false);
+  #deedsReady = $state(false);
   deedsError = $state('');
   marketClaim = $state(0);
   #news = $state<DeedEvent[] | null>(null);
@@ -478,19 +479,35 @@ class NearBackend implements GameBackend {
     }
   }
 
-  deedOf(id: string): Deed {
-    // A frame from the backend carries all of this, so only a quiet backend sends us to the nodes.
+  /** A frame from the backend carries all of this, so only a quiet backend sends us to the nodes. */
+  #askForDeeds() {
     const fresh = Date.now() - this.#marketSeen < DEEDS_MS;
     if (!fresh && Date.now() - this.#deedsAsked > DEEDS_MS) {
       this.#deedsAsked = Date.now();
       queueMicrotask(() => void this.#loadDeeds());
     }
+  }
+
+  // A market page waits on this before it looks at any NFT, so this has to do the asking too.
+  get deedsReady() {
+    this.#askForDeeds();
+    return this.#deedsReady;
+  }
+
+  deedOf(id: string): Deed {
+    this.#askForDeeds();
     return this.#deeds[id] ?? { owner: null, price: null, earned: 0, landings: 0 };
   }
 
   reloadDeeds() {
     this.#deedsAsked = Date.now();
     void this.#loadDeeds();
+  }
+
+  refreshDeeds(openId?: string) {
+    this.#askForDeeds();
+    void this.deedNews;
+    if (openId) void this.deedHistory(openId);
   }
 
   /** Straight from the two contracts. A market that can't be read shows owners with no prices, and says so. */
@@ -501,11 +518,11 @@ class NearBackend implements GameBackend {
         marketView<ListingRow[] | null>('get_listings', { from: 0, limit: 36 }).catch(() => null),
       ]);
       this.#applyDeeds(nfts ?? [], listings ?? []);
-      this.deedsReady = true;
+      this.#deedsReady = true;
       this.deedsError = listings ? '' : "Can't read the market's prices right now, so nothing shows as for sale. Coins are safe.";
     } catch {
       this.#deedsAsked = Date.now() - DEEDS_MS + RETRY_READ_MS;
-      this.deedsError = this.deedsReady
+      this.deedsError = this.#deedsReady
         ? "Can't reach the market right now, so this may be a little out of date."
         : "Can't reach the market right now. It tries again by itself.";
     }
@@ -513,7 +530,7 @@ class NearBackend implements GameBackend {
 
   #applyMarketFrame(market: MarketFrame) {
     this.#marketSeen = Date.now();
-    this.deedsReady = true;
+    this.#deedsReady = true;
     this.deedsError = '';
     if (market.version === this.#marketVersion) return;
     this.#marketVersion = market.version;
@@ -633,7 +650,10 @@ class NearBackend implements GameBackend {
         this.#hasRecord = record !== null;
       }
       const account = await viewAccount(session.accountId);
-      if (this.#session === session) this.#wallet = account ? spendable(account) : 0;
+      if (this.#session === session) {
+        this.#wallet = account ? spendable(account) : 0;
+        this.walletKnown = true;
+      }
       // A separate look, because the game must carry on working if the market can't be read.
       void marketView<string | null>('get_unclaimed', { account_id: session.accountId }).then(
         (held) => { if (this.#session === session) this.marketClaim = held ? toMilli(held) : 0; },
@@ -660,6 +680,7 @@ class NearBackend implements GameBackend {
     this.#sender = null;
     this.#balance = 0;
     this.#wallet = 0;
+    this.walletKnown = false;
     this.#hasRecord = true;
     this.marketClaim = 0;
     saveSession(session);

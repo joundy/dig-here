@@ -23,6 +23,7 @@
   type Form = '' | 'list' | 'price' | 'send';
 
   const WON_MS = 1400;
+  const CLOCK_MS = 30_000;
 
   let form = $state<Form>('');
   let priceText = $state('');
@@ -48,15 +49,17 @@
   const history = $derived(backend.deedHistory(row.id));
   const wallet = $derived(backend.walletOf(me));
   const balance = $derived(backend.balanceOf(me));
-  const buyCheck = $derived(listed && !mine && signedIn ? canAfford(deed.price!, GAS_TGAS.market_buy, wallet) : { ok: true as const });
-  const mintCheck = $derived(deed.owner === null && signedIn ? canAfford(Math.max(0, backend.prices.mintPrice - balance), GAS_TGAS.mint_nft, wallet) : { ok: true as const });
+  const buyCheck = $derived(listed && !mine && signedIn && backend.walletKnown ? canAfford(deed.price!, GAS_TGAS.market_buy, wallet) : { ok: true as const });
+  const mintCheck = $derived(deed.owner === null && signedIn && backend.walletKnown ? canAfford(Math.max(0, backend.prices.mintPrice - balance), GAS_TGAS.mint_nft, wallet) : { ok: true as const });
   const parsed = $derived(parsePrice(priceText));
-  const now = $derived(backend.nowMs());
+  let now = $state(backend.nowMs());
 
   onMount(() => {
     heading?.focus({ preventScroll: true });
     // It may have been a while, and this decides whether Buy is on offer.
     backend.refreshBalances();
+    const timer = setInterval(() => (now = backend.nowMs()), CLOCK_MS);
+    return () => clearInterval(timer);
   });
 
   /** Resolving to false means it stepped aside without doing anything, as when the top-up was closed. */
@@ -88,7 +91,7 @@
       if (attach === null) return false;
       waiting = true;
       await backend.mintDeed(row.id, attach);
-    }, `You minted the ${title} NFT. Every time the treasure lands by a ${kindName(row.kind)}, you earn.`);
+    }, `You minted the ${title} NFT. Every time the treasure lands by ${withArticle(kindName(row.kind))}, you earn.`);
   }
 
   function buy() {
@@ -135,6 +138,8 @@
     void act(() => backend.transferDeed(row.id, to), `Sent to ${to}.`);
   }
 
+  const withArticle = (noun: string) => `${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}`;
+
   const EVENT_WORDS: Record<DeedEvent['kind'], string> = {
     minted: 'Minted',
     listed: 'Listed',
@@ -161,7 +166,7 @@
       <p class="owner">
         {#if mine}<span class="you">You own this</span>{:else if deed.owner}Owned by <Who account={deed.owner} {me} />{:else}Nobody owns this yet{/if}
       </p>
-      <p class="pitch">Whoever owns it earns {percent(RULES.deedBps)} of the pot each time the treasure lands by a {kindName(row.kind)} on this island.</p>
+      <p class="pitch">Whoever owns it earns {percent(RULES.deedBps)} of the pot each time the treasure lands by {withArticle(kindName(row.kind))} on this island.</p>
 
       <div class="deal" class:waiting aria-busy={waiting}>
         {#if waiting}
@@ -231,7 +236,7 @@
             </p>
             <button class="btn" disabled>Buy for {near(deed.price!)}</button>
           {:else}
-            <button class="btn" onclick={buy}>{signedIn ? `Buy for ${near(deed.price!)}` : `Connect and buy for ${near(deed.price!)}`}</button>
+            <button class="btn" onclick={buy}>{signedIn ? `Buy for ${near(deed.price!)}` : 'Connect and buy'}</button>
           {/if}
           <p class="fine">You pay from your wallet, not your game balance, and the coins go straight to the seller's wallet.</p>
         {:else if deed.owner === null}
@@ -244,7 +249,7 @@
             </p>
             <button class="btn" disabled>Mint for {near(backend.prices.mintPrice)}</button>
           {:else}
-            <button class="btn" onclick={mint}>{signedIn ? `Mint for ${near(backend.prices.mintPrice)}` : `Connect and mint for ${near(backend.prices.mintPrice)}`}</button>
+            <button class="btn" onclick={mint}>{signedIn ? `Mint for ${near(backend.prices.mintPrice)}` : 'Connect and mint'}</button>
           {/if}
           <p class="fine">Comes out of your game balance, and your wallet tops it up if it's short. There's only ever one of these.</p>
         {:else}
@@ -665,7 +670,14 @@
       gap: 0.75rem;
     }
     .hero {
-      aspect-ratio: 5 / 4;
+      aspect-ratio: 16 / 11;
+    }
+    /* The price and the button come first on a small screen, and what it earns can wait a moment. */
+    .pitch {
+      order: 1;
+    }
+    .stats {
+      order: 2;
     }
     h1 {
       font-size: 3.2rem;
