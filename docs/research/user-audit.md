@@ -42,10 +42,12 @@ Severity: **Critical** breaks a promise of the game, **High** a stranger would g
 | 30 | Low | Tabs had no arrow keys, though `role="tab"` promises them | Keyboard pass | Arrow keys on all three tab lists | Browser, on the board. Tab order and focus rings were already right |
 | 31 | Low | Phone filters 36 px, header icons 32 px wide, form input 38 px | Tap audit | 44 px for filters and input, 40 for header icons. 34 px at 320 px wide, where the width has to come from somewhere | Tap audit rerun at 320 and 360 px |
 | 32 | Low | A watcher's round had nowhere to go | Shot `b5-*-watch-live` | "Find one to join" | Shot |
-| 33 | Low | `/%E0%A4%A` crashed the handler, which reaches a visitor as Cloudflare's 520, and `?before=abc` reached SQL as NaN | `curl` on live, reading | 400, and paging ignores nonsense. Names over 64 bytes refused | `server/static.test.ts`, `server/indexer.test.ts` |
+| 33 | Low | `/%E0%A4%A` crashed the app's handler, and `?before=abc` reached SQL as NaN | `curl` on live, reading | The app answers the bad escape with a 400, and paging ignores nonsense. Names over 64 bytes refused. **Not fixed for visitors:** the public path to `/%E0%A4%A` still returns Cloudflare's 520, before and after the deploy. The app and kamal-proxy do give 400, as the coordinator checked on the VM, but a visitor never sees that | `server/static.test.ts`, `server/indexer.test.ts`, on the VM, and `curl` through the public path: 520 |
 | 34 | Low | SIGTERM killed the process with streams open and the database unclosed | Read `main.ts` | Graceful shutdown | Read. Runs on the next deploy |
 | 35 | Low | A tab kept per-room maps forever, and a woken phone waited up to 5 s for fresh state | Read `near.svelte.ts` | Cleared when a room ends, and refreshed on wake | Unit tests still pass |
 | 36 | Low | Signing out in one tab left another playing as that account | Read | Tabs follow each other through `storage` events | Read. Two tabs in the same round agreed throughout, shot `a6` |
+| 37 | Low | Withdraw "All" left a sliver behind, because screens count in whole milliNEAR: 0.00095 NEAR stayed in the game balance while the screen said 0 | Live recheck: chain balance after withdrawing | Asking for the whole balance now sends the exact figure | Unit test only. **Not deployed yet** |
+| 38 | Low | Verify's failure said "try again" with no way to except closing it | Live recheck, on a network blip here | A Try again button | Local Vite against live: failed with the network cut, then all 41 passed. **Not deployed yet** |
 
 ## The known items
 
@@ -108,6 +110,68 @@ No console errors on any route, apart from Cloudflare's beacon being refused by 
 
 ## Checks that couldn't finish
 **Explorer links.** `testnet.nearblocks.io` answers a Cloudflare challenge (`cf-mitigated: challenge`) to `curl-cffi` and `stealth-fetch`, exit 3. It's a human check, so I stopped there. The URL forms come from NearBlocks' own routes, unverified past that page.
+
+## Live recheck
+
+Commit `770e3f9` on `https://dig.joundy.dev`, 2026-11-05, at 360×640 and 1280×800. **Everything in this section ran against the deployed site.** Everything above ran locally unless it says otherwise. Findings 37 and 38 came out of this recheck and are committed but not deployed, so the live site still has both.
+
+**The wallet is still a stand-in.** The test browser swapped the live wallet chunk for one that signs outside the page with a throwaway's key, so transactions were real and wallet windows weren't. The silent moves used a real function-call key through the game's own signing code.
+
+### Passed
+- **Content security policy:** no violations on any route, in any wallet frame, or during the round, read from both the console and a `securitypolicyviolation` listener in every frame. Nothing to quote. Each request gets a new nonce, and the header matches what ran locally.
+- **First look, both sizes:** the first tutorial card is "Dig for treasure", the board line is there, there's no sideways scroll, and the market's phone link back to the games is there. At 50 KB/s the splash shows at 1.4 s, and the game replaces it at 4.2 s.
+- **Titles and routes:** `#/`, `#/new`, `#/nfts`, an NFT page, the old `#/deeds`, `#/season`, a finished room and a missing room all render, with a title per page. A missing room's title stays the plain "Dig Here".
+- **Files and inputs:** `/favicon.svg`, `/og-image.png`, `/robots.txt` and `/site.webmanifest` answer 200. `/favicon.ico` and a missing asset answer 404. `?before=abc` gets 200, and a 73-character name 400.
+
+**Rounds, one throwaway, hosted at 0.01 NEAR for 1 minute:**
+
+| | Phone, room 222 | Desktop, room 224 |
+|---|---|---|
+| "I'll play too" | On by default | On by default |
+| Wallet windows for the whole round | 1, `create_room` | 1, `create_room` |
+| Start now on screen after the room opened | 0.2 s | 0.1 s |
+| Live after the room opened, pressing at once | 3.0 s | 2.7 s |
+| X on the map after pressing Dig | 0.04 s | 0.04 s |
+| Dig on chain, wallet windows for it | Yes, 0 | Yes, 0 |
+| Verify | All 41 passed, on phone and desktop | All 40 passed: one node didn't answer during a network blip here, and Verify said so |
+
+- **Top up and withdraw:** top up 0.01 took the game balance from 0.10195 to 0.11195. Withdraw All paid 0.111 to the wallet.
+- **Disconnect, read from the chain:**
+  - Before: one full-access key and both game keys, `7oD38…` from the phone and `GxkZJ…` from the desktop.
+  - After the phone's Remove the key: `7oD38…` gone.
+  - After the desktop's: only the full-access key left.
+  - The phone's header went back to Play, and its storage held no key or session.
+- **NFT market, both sizes:** For sale 3, Mint 24, All 36. Recent sales and an NFT's activity list both show. No mint or buy this time. The earlier market flow ran against local code, not the deployed build.
+- **Wallets, both sizes, live and unapproved:**
+
+| Wallet | Result | Violations |
+|---|---|---|
+| Meteor | Frame loads and stays blank. It looked the same locally with and without the policy | 0 |
+| Intear | Its own "Connect Intear Wallet" screen | 0 |
+| Ledger | Its own screen: "WebHID access is blocked" | 0 |
+| Nightly | Its own "Download Nightly" screen | 0 |
+| NEAR CLI | Its own step 1 of 3 | 0 |
+
+Ledger's message isn't from our headers. It reads the same on the live page with the policy, Permissions-Policy, frame and opener headers stripped in the test browser, and `navigator.hid` exists in both cases.
+
+### Failed or not fully clean
+- **`/%E0%A4%A` returns 520 from Cloudflare,** so finding 33 isn't fixed for visitors.
+- **Withdraw All left 0.00095 NEAR** (finding 37), and **Verify failed once with no retry button** when this machine's network changed mid-run (finding 38). A second try passed all 41.
+- **The console isn't quite silent.** A missing room logs a 404 for its proof, which is expected. Cloudflare's beacon is refused by this machine's network on every load, so **the beacon was allowed by the policy but never seen running**. Ledger logs "Unrecognized feature: 'bluetooth'" from NEAR Connect's iframe, which is harmless.
+
+### Measurement limits
+- **Time from approving to the room opening,** 7.6 s and 28.9 s, is mostly the stand-in signing from a separate process, so it says little about a real wallet. In room 224's case the page opened with 14:56 of the 15:00 limit left, so the delay came before the transaction landed.
+- **The first Verify reading in the run script fired while it was still checking.** The figures above are from waiting for its verdict, on the same rooms afterwards.
+
+### Didn't run
+- A real wallet, or any approval window past the screens above.
+- The season closing, which is about 16 hours away. It's the one critical fix not yet seen working.
+- Explorer links past Cloudflare's check.
+
+### Left on the live game
+- The throwaway `ul93044` was deleted with `dighere.testnet` as beneficiary, after withdrawing. It cost about 0.03 NEAR. It scored no season points, so it isn't on the list.
+- The earlier audit's accounts are on the season list, marked deleted.
+- **This audit stranded test coins, and they're back.** Deleting a throwaway while its room was still open meant the room's refunds, bond and host cut were later credited to a name that no longer existed. Room 215, named `WWWW…`, finished by itself that way, with 6 digs and bot players. Six accounts held 0.828 NEAR between them. `server/tools/reclaim.ts` re-created each, withdrew and deleted it again, which took the root from 32.127 to 32.908 NEAR. All six are gone again, confirmed by reading each one. Any test that hosts should wait for its room to end before deleting the host.
 
 ## Product decisions, with a recommendation
 1. **Starter coins, parked earlier.** The faucet is the weakest step for a juror on shared wifi. Recommend sending about 0.2 test NEAR once per real wallet from the backend, capped per day.

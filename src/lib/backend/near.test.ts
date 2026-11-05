@@ -239,6 +239,18 @@ describe('the backend', () => {
     vi.doUnmock('../near/signer');
   });
 
+  it('withdraws the exact balance when asked for all of it, and only what was asked for otherwise', async () => {
+    views[`${CHAIN}.get_account`] = { balance: (111n * YOCTO + 950n * 10n ** 18n).toString() };
+    const backend = await load(WALLET);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(backend.balanceOf('me.testnet')).toBe(111);
+    await backend.withdraw(50);
+    expect(walletCalls[0][2].amount).toBe((50n * YOCTO).toString());
+    await vi.advanceTimersByTimeAsync(10);
+    await backend.withdraw(111);
+    expect(walletCalls[1][2].amount).toBe((111n * YOCTO + 950n * 10n ** 18n).toString());
+  });
+
   it('takes the game key off the account through the wallet, and says so if the wallet refuses', async () => {
     const backend = await load(WALLET, WITH_KEY);
     expect(backend.hasGameKey).toBe(true);

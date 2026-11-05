@@ -35,6 +35,7 @@
   });
 
   async function load() {
+    failed = false;
     try {
       const found = await backend.proofOf(gameId);
       if (!found) {
@@ -69,6 +70,7 @@
 
     {#if failed}
       <p class="summary fail" data-overall="fail">Couldn't get this round, so nothing here is verified. The network or our server may be having a moment, so try again.</p>
+      <button class="btn alt" onclick={load}>Try again</button>
     {:else if !groups.length}
       <p class="summary">Reading the round and redoing every roll in your browser…</p>
     {:else}

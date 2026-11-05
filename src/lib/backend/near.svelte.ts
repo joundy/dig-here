@@ -107,6 +107,8 @@ class NearBackend implements GameBackend {
   });
   #top = $state<{ account: string; points: number }[]>([]);
   #balance = $state(0);
+  /** Screens count in whole milliNEAR, so emptying a balance needs the exact figure or a sliver is left behind. */
+  #balanceYocto = '0';
   #wallet = $state(0);
   walletKnown = $state(false);
   /** Assumed until a read says otherwise, so a slow read can't add a setup line that isn't owed. */
@@ -696,7 +698,7 @@ class NearBackend implements GameBackend {
     try {
       const record = await view<{ balance: string } | null>('get_account', { id: session.accountId });
       if (this.#session === session) {
-        this.#balance = record ? toMilli(record.balance) : 0;
+        this.#setBalance(record?.balance ?? '0');
         this.#hasRecord = record !== null;
       }
       const account = await viewAccount(session.accountId);
@@ -731,10 +733,15 @@ class NearBackend implements GameBackend {
 
   // Who's playing.
 
+  #setBalance(yocto: string | bigint) {
+    this.#balanceYocto = String(yocto);
+    this.#balance = toMilli(yocto);
+  }
+
   #setSession(session: Session | null) {
     this.#session = session;
     this.#sender = null;
-    this.#balance = 0;
+    this.#setBalance('0');
     this.#wallet = 0;
     this.walletKnown = false;
     this.#hasRecord = true;
@@ -883,7 +890,7 @@ class NearBackend implements GameBackend {
     const outcome = readOutcome(raw);
     if (outcome.failure) throw new GameError(plainError(outcome.failure));
     const balance = balanceFromEvents(outcome.events, session.accountId);
-    if (balance !== null && this.#session === session) this.#balance = toMilli(balance);
+    if (balance !== null && this.#session === session) this.#setBalance(balance);
     return outcome;
   }
 
@@ -933,7 +940,8 @@ class NearBackend implements GameBackend {
   async withdraw(amount: number): Promise<void> {
     if (!Number.isInteger(amount) || amount <= 0) throw new GameError('Enter an amount above 0.');
     const session = await this.#needAccount();
-    const raw = await this.#walletCall(session.accountId, { method: 'withdraw', args: { amount: milliToYocto(amount) }, gasTgas: GAS_TGAS.withdraw }, '1');
+    const exact = amount === this.#balance ? this.#balanceYocto : milliToYocto(amount);
+    const raw = await this.#walletCall(session.accountId, { method: 'withdraw', args: { amount: exact }, gasTgas: GAS_TGAS.withdraw }, '1');
     const outcome = this.#finishCall(session, raw);
     if (outcome.value === false) throw new GameError("The transfer didn't go through. Your coins are back in your balance.");
     this.refreshBalances();
