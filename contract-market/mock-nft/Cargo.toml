@@ -1,0 +1,24 @@
+[package]
+name = "mock-nft"
+version = "0.0.0"
+edition = "2021"
+description = "Test double for the market's sandbox tests: a transfer that can panic or burn all its gas."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+near-sdk = { version = "5.30.0", default-features = true }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+strip = "symbols"
+overflow-checks = true
+
+# Not part of the market's own build, even though it lives under its folder.
+[workspace]

@@ -1,0 +1,3 @@
+# The sandbox tests build a large tree of nearcore crates. Sharing the game contract's target saves gigabytes of disk.
+[build]
+target-dir = "../contract/target"

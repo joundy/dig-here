@@ -1,0 +1,38 @@
+[package]
+name = "dig-here-market"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.95"
+description = "Dig Here market: sells the game's NFTs through NEP-178 approvals, with no owner."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = { version = "5.30.0", default-features = true, features = ["legacy"] }
+
+[dev-dependencies]
+near-sdk = { version = "5.30.0", features = ["unit-testing"] }
+near-workspaces = { version = "0.24.0", default-features = false, features = ["rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde_json = "1"
+anyhow = "1"
+futures = "0.3"
+sha2 = "0.10"
+dig-here = { path = "../contract" }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+strip = "symbols"
+overflow-checks = true
+
+[profile.dev]
+debug = false
+
+[profile.test]
+debug = false
