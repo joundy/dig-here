@@ -135,8 +135,8 @@
 <section class="panel market" class:phone={ui.compact}>
   <h1>NFT market</h1>
   <p class="what">
-    One NFT for each kind of landmark. When the treasure lands by one, its owner earns {percent(RULES.deedBps)} of the pot.
-    The first owner mints it for {near(RULES.deedMintPrice)}. After that, keep it or list it at your own price.
+    Earn {percent(RULES.deedBps)} of the pot when the treasure lands by your kind of landmark.
+    Mint a new one for {near(RULES.deedMintPrice)}, or buy one someone has listed.
   </p>
 
   <div class="tabs" role="tablist" aria-label="NFTs">
@@ -162,7 +162,12 @@
         {@const deed = backend.deedOf(row.id)}
         {@const mine = deed.owner === me}
         <li class="card" class:mine>
-          <div class="art"><Sprite name={row.kind} scale={3} /></div>
+          <div class="art">
+            <span class="stack">
+              <Sprite name={row.kind} scale={3} />
+              {#if row.kind === 'windmill'}<span class="blades"><Sprite name="bladesPlus" scale={3} /></span>{/if}
+            </span>
+          </div>
           <h2>{title(row.kind)}</h2>
           <div class="where"><MapBadge mapId={row.map} compact /><span>{deedCount(row.map, row.kind)} on the map</span></div>
           <p class="owner">{mine ? 'You own this' : deed.owner ? `Owner: ${deed.owner}` : 'Not minted yet'}</p>
@@ -360,6 +365,17 @@
     height: 4.6rem;
     background: var(--mist);
     box-shadow: inset 0 -4px 0 #a7bfe6;
+  }
+  .stack {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+  /* The world draws a windmill's blades separately, so they can spin. */
+  .blades {
+    position: absolute;
+    top: -6px;
+    left: 0;
   }
   .card h2 {
     margin: 0.2rem 0 0;
