@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { bakeLand } from '../world/terrain';
-import { distanceField, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA, rollLayout, seededRng } from './map';
+import { canStand, distanceField, getGrids, getMap, H, isLand, LANDMARKS_PER_MAP, MAP_DEFS, MAP_IDS, rollLayout, rosterOf, spotsOf, spotTags, TAG_ORDER, W, WATER_LAKE, WATER_NONE, WATER_RIVER, WATER_SEA } from './map';
 import { FOOTPRINT } from './mapDefs';
+import { sha256, streamRng } from './random';
 
 describe.each(MAP_IDS)('map %s', (id) => {
   const map = getMap(id);
@@ -47,38 +48,104 @@ describe.each(MAP_IDS)('map %s', (id) => {
     for (const set of kinds.values()) expect(set.size).toBeGreaterThanOrEqual(2);
   });
 
-  it('rolls a valid layout for every game: 40 landmarks, none touching, and each kind spread out', () => {
-    const rng = seededRng(5);
-    for (let game = 0; game < 25; game++) {
-      const layout = rollLayout(id, rng);
-      expect(layout).toHaveLength(LANDMARKS_PER_MAP);
-      for (const a of layout) {
-        const i = a.y * W + a.x;
-        expect(map.land[i]).toBe(1);
-        expect(map.paths[i]).toBe(0);
-        expect(map.decks[i]).toBe(0);
-        expect(map.cliffs[i]).toBe(0);
-        for (const b of layout) {
-          if (a.id >= b.id) continue;
-          const d = Math.hypot(a.x - b.x, a.y - b.y);
-          expect(d).toBeGreaterThanOrEqual(20);
-          if (a.kind === b.kind) expect(d, `${a.kind} ${a.id} and ${b.id}`).toBeGreaterThanOrEqual(36);
+  describe('layouts over 500 games', () => {
+    const SEEDS = 500;
+    const layouts = Array.from({ length: SEEDS }, (_, game) => rollLayout(id, streamRng(sha256(new TextEncoder().encode(`layout-test/${id}/${game}`)))));
+
+    it('always rolls 40 landmarks of the right kinds, from the table, on good ground', () => {
+      const spots = new Set(spotsOf(id).map(([x, y]) => `${x},${y}`));
+      const roster = Object.entries(MAP_DEFS[id].roster).map(([kind, count]) => `${kind}:${count}`).sort();
+      for (const layout of layouts) {
+        expect(layout).toHaveLength(LANDMARKS_PER_MAP);
+        const counts = new Map<string, number>();
+        for (const [index, a] of layout.entries()) {
+          expect(a.id).toBe(index);
+          counts.set(a.kind, (counts.get(a.kind) ?? 0) + 1);
+          expect(spots.has(`${a.x},${a.y}`)).toBe(true);
+          const i = a.y * W + a.x;
+          expect(map.land[i]).toBe(1);
+          expect(map.paths[i]).toBe(0);
+          expect(map.decks[i]).toBe(0);
+          expect(map.cliffs[i]).toBe(0);
+        }
+        expect([...counts].map(([kind, count]) => `${kind}:${count}`).sort()).toEqual(roster);
+      }
+    });
+
+    it('keeps landmarks apart, with no sprites touching and each kind at least 36 pixels from its own', () => {
+      for (const layout of layouts) {
+        for (const a of layout) {
+          const [aw, ah] = FOOTPRINT[a.kind];
+          const aLeft = a.x - Math.floor(aw / 2);
+          for (const b of layout) {
+            if (a.id >= b.id) continue;
+            const d2 = (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+            expect(d2).toBeGreaterThanOrEqual(400);
+            if (a.kind === b.kind) expect(d2, `${a.kind} ${a.id} and ${b.id}`).toBeGreaterThanOrEqual(36 * 36);
+            const [bw, bh] = FOOTPRINT[b.kind];
+            const bLeft = b.x - Math.floor(bw / 2);
+            const apart = bLeft >= aLeft + aw + 2 || aLeft >= bLeft + bw + 2 || b.y - bh >= a.y + 2 || a.y - ah >= b.y + 2;
+            expect(apart, `${a.kind} ${a.id} touches ${b.kind} ${b.id}`).toBe(true);
+          }
         }
       }
-    }
+    });
+
+    it('spreads each kind well, rather than only just meeting the minimum', () => {
+      let total = 0;
+      let pairs = 0;
+      let under50 = 0;
+      for (const layout of layouts) {
+        for (const a of layout) for (const b of layout) {
+          if (a.id >= b.id || a.kind !== b.kind) continue;
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          total += d;
+          pairs++;
+          if (d < 50) under50++;
+        }
+      }
+      expect(total / pairs).toBeGreaterThan(140);
+      expect(under50 / pairs).toBeLessThan(0.002);
+    });
+
+    it('differs from game to game', () => {
+      const whole = new Set(layouts.map((l) => l.map((a) => `${a.kind}:${a.x},${a.y}`).join(' ')));
+      expect(whole.size).toBe(SEEDS);
+      let shared = 0;
+      for (let g = 1; g < SEEDS; g++) {
+        const previous = new Set(layouts[g - 1].map((a) => `${a.kind}:${a.x},${a.y}`));
+        shared += layouts[g].filter((a) => previous.has(`${a.kind}:${a.x},${a.y}`)).length;
+      }
+      // Fewer than 5 of 40 landmarks repeat on average, even with kinds like boats limited to the shore.
+      expect(shared / (SEEDS - 1)).toBeLessThan(5);
+    });
   });
 
-  it('spreads each kind well in most games, rather than only just meeting the minimum', () => {
-    const rng = seededRng(9);
-    let total = 0;
-    let pairs = 0;
-    for (let game = 0; game < 25; game++) {
-      const layout = rollLayout(id, rng);
-      for (const a of layout) for (const b of layout) {
-        if (a.id < b.id && a.kind === b.kind) { total += Math.hypot(a.x - b.x, a.y - b.y); pairs++; }
+  describe('spot table', () => {
+    const spots = spotsOf(id);
+    const roster = rosterOf(id);
+
+    it('holds at most 500 spots, at least 5 pixels apart', () => {
+      expect(spots.length).toBeLessThanOrEqual(500);
+      for (const [i, a] of spots.entries()) {
+        for (const b of spots.slice(i + 1)) expect((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2).toBeGreaterThanOrEqual(25);
       }
-    }
-    expect(total / pairs).toBeGreaterThan(80);
+    });
+
+    it('says exactly which kinds fit, and the tags of the spot', () => {
+      const grids = getGrids(id);
+      for (const [x, y, tags, kindMask] of spots) {
+        expect(kindMask).toBeGreaterThan(0);
+        roster.forEach((kind, bit) => expect(canStand(grids, kind, x, y)).toBe((kindMask & (1 << bit)) !== 0));
+        expect(TAG_ORDER.filter((_, bit) => tags & (1 << bit))).toEqual(spotTags(grids, x, y));
+      }
+    });
+
+    it('has enough room for every kind', () => {
+      for (const [bit, kind] of roster.entries()) {
+        expect(spots.filter((s) => s[3] & (1 << bit)).length, kind).toBeGreaterThanOrEqual(MAP_DEFS[id].roster[kind]! * 8);
+      }
+    });
   });
 
   it('has a stream running unbroken from an inland lake to the sea, under its bridges', () => {

@@ -1,5 +1,6 @@
 // Turns each map's design into the finished pixel grids and landmark list. Only plain arithmetic
 // goes into anything that affects the rules, so every machine gets the same map, bit for bit.
+import mapData from './generated/map-data.json';
 import { CATEGORY, FOOTPRINT, HABITAT, MAP_DEFS } from './mapDefs';
 import type { Field, Hill, MapDef, Oval, Pt } from './mapDefs';
 import type { Kind, Landmark, MapId, Point, Rng, Tag } from './types';
@@ -406,7 +407,8 @@ function carveTerrain(def: MapDef): Grids {
 const offLimits = (g: Grids, i: number) => g.paths[i] > 0 || g.decks[i] > 0;
 const OVERLAPS_WATER = new Set<Kind>(['boat', 'seal', 'duck', 'penguin', 'palm']);
 
-function canStand(g: Grids, placed: Landmark[], kind: Kind, x: number, y: number): boolean {
+/** Whether the ground here suits this kind. Other landmarks are `clearsPlaced`'s business. */
+export function canStand(g: Grids, kind: Kind, x: number, y: number): boolean {
   const { land, hills, cliffs, fields, toWater } = g;
   const [w, h] = FOOTPRINT[kind];
   const left = x - Math.floor(w / 2);
@@ -441,7 +443,13 @@ function canStand(g: Grids, placed: Landmark[], kind: Kind, x: number, y: number
       if (fields[b]) return false;
     }
   }
+  return true;
+}
 
+function clearsPlaced(placed: Landmark[], kind: Kind, x: number, y: number): boolean {
+  const [w, h] = FOOTPRINT[kind];
+  const left = x - Math.floor(w / 2);
+  const top = y - h;
   for (const other of placed) {
     const dx = other.x - x;
     const dy = other.y - y;
@@ -455,62 +463,94 @@ function canStand(g: Grids, placed: Landmark[], kind: Kind, x: number, y: number
   return true;
 }
 
+/** A spot's tags, in the order clues choose from. The order is part of the rules. */
+export const TAG_ORDER: readonly Tag[] = ['north', 'south', 'west', 'east', 'water', 'inland'];
+
+export function spotTags(g: Grids, x: number, y: number): Tag[] {
+  const shore = g.toWater[y * W + x];
+  const tags: Tag[] = [y < H / 2 ? 'north' : 'south', x < W / 2 ? 'west' : 'east'];
+  if (shore < WATER_NEAR) tags.push('water');
+  if (shore >= INLAND_FROM) tags.push('inland');
+  return tags;
+}
+
+/** One entry of the spot table: x, y, tags as bits of `TAG_ORDER`, kinds that fit as bits of the roster. */
+export type Spot = readonly [x: number, y: number, tags: number, kindMask: number];
+
+export function spotsOf(id: MapId): readonly Spot[] {
+  return (mapData.maps as unknown as Record<MapId, { spots: Spot[] }>)[id].spots;
+}
+
+export function rosterOf(id: MapId): Kind[] {
+  return Object.keys(MAP_DEFS[id].roster) as Kind[];
+}
+
 // Same-kind landmarks must sit this far apart, so a kind clue doesn't point at one corner of the map.
 // The tighter values are only for when a kind can't fit otherwise, such as boats on a short coast.
 const KIND_SPREAD = [90, 70, 50, 36];
-const SAMPLES = 12;
+const TRIES = 150;
+const SAMPLES = 8;
+const RESTARTS = 20;
 
-/**
- * Rolls where every landmark stands for one game. Of several good spots it takes the one furthest
- * from everything else, so the island fills evenly, and counts its own kind as twice as close.
- */
-export function rollLayout(id: MapId, rng: Rng): Landmark[] {
-  const def = MAP_DEFS[id];
-  const grids = getGrids(id);
-  // Picky kinds go first, while the coast is still free. The rest are shuffled.
-  const pool = (Object.entries(def.roster) as [Kind, number][]).flatMap(([kind, count]) => Array.from({ length: count }, () => kind));
+function shuffledRoster(id: MapId, rng: Rng): Kind[] {
+  const pool = rosterOf(id).flatMap((kind) => new Array<Kind>(MAP_DEFS[id].roster[kind]!).fill(kind));
   for (let i = pool.length - 1; i > 0; i--) {
     const j = rng(i + 1);
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  const order = [...pool.filter((k) => HABITAT[k]), ...pool.filter((k) => !HABITAT[k])];
+  return pool;
+}
 
-  for (let attempt = 0; attempt < 60; attempt++) {
+/**
+ * Of up to `SAMPLES` spots that fit, takes the one furthest from everything placed, with its own
+ * kind counting as twice as close. The contract runs this too, so it draws from a fixed table
+ * instead of trying thousands of cells, and uses whole numbers only.
+ */
+function bestSpot(spots: readonly Spot[], placed: Landmark[], kind: Kind, kindBit: number, spread: number, rng: Rng): Spot | null {
+  let best: Spot | null = null;
+  let bestRoom = -1;
+  let found = 0;
+  for (let tries = 0; tries < TRIES && found < SAMPLES; tries++) {
+    const spot = spots[rng(spots.length)];
+    const [x, y, , kindMask] = spot;
+    if (!(kindMask & kindBit) || !clearsPlaced(placed, kind, x, y)) continue;
+    let room = Number.MAX_SAFE_INTEGER;
+    let tooClose = false;
+    for (const other of placed) {
+      const d = (other.x - x) ** 2 + (other.y - y) ** 2;
+      if (other.kind === kind && d < spread * spread) {
+        tooClose = true;
+        break;
+      }
+      room = Math.min(room, other.kind === kind ? Math.floor(d / 4) : d);
+    }
+    if (tooClose) continue;
+    found++;
+    if (room > bestRoom) {
+      bestRoom = room;
+      best = spot;
+    }
+  }
+  return best;
+}
+
+/** Rolls where every landmark stands for one game. Picky kinds go first, while the coast is still free. */
+export function rollLayout(id: MapId, rng: Rng): Landmark[] {
+  const spots = spotsOf(id);
+  const roster = rosterOf(id);
+  for (let attempt = 0; attempt <= RESTARTS; attempt++) {
+    const pool = shuffledRoster(id, rng);
+    const order = [...pool.filter((k) => HABITAT[k]), ...pool.filter((k) => !HABITAT[k])];
     const placed: Landmark[] = [];
     const place = (kind: Kind): boolean => {
+      const kindBit = 1 << roster.indexOf(kind);
       for (const spread of KIND_SPREAD) {
-        let best: Point | null = null;
-        let bestRoom = -1;
-        let found = 0;
-        for (let tries = 0; tries < 1500 && found < SAMPLES; tries++) {
-          const x = rng(W);
-          const y = rng(H);
-          if (!canStand(grids, placed, kind, x, y)) continue;
-          let room = 1e9;
-          let tooClose = false;
-          for (const other of placed) {
-            const d = (other.x - x) ** 2 + (other.y - y) ** 2;
-            if (other.kind === kind && d < spread * spread) {
-              tooClose = true;
-              break;
-            }
-            room = Math.min(room, other.kind === kind ? d / 4 : d);
-          }
-          if (tooClose) continue;
-          found++;
-          if (room > bestRoom) {
-            bestRoom = room;
-            best = { x, y };
-          }
-        }
-        if (best) {
-          const shore = grids.toWater[best.y * W + best.x];
-          const tags: Tag[] = [best.y < H / 2 ? 'north' : 'south', best.x < W / 2 ? 'west' : 'east'];
-          if (shore < WATER_NEAR) tags.push('water');
-          if (shore >= INLAND_FROM) tags.push('inland');
-          placed.push({ id: placed.length, kind, category: CATEGORY[kind], x: best.x, y: best.y, tags, flip: rng(2) === 0 });
-          return true;
-        }
+        const spot = bestSpot(spots, placed, kind, kindBit, spread, rng);
+        if (!spot) continue;
+        const [x, y, tagBits] = spot;
+        const tags = TAG_ORDER.filter((_, bit) => tagBits & (1 << bit));
+        placed.push({ id: placed.length, kind, category: CATEGORY[kind], x, y, tags, flip: rng(2) === 0 });
+        return true;
       }
       return false;
     };
@@ -521,7 +561,7 @@ export function rollLayout(id: MapId, rng: Rng): Landmark[] {
 
 const grids = new Map<MapId, Grids>();
 
-function getGrids(id: MapId): Grids {
+export function getGrids(id: MapId): Grids {
   let found = grids.get(id);
   if (!found) {
     found = carveTerrain(MAP_DEFS[id]);
@@ -545,5 +585,5 @@ export function getMap(id: MapId): GameMap {
 
 export function isLand(id: MapId, p: Point): boolean {
   if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) return false;
-  return getMap(id).land[p.y * W + p.x] === 1;
+  return getGrids(id).land[p.y * W + p.x] === 1;
 }
