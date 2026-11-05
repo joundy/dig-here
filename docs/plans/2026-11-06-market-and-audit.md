@@ -54,5 +54,5 @@ All tests, deploy, live check, README and notes updated, `main` updated. Report 
 - [x] Part 1: `market.dighere.testnet` is live. See `contract-market/README.md`
 - [x] Part 2: `v1` upgraded in place, balances kept. Closeness numbers are in `docs/research/closeness-range.md`
 - [x] Part 3: the backend half is done and committed, but not yet deployed
-- [x] Part 4: `docs/research/user-audit.md`. Committed, waiting on the deploy and a live recheck
-- [ ] Part 5
+- [x] Part 4: `docs/research/user-audit.md`, including the live recheck
+- [x] Part 5: all tests pass, deployed and rechecked live, `main` updated. Still needs a person: a real wallet end to end, a wallet approval window under the CSP, one explorer link, and the first real season close

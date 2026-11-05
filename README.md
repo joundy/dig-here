@@ -11,7 +11,7 @@ Guessing games usually need someone to hide the answer, and that person can chea
 
 ## The game
 
-A host opens a room and sets the entry fee, timer, map, their share of the pot (20% at most), and the minimum and maximum players. Players join and the fee locks. They can leave before the start and get it back. Each game rolls new landmark positions on the map.
+A host opens a room and sets the entry fee, timer, map, their share of the pot (20% at most), and the minimum and maximum players, up to 12 in the host form because last-clue digs barely win in bigger rooms. Players join and the fee locks. They can leave before the start and get it back. Each game rolls new landmark positions on the map.
 
 **Four clues**, each worth a lower bonus. The screen always shows how many spots are still possible.
 
@@ -246,7 +246,7 @@ The contract builds in Docker: `docker/near cargo near build non-reproducible-wa
   - We see a roll's result before revealing it, so refusing to reveal is a free way to cancel a round we dislike. It's public, counted by the contract (`missed_reveals`) and refunded, but with real money we'd need to lock up coins that are lost on a missed reveal.
   - Reveals don't currently wait for the lock to be final, so in theory a validator could drop the lock's block after seeing the link. `ORACLE_REVEAL_FINAL=1` closes this, for about 2 seconds more per roll.
   - A validator working together with us would know both seeds.
-- **A stolen browser key** can't withdraw or touch NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap. Disconnecting offers to remove the key through the wallet. If you decline or the wallet refuses, it stays on the account, unusable by anyone since this browser has forgotten it, until you remove it in your wallet.
+- **A stolen browser key** can't withdraw or touch NFTs, but it can spend the game balance by joining rooms. Production needs a spending cap. Disconnecting offers to remove the key through the wallet. If you decline or the wallet refuses, it stays on the account until you remove it in your wallet. This browser has forgotten it, but a copy that was already stolen would still work.
 - **The contract can't tell a deleted account from any other,** so one that scored stays on the season list and its prize stays parked under its name. The list marks them. Season 1 holds this game's own deleted test accounts: `server/tools/reclaim.ts` can recover those coins, because the names are ours.
 - **Scripts:** clues and landmarks are public, so a script can work out the exact spots that still fit.
 - **Multiple wallets:** one person can dig from several, and farm seasons, though every dig costs a fee. Rules alone can't prevent this.
