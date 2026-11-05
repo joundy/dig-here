@@ -508,3 +508,29 @@ fn write_worst_layouts() {
     let text = serde_json::to_string_pretty(&json!({"seeds_scanned_per_map": SEEDS, "cases": out})).unwrap();
     std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/worst-layouts.json"), text + "\n").unwrap();
 }
+
+/// How far the layout's draw count can stretch, to size create_room's gas. Run by hand with `--ignored`.
+#[test]
+#[ignore = "takes minutes"]
+fn layout_draw_tail() {
+    const SEEDS: u32 = 30_000;
+    for (map, def) in MAPS.iter().enumerate() {
+        let mut draws: Vec<u32> = (0..SEEDS)
+            .map(|i| {
+                let mut stream = Stream::new(sha256(format!("tail/{}/{i}", def.name).as_bytes()));
+                roll_layout(map, &mut stream);
+                stream.draws
+            })
+            .collect();
+        draws.sort();
+        let at = |per_mille: usize| draws[draws.len() * per_mille / 1000];
+        println!(
+            "TAIL {}: median {} p99 {} p99.9 {} max {} (of {SEEDS})",
+            def.name,
+            at(500),
+            at(990),
+            at(999),
+            draws[draws.len() - 1]
+        );
+    }
+}

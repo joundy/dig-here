@@ -8,9 +8,10 @@ use near_sdk::json_types::U128;
 use near_sdk::serde::Serialize;
 use near_sdk::{assert_one_yocto, env, near, require, AccountId, Gas, NearToken, Promise, PromiseError};
 
-const GAS_FOR_WITHDRAW_CALLBACK: Gas = Gas::from_tgas(2);
-/// The transfer, the callback and the work before them. Less than this could strand the callback.
-const MIN_GAS_FOR_WITHDRAW: Gas = Gas::from_tgas(5);
+/// The failure path burned 1.85 Tgas on a short name in the sandbox. Run out here and a failed transfer's coins are lost.
+const GAS_FOR_WITHDRAW_CALLBACK: Gas = Gas::from_tgas(5);
+/// The transfer, the callback and the work before them.
+const MIN_GAS_FOR_WITHDRAW: Gas = Gas::from_tgas(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -199,7 +200,7 @@ impl Contract {
     pub fn withdraw(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
         require!(amount.0 > 0, "Enter an amount above 0.");
-        require!(env::prepaid_gas() >= MIN_GAS_FOR_WITHDRAW, "Attach at least 5 Tgas to withdraw.");
+        require!(env::prepaid_gas() >= MIN_GAS_FOR_WITHDRAW, "Attach at least 10 Tgas to withdraw.");
         let account = env::predecessor_account_id();
         self.debit(&account, amount.0, "withdraw");
         self.flush_balance_events();
