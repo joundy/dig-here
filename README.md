@@ -8,7 +8,7 @@ Treasure and guessing games usually need someone to hide the answer, and that pe
 
 ## The game
 
-A host opens a room and sets the entry fee, timer, map, their share of the pot (20% at most), and the minimum and maximum players. Players deposit coins, then join. The fee locks when you join, and you get it back if you leave before the start. The round starts when the minimum is reached, by the host or a countdown, and nobody can join after that.
+Each game rolls new positions for the landmarks on its map, with landmarks of the same kind spread far apart. A host opens a room and sets the entry fee, timer, map, their share of the pot (20% at most), and the minimum and maximum players. Players deposit coins, then join. The fee locks when you join, and you get it back if you leave before the start. The round starts when the minimum is reached, by the host or a countdown, and nobody can join after that.
 
 **Four clues**, each worth a lower bonus. The screen always shows how many spots are still possible.
 
@@ -59,7 +59,7 @@ Run the tests with `npm test`.
 ## Code map
 
 - `src/lib/game/`: the rules in whole-number maths, with no UI or storage, so a contract can implement the same steps.
-  - `engine.ts`: rooms, clues, digs, scoring. `economy.ts`: where the coins go. `map.ts`, `mapDefs.ts`: the three maps. `copy.ts`: clue wording.
+  - `engine.ts`: rooms, clues, digs, scoring. `economy.ts`: where the coins go. `map.ts`, `mapDefs.ts`: the three maps, and `rollLayout` for each game's landmark positions. `copy.ts`: clue wording.
 - `src/lib/board.ts`: how the Game Board ranks rooms.
 - `src/lib/backend/types.ts`: everything the UI needs from the chain.
 - `src/lib/backend/dummy.svelte.ts`: the fake chain, wallets and bots. Replace this to go live.

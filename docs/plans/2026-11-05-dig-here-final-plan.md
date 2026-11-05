@@ -4,7 +4,7 @@ Date: 2026-11-05. Submissions close 2026-11-14, 23:59 UTC.
 
 This plan turns our discussion into one list of work. Nothing in it is built yet.
 
-**Changed after the first playtest (see each section):** the dimmed map is gone, the first clue's music is back to the original, maps have 40 landmarks in designed places instead of 60 scattered ones, and deeds are a mini NFT marketplace with one NFT per kind of landmark.
+**Changed after the first playtest (see each section):** the dimmed map is gone, the first clue's music is back to the original, maps have designed land with 40 landmarks whose positions are rolled for every game, and deeds are a mini NFT marketplace with one NFT per kind of landmark.
 
 Each decision is marked:
 - **[You]** you decided it.
@@ -148,11 +148,11 @@ Earlier digs still score higher, as you wanted. The new numbers stop one early d
 
 | Players | YOLO ×2.5 | Clue 2 ×1.5 | Clue 3 ×1.25 | Clue 4 ×1 | Even |
 |---|---|---|---|---|---|
-| 4 | 14.5% | 16.7% | 29.6% | 39.3% | 25.0% |
-| 8 | 8.0% | 8.9% | 17.8% | 15.3% | 12.5% |
-| 12 | 6.7% | 6.6% | 12.3% | 7.8% | 8.3% |
-| 20 | 5.4% | 5.0% | 7.1% | 2.4% | 5.0% |
-| 30 | 4.5% | 3.8% | 4.1% | **0.8%** | 3.3% |
+| 4 | 15.8% | 19.2% | 28.5% | 36.5% | 25.0% |
+| 8 | 7.2% | 10.1% | 19.2% | 13.5% | 12.5% |
+| 12 | 4.7% | 8.1% | 13.1% | 7.4% | 8.3% |
+| 20 | 3.8% | 6.6% | 7.8% | 1.8% | 5.0% |
+| 30 | 3.6% | 4.8% | 4.2% | **0.5%** | 3.3% |
 
 These come from the real rules (`npm run sim`). An earlier quick simulation made YOLO look better in small rooms because of a bug, and this table replaces it. For comparison, today's rules gave the last clue about 5% at 9 players (even: 11.1%).
 
@@ -191,7 +191,7 @@ One NFT for each kind of landmark on each map, such as the Snowy Penguin. [You] 
 - **Mini marketplace** [You]: an NFT only sells if its owner lists it. The owner sets any price, and can change it or take it off the market. A sale pays the seller.
 - **Fairness:** owners can't influence where the treasure lands, and owning an NFT gives no information.
 
-**Kinds don't have equal chances,** because some have more landmarks on the map. Each NFT's card shows its chance so buyers know what they're getting. [My call]
+**Kinds don't have equal chances,** because some have more landmarks on the map. Each NFT's card shows its rough chance (for example, 3 of 40 landmarks is about 8%). [My call]
 
 ### 3.8 Season with prizes [You]
 
@@ -361,11 +361,11 @@ Top players, your rank, prize pool, and time left.
 
 **Same on every map:** size, 40 landmarks from 12 kinds, the 4 clue categories, and the rules.
 
-**Designed places, not scatter** [You asked for a better map]: landmarks are grouped into villages, farms, forests and harbours, with hills, paths, streams, bridges and ground detail between them.
+**Better land** [You asked for a better map]: hills with cliffs, paths, streams, bridges, fields and ground detail, with fewer landmarks so the map isn't crowded.
 
 **Different on every map:** coast shape, landmarks, colours, clue jokes, and a music variation.
 
-**Fixed positions:** each map's landmarks stay in the same place, so returning players get better at spotting things. [My call]
+**Random positions** [You]: the land and scenery stay the same on each map, but every game rolls where the landmarks stand. Landmarks of the same kind are spread far apart, so a clue never points at one corner of the map.
 
 **Art needed:** about 18 new sprites, since a few like wells and campfires can be reused. This is one of the biggest pieces of work.
 
