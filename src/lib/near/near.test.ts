@@ -69,6 +69,10 @@ describe('rooms', () => {
     expect(room?.clues).toHaveLength(2);
     expect(room?.result?.refund_reason).toBe('too-few-digs');
     expect(roomFromEvents([])).toBeNull();
+    const created = { room_id: 1, landmarks: [] };
+    expect(roomFromEvents([{ event: 'room_created', data: created }])!.closeness_range).toBe(48);
+    expect(roomFromEvents([{ event: 'room_created', data: { ...created, closeness_range: 96 } }])!.closeness_range).toBe(96);
+    expect(roomFromEvents([{ event: 'room_created', data: created }, { event: 'finished', data: { closeness_range: 96 } }])!.closeness_range).toBe(96);
   });
 });
 

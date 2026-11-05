@@ -1,6 +1,7 @@
 // The contract's rooms, as the screens' `Game`. Pure, so it can be tested without a network.
 import { CATEGORY } from '../game/mapDefs';
 import { rosterOf, spotsOf, TAG_ORDER } from '../game/map';
+import { RULES } from '../game/rules';
 import type { Clue, Dig, Game, Landmark, MapId, PotSplit, RankedDig, RefundReason, Result, Tag } from '../game/types';
 import { DIG_CLOSE_MS } from './config';
 
@@ -44,6 +45,8 @@ export type ChainRoom = {
   pot: number;
   duration_sec: number;
   host_cut_bps: number;
+  /** What this room is scored by, fixed when it was created. A round from before the field existed used 48. */
+  closeness_range?: number;
   min_players: number;
   max_players: number;
   countdown_sec: number;
@@ -278,6 +281,7 @@ export function roomFromEvents(events: { event: string; data: any }[]): ChainRoo
     pot: finished?.pot ?? refunded?.pot ?? 0,
     duration_sec: created.duration_sec,
     host_cut_bps: created.host_cut_bps,
+    closeness_range: created.closeness_range ?? finished?.closeness_range ?? RULES.closenessRangeBefore,
     min_players: created.min_players,
     max_players: created.max_players,
     countdown_sec: created.countdown_sec,

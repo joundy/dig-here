@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rankDigs, scoreDig } from './game/engine';
 import { digsHash, fromHex, rollSeed, sha256, toHex } from './game/random';
 import { RULES } from './game/rules';
 import type { ChainRoom } from './near/rooms';
@@ -13,6 +14,50 @@ describe('verify this round', () => {
     expect(failures(room)).toEqual([]);
     expect(overallState(verifyRound(room))).toBe('pass');
     expect(verifyRound(room).flatMap((g) => g.checks).filter((c) => c.state === 'pass').length).toBeGreaterThan(20);
+  });
+
+  describe('scores a round by the range it was created under', () => {
+    it('passes a new room at 96 and an old room at 48', () => {
+      expect(failures(makeRoom(RULES.closenessRange))).toEqual([]);
+      expect(failures(makeRoom(RULES.closenessRangeBefore))).toEqual([]);
+    });
+
+    /** A dig close enough to the treasure to score under either range, ranked as the contract would under `range`. */
+    function nearTheTreasure(range: number): ChainRoom {
+      const room = makeRoom(range);
+      const { x, y } = room.result!.treasure!;
+      Object.assign(room.digs[0], { x: x + 30, y });
+      const toDig = (d: ChainRoom['digs'][number]) => ({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, bonusBps: d.bonus_bps, crowded: d.crowded, dugAt: d.dug_at_ms - room.started_ms! });
+      const ranked = rankDigs(room.digs.map((d) => scoreDig(toDig(d), { x, y }, range)));
+      room.result!.ranking = ranked.map((d) => ({ account: d.account, x: d.x, y: d.y, clue_index: d.clueIndex, bonus_bps: d.bonusBps, crowded: d.crowded, dug_at_ms: d.dugAt + room.started_ms!, distance: d.distance, closeness: d.closeness, score: d.score }));
+      room.result!.winner = ranked[0].account;
+      return room;
+    }
+    const RANKING = 'Every score and the ranking add up';
+
+    it('tells the two ranges apart, so it is the range doing the work', () => {
+      const old = nearTheTreasure(RULES.closenessRangeBefore);
+      const fresh = nearTheTreasure(RULES.closenessRange);
+      expect(old.result!.ranking[0].closeness).toBe(375);
+      expect(fresh.result!.ranking[0].closeness).toBe(688);
+      expect(failures(old)).not.toContain(RANKING);
+      expect(failures(fresh)).not.toContain(RANKING);
+    });
+
+    it('takes 48 for a round from before the field existed', () => {
+      const old = nearTheTreasure(RULES.closenessRangeBefore);
+      delete old.closeness_range;
+      expect(failures(old)).not.toContain(RANKING);
+      const lostItsRange = nearTheTreasure(RULES.closenessRange);
+      delete lostItsRange.closeness_range;
+      expect(failures(lostItsRange)).toContain(RANKING);
+    });
+
+    it('catches a room that claims a different range from the one its scores used', () => {
+      const room = nearTheTreasure(RULES.closenessRangeBefore);
+      room.closeness_range = RULES.closenessRange;
+      expect(failures(room)).toContain(RANKING);
+    });
   });
 
   const flip = (hex: string) => (hex[0] === '0' ? '1' : '0') + hex.slice(1);

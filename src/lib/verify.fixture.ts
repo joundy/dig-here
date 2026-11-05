@@ -12,7 +12,7 @@ import type { BlockRead, ChainReader, ProofEvent, TxLookup } from './verifyChain
 const bytes = (n: number) => sha256(new Uint8Array([n]));
 
 /** A whole round made by the rules, as the contract would store it. */
-export function makeRoom(): ChainRoom {
+export function makeRoom(range: number = RULES.closenessRange): ChainRoom {
   const roomId = 7;
   const blockSeed = bytes(1);
   const { tip, links } = hashChain(bytes(2));
@@ -59,12 +59,12 @@ export function makeRoom(): ChainRoom {
   }
 
   const treasure = rollTreasure(game, streamRng(fromHex(rolls[3].roll_seed!)));
-  const ranked = rankDigs(digs.map((d) => scoreDig({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, bonusBps: d.bonus_bps, crowded: d.crowded, dugAt: d.dug_at_ms - started }, treasure)));
+  const ranked = rankDigs(digs.map((d) => scoreDig({ account: d.account, x: d.x, y: d.y, clueIndex: d.clue_index, bonusBps: d.bonus_bps, crowded: d.crowded, dugAt: d.dug_at_ms - started }, treasure, range)));
   const pot = 100 * players.length;
   const split = splitPot(pot, 500);
   const jackpot = split.jackpot + split.deed;
   return {
-    room_id: roomId, version: 1, name: 'Test', host: 'h.testnet', map: 'tropical', fee: 100, pot, duration_sec: duration, host_cut_bps: 500,
+    room_id: roomId, version: 1, name: 'Test', host: 'h.testnet', map: 'tropical', fee: 100, pot, duration_sec: duration, host_cut_bps: 500, closeness_range: range,
     min_players: 2, max_players: 5, countdown_sec: 0, status: 'finished', created_ms: 1, deadline_ms: 2, start_at_ms: null, started_ms: started,
     ends_at_ms: started + 60_000, tip_index: 3, next_step: null, next_due_ms: null, reveal_deadline_ms: null, locked: false, lock_height: null,
     players, digs, clues, candidates: game.candidateIds, landmarks: landmarks as never, created_height: 99, tip: toHex(tip), block_seed: toHex(blockSeed), layout_seed: toHex(seed), rolls,
@@ -83,7 +83,7 @@ export function eventsOf(room: ChainRoom): ProofEvent[] {
   const events: ProofEvent[] = [];
   const add = (event: string, data: any) => events.push({ event, standard: 'dig-here', tx_hash: `tx-${events.length}`, data: { room_id: room.room_id, ...data } });
   add('room_created', {
-    name: room.name, host: room.host, map: room.map, fee: room.fee, bond: 100, duration_sec: room.duration_sec, host_cut_bps: room.host_cut_bps,
+    name: room.name, host: room.host, map: room.map, fee: room.fee, bond: 100, duration_sec: room.duration_sec, host_cut_bps: room.host_cut_bps, closeness_range: room.closeness_range,
     min_players: room.min_players, max_players: room.max_players, countdown_sec: room.countdown_sec, created_ms: room.created_ms, deadline_ms: room.deadline_ms,
     block_height: room.created_height, tip_index: room.tip_index, tip: room.tip, block_seed: room.block_seed, layout_seed: room.layout_seed, landmarks: room.landmarks,
   });

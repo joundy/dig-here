@@ -237,12 +237,14 @@ function endChecks(room: ChainRoom, game: Game, landmarks: Landmark[]): Check[] 
   }));
 
   const point = { x: treasure.x, y: treasure.y };
-  const ranked = rankDigs(room.digs.map((d) => scoreDig(asDig(room, d), point)));
+  // A round keeps the range it was created under, for good. contract/README.md has the rule.
+  const range = room.closeness_range ?? RULES.closenessRangeBefore;
+  const ranked = rankDigs(room.digs.map((d) => scoreDig(asDig(room, d), point, range)));
   const rankOk = ranked.length === result.ranking.length && ranked.every((d, i) => {
     const row = result.ranking[i];
     return row.account === d.account && row.x === d.x && row.y === d.y && row.distance === d.distance && row.closeness === d.closeness && row.score === d.score;
   });
-  checks.push(pass(rankOk, 'Every score and the ranking add up', rankOk ? `${ranked[0]?.account} came first.` : 'The ranking differs when rescored.'));
+  checks.push(pass(rankOk, 'Every score and the ranking add up', rankOk ? `${ranked[0]?.account} came first, with closeness reaching zero ${range} pixels from the treasure.` : `The ranking differs when rescored with a closeness range of ${range}.`));
   checks.push(pass(result.winner === ranked[0]?.account, 'The winner is the top score', `${result.winner}.`));
 
   const pot = room.fee * room.players.length;
