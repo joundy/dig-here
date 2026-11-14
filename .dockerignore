@@ -12,3 +12,4 @@ server/data
 *.sqlite
 *.sqlite-*
 docs
+video
