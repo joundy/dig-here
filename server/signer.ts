@@ -1,7 +1,7 @@
 import { actions, baseDecode, baseEncode, createTransaction, KeyPair, KeyPairSigner, type Action } from 'near-api-js';
 import { addBurn } from './burn.ts';
 import { log, sleep } from './log.ts';
-import { fastnearCooling, finalBlock, read, RpcError, sendRaw, viewAccessKey } from './rpc.ts';
+import { broadcastElsewhere, fastnearCooling, finalBlock, read, RpcError, sendRaw, viewAccessKey } from './rpc.ts';
 import { TGAS } from './units.ts';
 
 export type TxResult = { hash: string; ok: boolean; failure?: string; value: any; logs: string[]; burnt: bigint };
@@ -52,19 +52,10 @@ async function checkByHash(hash: string, sender: string, wait: string): Promise<
   }
 }
 
-/** Best effort, down a second path. Its answer doesn't matter, because the hash check decides what happened. */
-async function rebroadcast(signedB64: string): Promise<void> {
-  try {
-    await sendRaw('send_tx', { signed_tx_base64: signedB64, wait_until: 'NONE' }, 3000, true);
-  } catch {
-    // Watching the hash covers this too.
-  }
-}
-
 /**
  * Tries to get one signed transaction onto the chain, watching the hash rather than trusting the response. Sending
  * the same bytes again through the same node did nothing in testing (it remembers them), so the second try goes
- * through dRPC. If that's lost too, the caller signs a new transaction.
+ * through the backups. If that's lost too, the caller signs a new transaction.
  */
 async function deliver(signedB64: string, hash: string, sender: string, opts: SendOptions): Promise<any> {
   const wait = opts.wait ?? 'EXECUTED_OPTIMISTIC';
@@ -72,9 +63,9 @@ async function deliver(signedB64: string, hash: string, sender: string, opts: Se
   const giveUpAt = Date.now() + (opts.giveUpMs ?? patience + 5000);
   for (let attempt = 0; attempt === 0 || Date.now() < giveUpAt; attempt++) {
     try {
-      // dRPC ends free requests at about 2 s, so it can only take a send that doesn't wait for the result.
+      // Backups get sends that don't wait for the result, because dRPC ends free requests at about 2 s.
       const direct = attempt === 0 && !fastnearCooling();
-      if (!direct && (attempt === 0 || attempt % 3 === 1)) void rebroadcast(signedB64);
+      if (!direct && (attempt === 0 || attempt % 3 === 1)) void broadcastElsewhere(signedB64, 3000);
       const r = direct ? await sendRaw('send_tx', { signed_tx_base64: signedB64, wait_until: wait }, patience) : null;
       if (r && isExecuted(r)) return r;
     } catch (e) {

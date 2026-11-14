@@ -2,6 +2,8 @@ import { log } from './log.ts';
 
 const FASTNEAR = process.env.RPC_PRIMARY ?? 'https://test.rpc.fastnear.com';
 const DRPC = process.env.RPC_FALLBACK ?? 'https://near-testnet.drpc.org';
+/** Holds a token in its path, so it's a secret and stays out of logs and browsers. */
+const quicknode = () => process.env.QUICKNODE_RPC_URL || null;
 const COOL_OFF_MS = 10_000;
 
 export class RpcError extends Error {
@@ -24,8 +26,9 @@ export class RpcError extends Error {
 }
 
 let fastnearCoolUntil = 0;
+let quicknodeCoolUntil = 0;
 
-export const rpcStats = { fastnear: 0, drpc: 0, rate_limited: 0, failovers: 0 };
+export const rpcStats = { fastnear: 0, quicknode: 0, drpc: 0, rate_limited: 0, failovers: 0 };
 
 /** Server only. The key must never reach a browser or any provider other than FastNEAR. */
 export function fastnearAuth(): Record<string, string> {
@@ -53,6 +56,7 @@ async function post(url: string, method: string, params: unknown, timeoutMs: num
   if (res.status === 429 || (url === FASTNEAR && /rate limit/i.test(text.slice(0, 500)))) {
     rpcStats.rate_limited++;
     if (url === FASTNEAR) fastnearCoolUntil = Date.now() + COOL_OFF_MS;
+    if (url === quicknode()) quicknodeCoolUntil = Date.now() + COOL_OFF_MS;
   }
   let json: any;
   try {
@@ -70,26 +74,40 @@ async function post(url: string, method: string, params: unknown, timeoutMs: num
 }
 
 export const fastnearCooling = () => Date.now() < fastnearCoolUntil;
+const quicknodeCooling = () => Date.now() < quicknodeCoolUntil;
 
-/** Reads fail over to dRPC, which caps every free request at about 2 s and so can't carry long sends. */
+/** Reads try FastNEAR, then QuickNode, then dRPC, which caps every free request at about 2 s. */
 export async function read(method: string, params: unknown, timeoutMs = 6000): Promise<any> {
-  if (Date.now() >= fastnearCoolUntil) {
+  const backup = quicknode();
+  const paths = [
+    { name: 'fastnear', url: FASTNEAR, cooling: fastnearCooling },
+    ...(backup ? [{ name: 'quicknode', url: backup, cooling: quicknodeCooling }] : []),
+  ] as const;
+  for (const path of paths) {
+    if (path.cooling()) continue;
     try {
-      rpcStats.fastnear++;
-      return await post(FASTNEAR, method, params, timeoutMs);
+      rpcStats[path.name]++;
+      return await post(path.url, method, params, timeoutMs);
     } catch (e) {
       if (!(e instanceof RpcError) || !e.transient) throw e;
       rpcStats.failovers++;
-      if (!fastnearCooling()) log('rpc', `FastNEAR read failed, trying dRPC: ${e.message}`);
+      if (!path.cooling()) log('rpc', `${path.name} read failed, trying the next provider: ${e.message}`);
     }
   }
   rpcStats.drpc++;
   return post(DRPC, method, params, Math.min(timeoutMs, 4000));
 }
 
-/** Sends start at FastNEAR, and `viaFallback` is for when it's refusing or a send there got lost. */
-export async function sendRaw(method: string, params: unknown, timeoutMs: number, viaFallback = false): Promise<any> {
-  return post(viaFallback ? DRPC : FASTNEAR, method, params, timeoutMs);
+/** Sends start at FastNEAR. */
+export async function sendRaw(method: string, params: unknown, timeoutMs: number): Promise<any> {
+  return post(FASTNEAR, method, params, timeoutMs);
+}
+
+/** Best effort down every backup. They're the same signed bytes, so only one copy can land, and the hash check decides. */
+export async function broadcastElsewhere(signedB64: string, timeoutMs: number): Promise<void> {
+  const backup = quicknode();
+  const urls = [...(backup && !quicknodeCooling() ? [backup] : []), DRPC];
+  await Promise.allSettled(urls.map((url) => post(url, 'send_tx', { signed_tx_base64: signedB64, wait_until: 'NONE' }, timeoutMs)));
 }
 
 export async function viewFunction<T = any>(
